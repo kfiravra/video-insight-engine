@@ -1,26 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
-import { z } from 'zod';
 import { config } from '../config.js';
-
-// `x-admin-id` is operator metadata for audit rows, not auth. Constrain it so
-// a multi-valued or oversized header can't pollute the audit log.
-const adminIdSchema = z.string().min(1).max(64).regex(/^[A-Za-z0-9._-]+$/);
-
-export type AdminIdHeader = { ok: true; adminId: string | null } | { ok: false };
-
-/**
- * Collapse a possibly repeated `x-admin-id` header to its first value and
- * validate it. An absent header is fine (`adminId: null`); a malformed one
- * is not (`ok: false`, callers answer 400).
- */
-export function parseAdminIdHeader(headerValue: string | string[] | undefined): AdminIdHeader {
-  const raw = Array.isArray(headerValue) ? headerValue[0] : headerValue;
-  if (raw === undefined) {
-    return { ok: true, adminId: null };
-  }
-  const parsed = adminIdSchema.safeParse(raw);
-  return parsed.success ? { ok: true, adminId: parsed.data } : { ok: false };
-}
+import { verifyActorSignature, type ActorHeaderResult, type ActorRequest } from './admin-actor.js';
 
 /**
  * Constant-time comparison of a request's `x-admin-key` header against the
@@ -37,4 +17,18 @@ export function isValidAdminKey(headerValue: string | string[] | undefined): boo
     return false;
   }
   return timingSafeEqual(provided, expected);
+}
+
+/**
+ * Verify the `X-Admin-Actor` header vie-admin signs for a named admin, against
+ * the request it arrived on (method, raw target, body hash) and
+ * `ADMIN_SESSION_SECRET`. Freshness is five minutes either way. See
+ * `admin-actor.ts` for the format.
+ */
+export function verifyActorHeader(
+  headerValue: string | string[] | undefined,
+  request: ActorRequest,
+  nowSeconds: number = Math.floor(Date.now() / 1000),
+): ActorHeaderResult {
+  return verifyActorSignature(config.ADMIN_SESSION_SECRET, headerValue, request, nowSeconds);
 }

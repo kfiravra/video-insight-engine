@@ -191,10 +191,7 @@ describe('internal routes', () => {
         });
       });
 
-      // Regression: when a completion event arrives without userId, the route looks up
-      // userVideos. The mock cursor in this suite doesn't implement .project(), so the
-      // route must call .find().toArray() directly.
-      it('should reconcile the user cost cache when a video completes', async () => {
+      it('should settle the run\'s hold when a video completes', async () => {
         const videoSummaryId = new ObjectId().toHexString();
         const userId = 'completed-user-123';
 
@@ -204,8 +201,6 @@ describe('internal routes', () => {
         });
         app.mongo.db.collection = mockCollection;
         app.broadcast = vi.fn();
-
-        mockContainer.costMonitorService.reconcileUserDay.mockResolvedValueOnce(1.42);
 
         const response = await app.inject({
           method: 'POST',
@@ -225,21 +220,31 @@ describe('internal routes', () => {
         });
 
         expect(response.statusCode).toBe(200);
-        expect(mockContainer.costMonitorService.reconcileUserDay).toHaveBeenCalledWith(
-          userId,
-          expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
-        );
+        expect(mockContainer.billingEnforcement.runFinished).toHaveBeenCalledWith(videoSummaryId, 'completed');
       });
 
-      it('should also reconcile when a video FAILS (so the upfront reservation gets refunded)', async () => {
+      it('should release a cache-hit completion as cached, not settle it (I3)', async () => {
+        const videoSummaryId = new ObjectId().toHexString();
+        app.mongo.db.collection = vi.fn().mockReturnValue({ updateMany: vi.fn().mockResolvedValue({ modifiedCount: 1 }) });
+        app.broadcast = vi.fn();
+
+        await app.inject({
+          method: 'POST',
+          url: '/internal/status',
+          headers: { 'content-type': 'application/json', 'x-internal-secret': INTERNAL_SECRET },
+          payload: { type: 'video.status', payload: { videoSummaryId, userId: 'u-cache', status: 'completed', cacheHit: true } },
+        });
+
+        expect(mockContainer.billingEnforcement.runFinished).toHaveBeenCalledWith(videoSummaryId, 'cached');
+      });
+
+      it('should release the run\'s hold when a video FAILS', async () => {
         const videoSummaryId = new ObjectId().toHexString();
         const userId = 'failed-user-456';
 
         const mockUpdateMany = vi.fn().mockResolvedValue({ modifiedCount: 1 });
         app.mongo.db.collection = vi.fn().mockReturnValue({ updateMany: mockUpdateMany });
         app.broadcast = vi.fn();
-
-        mockContainer.costMonitorService.reconcileUserDay.mockResolvedValueOnce(0.42);
 
         await app.inject({
           method: 'POST',
@@ -254,10 +259,7 @@ describe('internal routes', () => {
           },
         });
 
-        expect(mockContainer.costMonitorService.reconcileUserDay).toHaveBeenCalledWith(
-          userId,
-          expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
-        );
+        expect(mockContainer.billingEnforcement.runFinished).toHaveBeenCalledWith(videoSummaryId, 'failed');
       });
 
       it('should invalidate idempotency keys when a video transitions to failed (so the user can retry immediately)', async () => {
@@ -267,7 +269,6 @@ describe('internal routes', () => {
         const mockUpdateMany = vi.fn().mockResolvedValue({ modifiedCount: 1 });
         app.mongo.db.collection = vi.fn().mockReturnValue({ updateMany: mockUpdateMany });
         app.broadcast = vi.fn();
-        mockContainer.costMonitorService.reconcileUserDay.mockResolvedValueOnce(0);
 
         await app.inject({
           method: 'POST',
@@ -299,7 +300,6 @@ describe('internal routes', () => {
         const mockUpdateMany = vi.fn().mockResolvedValue({ modifiedCount: 1 });
         app.mongo.db.collection = vi.fn().mockReturnValue({ updateMany: mockUpdateMany });
         app.broadcast = vi.fn();
-        mockContainer.costMonitorService.reconcileUserDay.mockResolvedValueOnce(0);
 
         await app.inject({
           method: 'POST',
@@ -335,7 +335,6 @@ describe('internal routes', () => {
         const mockUpdateMany = vi.fn().mockResolvedValue({ modifiedCount: 1 });
         app.mongo.db.collection = vi.fn().mockReturnValue({ updateMany: mockUpdateMany });
         app.broadcast = vi.fn();
-        mockContainer.costMonitorService.reconcileUserDay.mockResolvedValueOnce(0);
         // Simulate "this is a duplicate FAILED event" — the first event already
         // claimed the release, so this second one sees the field set.
         mockContainer.videoRepository.tryClaimDispatchRelease.mockResolvedValueOnce(false);
@@ -370,7 +369,6 @@ describe('internal routes', () => {
         const mockUpdateMany = vi.fn().mockResolvedValue({ modifiedCount: 1 });
         app.mongo.db.collection = vi.fn().mockReturnValue({ updateMany: mockUpdateMany });
         app.broadcast = vi.fn();
-        mockContainer.costMonitorService.reconcileUserDay.mockResolvedValueOnce(0);
         mockContainer.videoRepository.tryClaimDispatchRelease.mockRejectedValueOnce(
           new Error('Mongo connection lost'),
         );
@@ -401,7 +399,6 @@ describe('internal routes', () => {
         const mockUpdateMany = vi.fn().mockResolvedValue({ modifiedCount: 1 });
         app.mongo.db.collection = vi.fn().mockReturnValue({ updateMany: mockUpdateMany });
         app.broadcast = vi.fn();
-        mockContainer.costMonitorService.reconcileUserDay.mockResolvedValueOnce(0);
 
         await app.inject({
           method: 'POST',
@@ -426,7 +423,6 @@ describe('internal routes', () => {
         const mockUpdateMany = vi.fn().mockResolvedValue({ modifiedCount: 1 });
         app.mongo.db.collection = vi.fn().mockReturnValue({ updateMany: mockUpdateMany });
         app.broadcast = vi.fn();
-        mockContainer.costMonitorService.reconcileUserDay.mockResolvedValueOnce(0);
 
         await app.inject({
           method: 'POST',
@@ -444,14 +440,13 @@ describe('internal routes', () => {
         expect(mockContainer.idempotencyService.invalidateByVideoSummaryId).not.toHaveBeenCalled();
       });
 
-      it('should look up users in userVideos when the completion event has no userId', async () => {
+      it('should settle a shared video\'s run once when the completion event has no userId', async () => {
         const videoSummaryId = new ObjectId().toHexString();
         const sharedUserA = new ObjectId();
         const sharedUserB = new ObjectId();
 
         const mockUpdateMany = vi.fn().mockResolvedValue({ modifiedCount: 2 });
-        // The route reads `_id` in the broadcast loop, then iterates again for
-        // reconcile — include both fields so both branches succeed.
+        // The route reads `_id` in the broadcast loop.
         const mockUserVideosFind = vi.fn().mockReturnValue({
           toArray: vi.fn().mockResolvedValue([
             { _id: new ObjectId(), userId: sharedUserA },
@@ -463,8 +458,6 @@ describe('internal routes', () => {
           return { updateMany: mockUpdateMany };
         });
         app.broadcast = vi.fn();
-
-        mockContainer.costMonitorService.reconcileUserDay.mockResolvedValue(1);
 
         await app.inject({
           method: 'POST',
@@ -480,18 +473,11 @@ describe('internal routes', () => {
           },
         });
 
-        // Both viewers of the shared video should be reconciled.
-        expect(mockContainer.costMonitorService.reconcileUserDay).toHaveBeenCalledWith(
-          sharedUserA.toHexString(),
-          expect.any(String),
-        );
-        expect(mockContainer.costMonitorService.reconcileUserDay).toHaveBeenCalledWith(
-          sharedUserB.toHexString(),
-          expect.any(String),
-        );
+        // One run, one hold, however many viewers attached to it.
+        expect(mockContainer.billingEnforcement.runFinished.mock.calls).toEqual([[videoSummaryId, 'completed']]);
       });
 
-      it('should not reconcile when a video transitions to processing', async () => {
+      it('should not touch the ledger when a video transitions to processing', async () => {
         const videoSummaryId = new ObjectId().toHexString();
         const mockUpdateMany = vi.fn().mockResolvedValue({ modifiedCount: 1 });
         const mockCollection = vi.fn().mockReturnValue({
@@ -517,7 +503,7 @@ describe('internal routes', () => {
           },
         });
 
-        expect(mockContainer.costMonitorService.reconcileUserDay).not.toHaveBeenCalled();
+        expect(mockContainer.billingEnforcement.runFinished).not.toHaveBeenCalled();
       });
 
       it('should accept all valid status values', async () => {
@@ -909,76 +895,15 @@ describe('internal routes', () => {
     });
   });
 
-  describe('POST /internal/reconcile-costs', () => {
-    it('should reject requests without the internal secret', async () => {
-      const response = await app.inject({
-        method: 'POST',
-        url: '/internal/reconcile-costs',
-      });
-
-      expect(response.statusCode).toBe(401);
-    });
-
-    it('should reconcile every user when called without a userId', async () => {
-      mockContainer.costMonitorService.reconcileAllUsersForDay.mockResolvedValueOnce({
-        usersReconciled: 3,
-        totalUsd: 12.34,
-      });
-
+  describe('POST /internal/reconcile-costs (removed in P3.2)', () => {
+    it('should no longer exist: the repair job keeps the ledger true', async () => {
       const response = await app.inject({
         method: 'POST',
         url: '/internal/reconcile-costs',
         headers: { 'x-internal-secret': INTERNAL_SECRET },
       });
 
-      expect(response.statusCode).toBe(200);
-      const body = response.json();
-      expect(body.usersReconciled).toBe(3);
-      expect(body.totalUsd).toBe(12.34);
-      expect(mockContainer.costMonitorService.reconcileAllUsersForDay).toHaveBeenCalled();
-    });
-
-    it('should reconcile only one user when userId is supplied', async () => {
-      mockContainer.costMonitorService.reconcileUserDay.mockResolvedValueOnce(4.2);
-      const userId = 'aaaaaaaaaaaaaaaaaaaaaaaa';
-
-      const response = await app.inject({
-        method: 'POST',
-        url: `/internal/reconcile-costs?userId=${userId}&date=2026-05-14`,
-        headers: { 'x-internal-secret': INTERNAL_SECRET },
-      });
-
-      expect(response.statusCode).toBe(200);
-      expect(mockContainer.costMonitorService.reconcileUserDay).toHaveBeenCalledWith(
-        userId,
-        '2026-05-14',
-      );
-      expect(response.json()).toEqual({
-        dateKey: '2026-05-14',
-        userId,
-        totalCostUsd: 4.2,
-      });
-    });
-
-    it('should reject an invalid date format', async () => {
-      const response = await app.inject({
-        method: 'POST',
-        url: '/internal/reconcile-costs?date=may-14',
-        headers: { 'x-internal-secret': INTERNAL_SECRET },
-      });
-
-      expect(response.statusCode).toBe(400);
-    });
-
-    it('should reject a non-ObjectId userId', async () => {
-      const response = await app.inject({
-        method: 'POST',
-        url: '/internal/reconcile-costs?userId=not-an-object-id',
-        headers: { 'x-internal-secret': INTERNAL_SECRET },
-      });
-
-      expect(response.statusCode).toBe(400);
-      expect(mockContainer.costMonitorService.reconcileUserDay).not.toHaveBeenCalled();
+      expect(response.statusCode).toBe(404);
     });
   });
 

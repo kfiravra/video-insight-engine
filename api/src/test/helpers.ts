@@ -2,10 +2,14 @@ import { FastifyInstance } from 'fastify';
 import { vi } from 'vitest';
 import { buildApp } from '../app.js';
 import * as softDeleteCache from '../utils/soft-delete-cache.js';
+import { config } from '../config.js';
+import { sha256Hex, signActorHeader } from '../utils/admin-actor.js';
 
 // Mock container services for route testing
 export interface MockContainer {
   videoRepository: {
+    findCacheKeysByYoutubeId: ReturnType<typeof vi.fn>;
+    findKnownDuration: ReturnType<typeof vi.fn>;
     userHasAccessToSummary: ReturnType<typeof vi.fn>;
     userOwnsVideo: ReturnType<typeof vi.fn>;
     findUserVideo: ReturnType<typeof vi.fn>;
@@ -62,33 +66,20 @@ export interface MockContainer {
   ogImageService: {
     getOgImage: ReturnType<typeof vi.fn>;
   };
-  paymentService: {
-    verifyWebhook: ReturnType<typeof vi.fn>;
-    handleWebhookEvent: ReturnType<typeof vi.fn>;
-    generateCheckoutUrl: ReturnType<typeof vi.fn>;
-    getUserTier: ReturnType<typeof vi.fn>;
+  billingService: {
+    summary: ReturnType<typeof vi.fn>;
   };
-  costMonitorService: {
-    checkUserCanProcess: ReturnType<typeof vi.fn>;
-    reserveUserCost: ReturnType<typeof vi.fn>;
-    refundReservation: ReturnType<typeof vi.fn>;
-    getUserDailyCost: ReturnType<typeof vi.fn>;
-    incrementUserCost: ReturnType<typeof vi.fn>;
-    getTierLimit: ReturnType<typeof vi.fn>;
-    getUserUsageSummary: ReturnType<typeof vi.fn>;
-    reconcileUserDay: ReturnType<typeof vi.fn>;
-    reconcileAllUsersForDay: ReturnType<typeof vi.fn>;
+  billingEnforcement: {
+    admit: ReturnType<typeof vi.fn>;
+    submitResolved: ReturnType<typeof vi.fn>;
+    submitFailed: ReturnType<typeof vi.fn>;
+    runFinished: ReturnType<typeof vi.fn>;
+    planPlaylist: ReturnType<typeof vi.fn>;
+    refuseIfBlocked: ReturnType<typeof vi.fn>;
   };
-  userCostRepository: {
-    findByUserAndDate: ReturnType<typeof vi.fn>;
-    getEffectiveCost: ReturnType<typeof vi.fn>;
-    incrementDailyCost: ReturnType<typeof vi.fn>;
-    setDailyCost: ReturnType<typeof vi.fn>;
-    refundReservation: ReturnType<typeof vi.fn>;
-    addAdjustment: ReturnType<typeof vi.fn>;
-    findRange: ReturnType<typeof vi.fn>;
-    findAdjustments: ReturnType<typeof vi.fn>;
-    aggregateUsersOverRange: ReturnType<typeof vi.fn>;
+  libraryUpdateRepository: {
+    restoreFailedUpdates: ReturnType<typeof vi.fn>;
+    clearSettledUpdates: ReturnType<typeof vi.fn>;
   };
   shareRepository: {
     findBySlug: ReturnType<typeof vi.fn>;
@@ -112,6 +103,12 @@ export interface MockContainer {
     acquire: ReturnType<typeof vi.fn>;
     release: ReturnType<typeof vi.fn>;
   };
+  submitBurstLimiter: {
+    consume: ReturnType<typeof vi.fn>;
+  };
+  chatFairUse: {
+    consume: ReturnType<typeof vi.fn>;
+  };
   idempotencyRepository: {
     findByHash: ReturnType<typeof vi.fn>;
     reserveHash: ReturnType<typeof vi.fn>;
@@ -127,13 +124,12 @@ export interface MockContainer {
     create: ReturnType<typeof vi.fn>;
     update: ReturnType<typeof vi.fn>;
     updateLastLogin: ReturnType<typeof vi.fn>;
-    updateAndReturnPrevious: ReturnType<typeof vi.fn>;
-    getTier: ReturnType<typeof vi.fn>;
-    findByPaddleCustomerId: ReturnType<typeof vi.fn>;
     markSoftDeleted: ReturnType<typeof vi.fn>;
     clearSoftDelete: ReturnType<typeof vi.fn>;
     findExpiredSoftDeletes: ReturnType<typeof vi.fn>;
     hardDelete: ReturnType<typeof vi.fn>;
+    hasPermission: ReturnType<typeof vi.fn>;
+    listAdmins: ReturnType<typeof vi.fn>;
   };
   userDeletionRepository: {
     insert: ReturnType<typeof vi.fn>;
@@ -149,11 +145,28 @@ export interface MockContainer {
   videoCascadeService: {
     deleteVideo: ReturnType<typeof vi.fn>;
   };
+  auditService: {
+    record: ReturnType<typeof vi.fn>;
+    recordBestEffort: ReturnType<typeof vi.fn>;
+    list: ReturnType<typeof vi.fn>;
+  };
+  adminSeedService: {
+    run: ReturnType<typeof vi.fn>;
+  };
+  adminReplayGuard: {
+    claim: ReturnType<typeof vi.fn>;
+  };
+  alertConfigService: {
+    replace: ReturnType<typeof vi.fn>;
+  };
 }
 
 export function createMockContainer(): MockContainer {
   return {
     videoRepository: {
+      findCacheKeysByYoutubeId: vi.fn().mockResolvedValue([]),
+      // Default: no completed version knows the length, so submits ask the pre-flight.
+      findKnownDuration: vi.fn().mockResolvedValue(null),
       userHasAccessToSummary: vi.fn().mockResolvedValue(true),
       userOwnsVideo: vi.fn().mockResolvedValue(true),
       findUserVideo: vi.fn(),
@@ -212,50 +225,28 @@ export function createMockContainer(): MockContainer {
     ogImageService: {
       getOgImage: vi.fn(),
     },
-    paymentService: {
-      verifyWebhook: vi.fn().mockReturnValue(true),
-      handleWebhookEvent: vi.fn(),
-      generateCheckoutUrl: vi.fn(),
-      getUserTier: vi.fn().mockResolvedValue({ tier: 'free', limits: { videosPerDay: 3, chatPerOutput: 5, shareEnabled: true, exportEnabled: false } }),
+    // Route tests never touch the real ledger: every account is on free and
+    // every submit is admitted with a free-video hold. Ledger behaviour on the
+    // wire is billing-enforce.routes.test.ts, over a real LedgerEnforcement.
+    billingService: {
+      summary: vi.fn().mockResolvedValue({ plan: { id: 'free', periodEnd: null } }),
     },
-    costMonitorService: {
-      checkUserCanProcess: vi.fn().mockResolvedValue({
-        allowed: true,
-        usedUsd: 0,
-        limitUsd: 2,
-        remainingUsd: 2,
-        resetAt: '2026-05-15T00:00:00.000Z',
-        tier: 'free',
-      }),
-      reserveUserCost: vi.fn().mockResolvedValue({
-        userId: 'test-user-id',
-        dateKey: '2026-05-14',
-        amountUsd: 0.15,
-      }),
-      refundReservation: vi.fn().mockResolvedValue(undefined),
-      getUserDailyCost: vi.fn().mockResolvedValue(0),
-      incrementUserCost: vi.fn().mockResolvedValue(undefined),
-      getTierLimit: vi.fn().mockReturnValue(2),
-      getUserUsageSummary: vi.fn().mockResolvedValue({
-        tier: 'free',
-        today: { date: '2026-05-14', rawUsd: 0, creditAdjustmentUsd: 0, effectiveUsd: 0, videoCount: 0 },
-        limitUsd: 2,
-        remainingUsd: 2,
-        resetAt: '2026-05-15T00:00:00.000Z',
-      }),
-      reconcileUserDay: vi.fn().mockResolvedValue(0),
-      reconcileAllUsersForDay: vi.fn().mockResolvedValue({ usersReconciled: 0, totalUsd: 0 }),
+    billingEnforcement: {
+      admit: vi.fn().mockResolvedValue({ requestId: 'test-run', minutes: 1, split: { free: 1, plan: 0, credit: 0, lots: [] } }),
+      submitResolved: vi.fn().mockResolvedValue(undefined),
+      submitFailed: vi.fn().mockResolvedValue(undefined),
+      runFinished: vi.fn().mockResolvedValue(undefined),
+      planPlaylist: vi.fn().mockImplementation(async (_userId: string, items: Array<{ durationSec: number | null }>) => ({
+        quote: { neededMinutes: 0, availableMinutes: 0, freeVideoAvailable: true, nextFreeAt: null, decisions: [] },
+        durationsSec: items.map((item) => item.durationSec),
+      })),
+      // Default: not blocked, so an idempotency replay is answered.
+      refuseIfBlocked: vi.fn().mockResolvedValue(undefined),
     },
-    userCostRepository: {
-      findByUserAndDate: vi.fn().mockResolvedValue(null),
-      getEffectiveCost: vi.fn().mockResolvedValue(0),
-      incrementDailyCost: vi.fn().mockResolvedValue(undefined),
-      setDailyCost: vi.fn().mockResolvedValue(undefined),
-      refundReservation: vi.fn().mockResolvedValue(undefined),
-      addAdjustment: vi.fn().mockResolvedValue(undefined),
-      findRange: vi.fn().mockResolvedValue([]),
-      findAdjustments: vi.fn().mockResolvedValue([]),
-      aggregateUsersOverRange: vi.fn().mockResolvedValue([]),
+    // Default: no entry an update moved onto the row.
+    libraryUpdateRepository: {
+      restoreFailedUpdates: vi.fn().mockResolvedValue({ restored: 0, stranded: 0 }),
+      clearSettledUpdates: vi.fn().mockResolvedValue(0),
     },
     shareRepository: {
       findBySlug: vi.fn(),
@@ -290,6 +281,14 @@ export function createMockContainer(): MockContainer {
       acquire: vi.fn().mockResolvedValue({ acquired: true, token: 'test-token' }),
       release: vi.fn().mockResolvedValue(undefined),
     },
+    // Default: under the limit. Burst-limit route tests make `consume` reject.
+    submitBurstLimiter: {
+      consume: vi.fn().mockResolvedValue(undefined),
+    },
+    // Default: under the free chat limit. Chat route tests make `consume` reject.
+    chatFairUse: {
+      consume: vi.fn().mockResolvedValue(undefined),
+    },
     idempotencyRepository: {
       findByHash: vi.fn().mockResolvedValue(null),
       reserveHash: vi.fn().mockResolvedValue({ created: true, doc: {} }),
@@ -311,13 +310,14 @@ export function createMockContainer(): MockContainer {
       create: vi.fn(),
       update: vi.fn().mockResolvedValue(undefined),
       updateLastLogin: vi.fn().mockResolvedValue(undefined),
-      updateAndReturnPrevious: vi.fn(),
-      getTier: vi.fn().mockResolvedValue('free'),
-      findByPaddleCustomerId: vi.fn().mockResolvedValue(null),
       markSoftDeleted: vi.fn(),
       clearSoftDelete: vi.fn(),
       findExpiredSoftDeletes: vi.fn().mockResolvedValue([]),
       hardDelete: vi.fn().mockResolvedValue(true),
+      // Default: every signed admin actor still holds the permission. Demotion
+      // tests override it with false.
+      hasPermission: vi.fn().mockResolvedValue(true),
+      listAdmins: vi.fn().mockResolvedValue([]),
     },
     userDeletionRepository: {
       insert: vi.fn(),
@@ -333,6 +333,22 @@ export function createMockContainer(): MockContainer {
     videoCascadeService: {
       deleteVideo: vi.fn(),
     },
+    auditService: {
+      record: vi.fn().mockResolvedValue('audit-id'),
+      recordBestEffort: vi.fn().mockResolvedValue('audit-id'),
+      list: vi.fn().mockResolvedValue([]),
+    },
+    // Never reconcile roles against a real database from a route test.
+    adminSeedService: {
+      run: vi.fn().mockResolvedValue({ status: 'skipped_empty', promoted: 0, demoted: 0 }),
+    },
+    // Never touch the dev Redis from a route test: every signature is a first use.
+    adminReplayGuard: {
+      claim: vi.fn().mockResolvedValue(true),
+    },
+    alertConfigService: {
+      replace: vi.fn().mockResolvedValue({ before: {}, after: {} }),
+    },
   };
 }
 
@@ -341,6 +357,46 @@ export const testUser = {
   userId: 'test-user-id',
   email: 'test@example.com',
 };
+
+/** A user id (24-char hex) for the admin that signed `/api/admin/*` requests act as. */
+export const TEST_ADMIN_USER_ID = 'a1b2c3d4e5f60718293a4b5c';
+
+export interface AdminActorRequest {
+  headers: Record<string, string>;
+  /** The exact serialized body the signature covers; absent for body-less requests. */
+  payload?: string;
+}
+
+/**
+ * Headers (and body) for an `/api/admin/*` request made the way vie-admin
+ * makes it: the shared key plus a fresh `x-admin-actor` signed over the method,
+ * the exact request target (`url`, path plus query, as it will be injected) and
+ * the exact body bytes. Pass the result to `app.inject` together with the same
+ * `method` and `url`.
+ */
+export function adminActorRequest(
+  method: string,
+  url: string,
+  body?: Record<string, unknown>,
+  options: { userId?: string; nowSeconds?: number } = {},
+): AdminActorRequest {
+  const { userId = TEST_ADMIN_USER_ID, nowSeconds = Math.floor(Date.now() / 1000) } = options;
+  const payload = body === undefined ? undefined : JSON.stringify(body);
+  const actor = signActorHeader(
+    config.ADMIN_SESSION_SECRET,
+    userId,
+    { method, target: url, bodySha256: sha256Hex(payload ?? '') },
+    nowSeconds,
+  );
+  return {
+    headers: {
+      'x-admin-key': config.ADMIN_API_KEY,
+      'x-admin-actor': actor,
+      ...(payload === undefined ? {} : { 'content-type': 'application/json' }),
+    },
+    ...(payload === undefined ? {} : { payload }),
+  };
+}
 
 // Generate a valid JWT for testing
 export async function getAuthHeader(app: FastifyInstance): Promise<string> {

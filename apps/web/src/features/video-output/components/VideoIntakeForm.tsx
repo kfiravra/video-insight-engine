@@ -17,13 +17,17 @@ import { getFolderColorStyle } from '@/features/sidebar/lib/style-utils';
 import { hasPlaylistId, hasVideoId, isPlaylistPage, isYouTubeUrl } from '@/lib/youtube-utils';
 import { withTransitionName } from '@/lib/view-transitions';
 import { cn } from '@/lib/utils';
-import type { PlaylistPreview as PlaylistPreviewType } from '@/api/playlists';
+import type {
+  PlaylistImportResult,
+  PlaylistPreview as PlaylistPreviewType,
+} from '@/api/playlists';
 import { PlaylistPreview } from '@/components/playlists/PlaylistPreview';
+import { PlaylistImportSummary } from '@/components/playlists/PlaylistImportSummary';
 import type { Folder as FolderEntity } from '@/types';
 import { SAMPLE_VIDEO } from '@/features/video-output/lib/onboarding-constants';
 import { showDuplicateToast } from '@/features/video-output/lib/duplicate-toast';
-import { ApiError } from '@/api/client';
-import { DailyLimitCallout } from '@/components/usage/DailyLimitCallout';
+import { BillingNoticeAlert } from '@/components/usage/BillingNoticeAlert';
+import { classifyBillingError, type BillingNotice } from '@/lib/billing-errors';
 
 type Mode = 'video' | 'playlist';
 
@@ -48,16 +52,17 @@ interface VideoIntakeFormProps {
 
 /**
  * Hero entry form — the Generate page's primary surface.
- * Distinct from the sidebar's compact AddVideoInput: glass surface, focus-glow,
+ * Distinct from the Board page's compact BoardInlinePaste: glass surface, focus-glow,
  * larger controls, prominent Summarize CTA. Shares tokens, not markup.
  */
 export function VideoIntakeForm({ className, initialUrl }: VideoIntakeFormProps) {
   const [url, setUrl] = useState(initialUrl ?? '');
   const [mode, setMode] = useState<Mode>(() => detectMode((initialUrl ?? '').trim(), 'video'));
   const [error, setError] = useState<string | null>(null);
-  const [dailyLimit, setDailyLimit] = useState<{ resetAt: string | null; limitUsd: number | null } | null>(null);
+  const [billingNotice, setBillingNotice] = useState<BillingNotice | null>(null);
   const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
   const [playlistPreview, setPlaylistPreview] = useState<PlaylistPreviewType | null>(null);
+  const [importResult, setImportResult] = useState<PlaylistImportResult | null>(null);
 
   const formRef = useRef<HTMLFormElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -89,6 +94,9 @@ export function VideoIntakeForm({ className, initialUrl }: VideoIntakeFormProps)
     e.preventDefault();
     const trimmed = url.trim();
     if (!trimmed) return;
+    // A new attempt starts clean: no earlier refusal, error or import summary survives it.
+    setBillingNotice(null);
+    setImportResult(null);
 
     // Source of truth: derive mode from the URL at submit time, not state.
     const resolvedMode = detectMode(trimmed, mode);
@@ -105,7 +113,6 @@ export function VideoIntakeForm({ className, initialUrl }: VideoIntakeFormProps)
       }
       try {
         setError(null);
-        setDailyLimit(null);
         const result = await addVideo.mutateAsync({
           url: trimmed,
           folderId: selectedFolderId ?? undefined,
@@ -126,12 +133,9 @@ export function VideoIntakeForm({ className, initialUrl }: VideoIntakeFormProps)
           );
         }
       } catch (err) {
-        if (err instanceof ApiError && err.code === 'DAILY_LIMIT_REACHED') {
-          const details = err.details ?? {};
-          setDailyLimit({
-            resetAt: typeof details.resetAt === 'string' ? details.resetAt : null,
-            limitUsd: typeof details.limitUsd === 'number' ? details.limitUsd : null,
-          });
+        const notice = classifyBillingError(err);
+        if (notice) {
+          setBillingNotice(notice);
           setError(null);
           return;
         }
@@ -151,6 +155,11 @@ export function VideoIntakeForm({ className, initialUrl }: VideoIntakeFormProps)
         const preview = await previewMutation.mutateAsync({ url: trimmed });
         setPlaylistPreview(preview);
       } catch (err) {
+        const notice = classifyBillingError(err);
+        if (notice) {
+          setBillingNotice(notice);
+          return;
+        }
         setError(
           err instanceof Error
             ? err.message
@@ -162,14 +171,23 @@ export function VideoIntakeForm({ className, initialUrl }: VideoIntakeFormProps)
 
   const handleImportPlaylist = async () => {
     if (!playlistPreview) return;
+    setError(null);
+    setBillingNotice(null);
+    setImportResult(null);
     try {
-      await importMutation.mutateAsync({
+      const result = await importMutation.mutateAsync({
         url: url.trim(),
         folderId: selectedFolderId ?? undefined,
       });
       setPlaylistPreview(null);
       setUrl('');
+      if (result.failedCount > 0) setImportResult(result);
     } catch (err) {
+      const notice = classifyBillingError(err);
+      if (notice) {
+        setBillingNotice(notice);
+        return;
+      }
       setError(
         err instanceof Error ? err.message : "Couldn't start the playlist import. Try again.",
       );
@@ -179,6 +197,7 @@ export function VideoIntakeForm({ className, initialUrl }: VideoIntakeFormProps)
   const handleSampleClick = () => {
     setUrl(SAMPLE_VIDEO.url);
     setError(null);
+    setBillingNotice(null);
     setMode('video');
     inputRef.current?.focus();
     requestAnimationFrame(() => {
@@ -217,6 +236,7 @@ export function VideoIntakeForm({ className, initialUrl }: VideoIntakeFormProps)
                 // submission derives mode fresh from the URL at submit time.
                 if (next.trim()) setMode((prev) => detectMode(next.trim(), prev));
                 if (error) setError(null);
+                if (billingNotice) setBillingNotice(null);
               }}
               placeholder="Paste a YouTube video or playlist URL…"
               aria-label="YouTube URL"
@@ -274,16 +294,11 @@ export function VideoIntakeForm({ className, initialUrl }: VideoIntakeFormProps)
         </p>
       )}
 
-      {/* Daily cost limit callout (429) */}
-      {dailyLimit && (
-        <DailyLimitCallout
-          limitUsd={dailyLimit.limitUsd}
-          resetAtIso={dailyLimit.resetAt}
-        />
-      )}
+      {/* Billing refusal: not enough minutes (402), too long (422), blocked / busy / burst (403/429) */}
+      {billingNotice && <BillingNoticeAlert notice={billingNotice} className="text-center" />}
 
       {/* Error */}
-      {error && !dailyLimit && (
+      {error && (
         <p
           id="intake-error"
           role="alert"
@@ -309,6 +324,11 @@ export function VideoIntakeForm({ className, initialUrl }: VideoIntakeFormProps)
           <span aria-hidden="true">↘</span>
           Try an example: {SAMPLE_VIDEO.label}
         </button>
+      )}
+
+      {/* Items an import left out, and why */}
+      {importResult && (
+        <PlaylistImportSummary result={importResult} onDismiss={() => setImportResult(null)} />
       )}
 
       {/* Playlist preview — inline, not a modal */}

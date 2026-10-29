@@ -5,6 +5,7 @@ import {
   StreamErrorCard,
 } from "@/features/video-output/components/StreamingPlaceholder";
 import type { TriageResult } from "@vie/types";
+import { DirectionProvider } from "@/contexts/DirectionContext";
 
 const TRIAGE: TriageResult = {
   contentTags: ["tech"],
@@ -146,5 +147,44 @@ describe("StreamErrorCard", () => {
     render(<StreamErrorCard onRetry={() => {}} />);
 
     expect(screen.getByText(/something went wrong while processing/i)).toBeInTheDocument();
+  });
+
+  describe("for a video whose run already failed (VIDEO_FAILED)", () => {
+    it("should say Retry starts a new run, not show the stored message or the code", () => {
+      render(<StreamErrorCard message="KeyError: 'tabs'" code="VIDEO_FAILED" onRetry={() => {}} />);
+
+      expect(
+        screen.getByText("This video didn't finish processing. Retry starts it again as a new run."),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/KeyError|VIDEO_FAILED/)).toBeNull();
+    });
+
+    it("should still offer Retry", () => {
+      const onRetry = vi.fn();
+      render(<StreamErrorCard code="VIDEO_FAILED" onRetry={onRetry} />);
+
+      screen.getByRole("button", { name: /retry/i }).click();
+
+      expect(onRetry).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ["he", "הסרטון לא סיים להיות מעובד. ניסיון חוזר יפעיל אותו מחדש כהרצה חדשה."],
+      ["ar", "لم تكتمل معالجة هذا الفيديو. ستبدأ إعادة المحاولة تشغيلًا جديدًا."],
+    ])("should say it in %s under that direction context", (language, expected) => {
+      render(
+        <DirectionProvider language={language} isRTL>
+          <StreamErrorCard message="raw" code="VIDEO_FAILED" onRetry={() => {}} />
+        </DirectionProvider>,
+      );
+
+      expect(screen.getByText(expected)).toBeInTheDocument();
+    });
+
+    it("should leave the message of any other error code alone", () => {
+      render(<StreamErrorCard message="The AI service timed out." code="LLM_ERROR" onRetry={() => {}} />);
+
+      expect(screen.getByText("The AI service timed out.")).toBeInTheDocument();
+    });
   });
 });

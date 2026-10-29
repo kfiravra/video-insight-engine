@@ -23,9 +23,14 @@ const actionBodySchema = z.object({
 });
 
 export async function assistantRoutes(fastify: FastifyInstance) {
-  const { assistantClient, videoRepository } = fastify.container;
+  const { assistantClient, videoRepository, chatFairUse } = fastify.container;
 
   // POST /api/videos/:videoSummaryId/chat
+  // Free accounts: one shared 24 h message allowance with the library chat
+  // (CHAT_LIMIT_REACHED, 429). Pro is unlimited; chat never touches the ledger.
+  // The allowance is counted in the handler, after the global rate limiter (which
+  // runs at the end of the preHandlers) and after validation and the access check,
+  // so a request that is refused for another reason does not burn a message.
   fastify.post<{
     Params: { videoSummaryId: string };
     Body: z.infer<typeof chatBodySchema>;
@@ -47,6 +52,8 @@ export async function assistantRoutes(fastify: FastifyInstance) {
     if (!hasAccess) {
       throw new VideoNotFoundError();
     }
+
+    await chatFairUse.consume(req.user.userId);
 
     // Upstream abort tied to client disconnect: when the browser goes away,
     // tear down the assistant fetch/stream immediately instead of proxying

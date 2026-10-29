@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import { ApiError } from '../lib/api-error';
 import { ErrorState } from './ErrorState';
 
 describe('ErrorState', () => {
@@ -43,5 +44,30 @@ describe('ErrorState', () => {
     const alert = screen.getByRole('alert');
     expect(alert).toBeTruthy();
     expect(alert.className).toContain('py-2');
+  });
+
+  it('should show the server\'s explanation of an API error, not the generic status line', () => {
+    render(<ErrorState error={new ApiError(403, 'API error: 403 Forbidden', 'A named admin session is required')} />);
+
+    expect(screen.getByText('A named admin session is required')).toBeTruthy();
+    expect(screen.queryByText(/403 Forbidden/)).toBeNull();
+  });
+
+  it('should fall back to the generic message when the server sent no explanation', () => {
+    render(<ErrorState error={new ApiError(502, 'API error: 502 Bad Gateway')} />);
+
+    expect(screen.getByText('API error: 502 Bad Gateway')).toBeTruthy();
+  });
+
+  it('should show the explanation in the compact form too', () => {
+    render(<ErrorState compact error={new ApiError(400, 'API error: 400', 'minutes: too big')} />);
+
+    expect(screen.getByText('minutes: too big')).toBeTruthy();
+  });
+
+  it('should say the error is unknown when there is none', () => {
+    render(<ErrorState error={null} />);
+
+    expect(screen.getByText('Unknown error')).toBeTruthy();
   });
 });

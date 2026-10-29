@@ -22,7 +22,7 @@ def test_runner_class_exists_and_processes_a_message() -> None:
         "youtubeId": "dQw4w9WgXcQ",
         "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
         "userId": "u",
-        "tier": "free",
+        "plan": "free",
         "priority": 1,
         "providers": None,
         "bypassCache": False,
@@ -40,6 +40,7 @@ def test_runner_class_exists_and_processes_a_message() -> None:
     republish = AsyncMock()
 
     import asyncio
+
     runner = WorkerRunner(run_pipeline=pipeline, republish=republish, max_retries=3)
     outcome = asyncio.run(runner.process_message(msg))
     assert outcome == JobOutcome.SUCCESS

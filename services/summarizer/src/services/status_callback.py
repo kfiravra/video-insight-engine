@@ -21,8 +21,13 @@ async def send_video_status(
     progress: int | None = None,
     message: str | None = None,
     error: str | None = None,
+    cache_hit: bool = False,
 ):
-    """Send video status update to API for WebSocket broadcast."""
+    """Send video status update to API for WebSocket broadcast.
+
+    ``cache_hit`` marks a ``completed`` that was served from the response
+    cache with no run: vie-api releases the run's minutes hold as cached (I3).
+    """
     try:
         async with httpx.AsyncClient() as client:
             payload = {
@@ -41,6 +46,8 @@ async def send_video_status(
                 payload["payload"]["message"] = message
             if error:
                 payload["payload"]["error"] = error
+            if cache_hit:
+                payload["payload"]["cacheHit"] = True
 
             await client.post(
                 f"{settings.API_URL}/internal/status",

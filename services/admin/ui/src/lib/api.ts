@@ -1,13 +1,10 @@
-const API_BASE = '';
+import { ApiError, errorDetail } from './api-error';
+import type { BillingAccountDetail, BillingAccountQuery } from './billing';
 
-export class ApiError extends Error {
-  status: number;
-  constructor(status: number, message: string) {
-    super(message);
-    this.name = 'ApiError';
-    this.status = status;
-  }
-}
+// The error helpers live in ./api-error; callers keep importing them from here.
+export { ApiError, describeApiError } from './api-error';
+
+const API_BASE = '';
 
 function getApiKey(): string | null {
   return localStorage.getItem('admin_api_key');
@@ -31,7 +28,7 @@ export function logout() {
 }
 
 /** Build a query string from key-value pairs, omitting undefined values. */
-function qs(params: Record<string, string | number | undefined>): string {
+export function qs(params: Record<string, string | number | undefined>): string {
   const sp = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
     if (v !== undefined) sp.set(k, String(v));
@@ -40,7 +37,7 @@ function qs(params: Record<string, string | number | undefined>): string {
   return s ? `?${s}` : '';
 }
 
-async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const key = getApiKey();
   const res = await fetch(`${API_BASE}${path}`, {
     ...init,
@@ -55,7 +52,7 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(401, 'Unauthorized');
   }
   if (!res.ok) {
-    throw new ApiError(res.status, `API error: ${res.status} ${res.statusText}`);
+    throw new ApiError(res.status, `API error: ${res.status} ${res.statusText}`, await errorDetail(res));
   }
   return res.json();
 }
@@ -160,7 +157,8 @@ export interface UserCostRow {
   userId: string;
   email: string | null;
   name: string | null;
-  tier: string;
+  /** The account plan (`free` | `pro`); `free` for a user with no account row yet. */
+  plan: string;
   totalCostUsd: number;
   videoCount: number;
   creditAdjustmentUsd: number;
@@ -191,12 +189,33 @@ export interface UserCostDetail {
   adjustments: UserCostAdjustment[];
 }
 
+/** What vie-api answers a minutes grant with (the account snapshots are not needed by the form). */
 export interface GrantCreditResponse {
-  userId: string;
-  date: string;
-  amountUsd: number;
-  creditAdjustmentUsd: number;
-  effectiveUsd: number;
+  lotId: string;
+  /** Pairs the ledger lot with its `adminAudit` row. */
+  auditId: string;
+}
+
+export interface GrantCreditRequest {
+  /** Whole minutes, 1–100000. */
+  minutes: number;
+  reason: string;
+  /** ISO 8601 with an offset; omitted = the lot never expires. */
+  expiresAt?: string;
+}
+
+/** The three operator alert thresholds (`llm_alert_config`). */
+export interface AlertThresholds {
+  cost_threshold_usd: number;
+  daily_spike_multiplier: number;
+  failure_rate_threshold: number;
+}
+
+/** What vie-api answers a threshold change with: the thresholds as they were and are, and the audit row's id. */
+export interface AlertConfigChange {
+  before: AlertThresholds;
+  after: AlertThresholds;
+  auditId: string | null;
 }
 
 // --- Run-grouped usage types (GET /usage/by-run) ---
@@ -375,6 +394,16 @@ export interface VideoPurgeResponse {
   warnings: string[];
 }
 
+// --- Billing account (GET /billing/accounts/{user_id}) --- types live in ./billing
+
+export type * from './billing';
+
+export function getBillingAccount(userId: string, query: BillingAccountQuery = {}) {
+  return apiFetch<BillingAccountDetail>(
+    `/billing/accounts/${encodeURIComponent(userId)}${qs({ limit: query.limit, before: query.before })}`,
+  );
+}
+
 export const api = {
   usage: {
     stats: (days = 30) => apiFetch<Record<string, number>>(`/usage/stats${qs({ days })}`),
@@ -407,11 +436,12 @@ export const api = {
   alerts: {
     recent: (limit = 20) => apiFetch<Array<Record<string, unknown>>>(`/alerts/recent${qs({ limit })}`),
     config: () => apiFetch<Record<string, number>>('/alerts/config'),
-    updateConfig: (config: Record<string, number>) =>
-      apiFetch<Record<string, unknown>>('/alerts/config', {
+    /** Replace the thresholds as the signed-in admin; vie-api requires a `reason` and audits the change. */
+    updateConfig: (config: AlertThresholds, reason: string) =>
+      apiFetch<AlertConfigChange>('/alerts/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config),
+        body: JSON.stringify({ ...config, reason }),
       }),
   },
   users: {
@@ -419,14 +449,25 @@ export const api = {
       apiFetch<UserCostRow[]>(`/users/costs${qs({ days, limit, offset })}`),
     costDetail: (userId: string, days = 30) =>
       apiFetch<UserCostDetail>(`/users/${encodeURIComponent(userId)}/costs${qs({ days })}`),
-    grantCredit: (userId: string, body: { amountUsd: number; reason: string; adminId: string; date?: string }) =>
+    /**
+     * Grant minutes (a credit lot) as the signed-in admin. The server takes who
+     * acted from the session, never from the body. `idempotencyKey` (one per
+     * submission) lets a retry after a timeout apply once.
+     */
+    grantCredit: (userId: string, body: GrantCreditRequest, idempotencyKey?: string) =>
       apiFetch<GrantCreditResponse>(`/users/${encodeURIComponent(userId)}/grant-credit`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
+        },
         body: JSON.stringify(body),
       }),
     activity: (userId: string) =>
       apiFetch<UserActivityResponse>(`/users/${encodeURIComponent(userId)}/activity`),
+  },
+  billing: {
+    account: getBillingAccount,
   },
   queue: {
     stats: () => apiFetch<QueueStatsResponse>('/queue/stats'),

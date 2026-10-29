@@ -167,6 +167,31 @@ describe("videosApi", () => {
       expect(result.meta).toBeNull();
     });
 
+    it("should pass updateAvailable through for a copy made by an older pipeline", async () => {
+      server.use(
+        http.get(`${API_URL}/videos/:id`, ({ params }) => {
+          return HttpResponse.json({
+            id: params.id as string,
+            videoSummaryId: "sum-1",
+            youtubeId: "abc123",
+            title: "Stale Video",
+            creator: null,
+            duration: 300,
+            thumbnailUrl: null,
+            status: "completed",
+            folderId: null,
+            meta: null,
+            tabs: [],
+            updateAvailable: true,
+          });
+        })
+      );
+
+      const result = await videosApi.get("video-stale");
+
+      expect(result.updateAvailable).toBe(true);
+    });
+
     it("should throw on not found", async () => {
       server.use(
         http.get(`${API_URL}/videos/:id`, () => {
@@ -180,6 +205,53 @@ describe("videosApi", () => {
       await expect(videosApi.get("nonexistent")).rejects.toThrow(
         "Video not found"
       );
+    });
+  });
+
+  describe("updateToLatest", () => {
+    it("should post the url and folder with updateToLatest set", async () => {
+      let capturedBody: unknown = null;
+
+      server.use(
+        http.post(`${API_URL}/videos`, async ({ request }) => {
+          capturedBody = await request.json();
+          return HttpResponse.json({
+            video: createMockVideo({ id: "video-1" }),
+            cached: false,
+          });
+        })
+      );
+
+      const result = await videosApi.updateToLatest(
+        "https://www.youtube.com/watch?v=abc123",
+        "folder-1"
+      );
+
+      expect(capturedBody).toEqual({
+        url: "https://www.youtube.com/watch?v=abc123",
+        folderId: "folder-1",
+        updateToLatest: true,
+      });
+      expect(result.video.id).toBe("video-1");
+    });
+
+    it("should surface the billing code and fields of a refusal", async () => {
+      server.use(
+        http.post(`${API_URL}/videos`, () => {
+          return HttpResponse.json(
+            { error: "INSUFFICIENT_MINUTES", message: "Not enough minutes", needed: 31, available: 12 },
+            { status: 402 }
+          );
+        })
+      );
+
+      await expect(
+        videosApi.updateToLatest("https://www.youtube.com/watch?v=abc123")
+      ).rejects.toMatchObject({
+        status: 402,
+        code: "INSUFFICIENT_MINUTES",
+        details: { needed: 31, available: 12 },
+      });
     });
   });
 
@@ -310,6 +382,38 @@ describe("videosApi", () => {
       );
 
       expect(result.cached).toBe(true);
+    });
+
+    it("should return alreadyExists and updateAvailable for a copy the user already has", async () => {
+      server.use(
+        http.post(`${API_URL}/videos`, () => {
+          return HttpResponse.json({
+            video: createMockVideo({ id: "existing-video" }),
+            cached: true,
+            alreadyExists: true,
+            updateAvailable: true,
+          });
+        })
+      );
+
+      const result = await videosApi.create("https://www.youtube.com/watch?v=existing");
+
+      expect(result).toMatchObject({ cached: true, alreadyExists: true, updateAvailable: true });
+    });
+
+    it("should not ask for an update on a plain submit", async () => {
+      let capturedBody: Record<string, unknown> = {};
+
+      server.use(
+        http.post(`${API_URL}/videos`, async ({ request }) => {
+          capturedBody = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json({ video: createMockVideo(), cached: true });
+        })
+      );
+
+      await videosApi.create("https://www.youtube.com/watch?v=test", "folder-1", true);
+
+      expect(capturedBody).not.toHaveProperty("updateToLatest");
     });
 
     it("should throw on invalid URL", async () => {

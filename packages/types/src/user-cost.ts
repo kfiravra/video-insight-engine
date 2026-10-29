@@ -1,8 +1,11 @@
 // ═══════════════════════════════════════════════════
-// Per-User Daily Cost Tracking
+// Per-User Daily Cost Tracking (legacy, read-only)
 // ═══════════════════════════════════════════════════
-
-import type { UserTier } from './user.js';
+//
+// `userCosts` / `userCostAdjustments` were the per-user dollar gate's
+// counters. Since billing-roles P3.2 nothing writes them: there is no
+// per-user dollar cap. They stay as history (vie-admin's cost views, the
+// P3.8 migration reads the adjustments) and are erased by the GDPR cascade.
 
 /** Daily cost aggregate for a single user.
  *  Compound unique index: `{ userId, date }`.
@@ -21,24 +24,6 @@ export interface UserDailyCost {
   creditAdjustmentUsd: number;
   updatedAt: string;
 }
-
-/** Result of `checkUserCanProcess` — whether a new video can be started for this user. */
-export interface UserCostCheck {
-  allowed: boolean;
-  /** USD already spent today (after credit adjustments). */
-  usedUsd: number;
-  /** Daily limit for the user's tier. `-1` = unlimited. */
-  limitUsd: number;
-  /** USD remaining before block. `null` for unlimited tiers (Infinity doesn't survive JSON). */
-  remainingUsd: number | null;
-  /** ISO timestamp of next UTC midnight reset. */
-  resetAt: string;
-  /** Resolved tier name. */
-  tier: UserTier;
-}
-
-/** Daily cost limits per tier in USD. `-1` = unlimited (admin). */
-export type CostLimitsPerTier = Record<UserTier, number>;
 
 /** Admin audit record for credit adjustments.
  *

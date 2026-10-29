@@ -158,6 +158,72 @@ describe('MongoDB plugin', () => {
       expect(dedupIndex?.partialFilterExpression).toEqual({ dedupKey: { $exists: true } });
     });
 
+    describe('billing ledger indexes', () => {
+      const findIndex = async (collection: string, key: Record<string, number>) => {
+        const indexes = await app.mongo.db.collection(collection).indexes();
+        return indexes.find((idx) => JSON.stringify(idx.key) === JSON.stringify(key));
+      };
+
+      it('should make billingAccounts unique per owner', async () => {
+        const index = await findIndex('billingAccounts', { ownerType: 1, ownerId: 1 });
+        expect(index?.unique).toBe(true);
+      });
+
+      it('should index billingAccounts by hold requestId for settle/release', async () => {
+        expect(await findIndex('billingAccounts', { 'holds.requestId': 1 })).toBeDefined();
+      });
+
+      it('should make ledgerEntries.idempotencyKey unique', async () => {
+        const index = await findIndex('ledgerEntries', { idempotencyKey: 1 });
+        expect(index?.unique).toBe(true);
+      });
+
+      it('should index ledgerEntries by account newest-first and by source ref', async () => {
+        expect(await findIndex('ledgerEntries', { accountId: 1, createdAt: -1 })).toBeDefined();
+        expect(await findIndex('ledgerEntries', { 'source.ref': 1 })).toBeDefined();
+      });
+
+      it('should index open creditLots in FIFO order with a minutesRemaining > 0 partial filter', async () => {
+        const index = await findIndex('creditLots', { accountId: 1, expiresAt: 1, createdAt: 1 });
+        expect(index?.partialFilterExpression).toEqual({ minutesRemaining: { $gt: 0 } });
+      });
+
+      it('should index recurringGrants by account and by nextRunAt', async () => {
+        expect(await findIndex('recurringGrants', { accountId: 1 })).toBeDefined();
+        expect(await findIndex('recurringGrants', { nextRunAt: 1 })).toBeDefined();
+      });
+
+      it('should index llm_usage by request_id for the settle cost lookup', async () => {
+        expect(await findIndex('llm_usage', { request_id: 1, timestamp: -1 })).toBeDefined();
+      });
+
+      it('should index what the repair job scans: hold age, account changes, expired open lots', async () => {
+        expect(await findIndex('billingAccounts', { 'holds.createdAt': 1 })).toBeDefined();
+        expect(await findIndex('billingAccounts', { updatedAt: 1 })).toBeDefined();
+        const expiry = await findIndex('creditLots', { expiresAt: 1 });
+        expect(expiry?.partialFilterExpression).toEqual({ minutesRemaining: { $gt: 0 } });
+      });
+    });
+
+    describe('adminAudit indexes', () => {
+      const hasIndex = async (key: Record<string, number>) => {
+        const indexes = await app.mongo.db.collection('adminAudit').indexes();
+        return indexes.some((idx) => JSON.stringify(idx.key) === JSON.stringify(key));
+      };
+
+      it('should index adminAudit by target, newest first', async () => {
+        expect(await hasIndex({ targetId: 1, createdAt: -1 })).toBe(true);
+      });
+
+      it('should index adminAudit by actor, newest first', async () => {
+        expect(await hasIndex({ actorId: 1, createdAt: -1 })).toBe(true);
+      });
+
+      it('should index adminAudit by createdAt for the unfiltered newest-first page', async () => {
+        expect(await hasIndex({ createdAt: -1 })).toBe(true);
+      });
+    });
+
   });
 
   describe('llm_usage legacy TTL index migration', () => {

@@ -1,8 +1,10 @@
 """Email/password login for the admin panel.
 
-Validates credentials against the shared ``users`` collection and requires
-``role: "admin"`` on the user document. Successful logins receive an
-HMAC-signed session token accepted by ``ApiKeyMiddleware``.
+Validates credentials against the shared ``users`` collection and requires an
+active admin: the same rule the session middleware re-applies on every
+request (``src.roles.is_active_admin``). Successful logins receive an
+HMAC-signed session token naming the user, accepted by ``ApiKeyMiddleware``.
+Logs carry the user id, never the email.
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from src.auth import SESSION_TOKEN_TTL_SECONDS, create_session_token
 from src.dependencies import get_database
+from src.roles import is_active_admin
 
 logger = structlog.get_logger(__name__)
 
@@ -80,6 +83,11 @@ def _password_matches(password: str, stored_hash: object) -> bool:
         return False
 
 
+def _user_id(user: dict[str, object] | None) -> str:
+    """The user's ObjectId as hex, or ``""`` when there is no such user."""
+    return str(user["_id"]) if user is not None else ""
+
+
 @router.post("/auth/login", response_model=LoginResponse)
 async def login(body: LoginRequest, request: Request) -> LoginResponse:
     client_ip = request.client.host if request.client else "unknown"
@@ -94,13 +102,14 @@ async def login(body: LoginRequest, request: Request) -> LoginResponse:
     stored_hash = user.get("passwordHash") if user else None
     valid = await asyncio.to_thread(_password_matches, body.password, stored_hash)
 
-    if user is None or not valid or user.get("role") != "admin" or user.get("deletedAt"):
-        logger.info("admin_login_rejected", email=email)
+    if user is None or not valid or not is_active_admin(user):
+        logger.info("admin_login_rejected", user_id=_user_id(user))
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
-    logger.info("admin_login_success", email=email)
+    user_id = _user_id(user)
+    logger.info("admin_login_success", user_id=user_id)
     return LoginResponse(
-        token=create_session_token(email),
+        token=create_session_token(user_id, email),
         email=email,
         expires_in=SESSION_TOKEN_TTL_SECONDS,
     )

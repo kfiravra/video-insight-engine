@@ -23,7 +23,7 @@ DELETE /api/users/me ──┐                              │
                         │  or admin can override)     │
                         │                             │
                         ▼                             │
-            POST /internal/run-deletions (on call)    │  ← Phase 4: sweep (no scheduler in repo)
+   billing repair job (every 5 min) / POST /internal/run-deletions │  ← Phase 4: sweep
                         │                             │
                         ▼                             │
               userDeletionService.runScheduledDeletions()
@@ -36,6 +36,8 @@ DELETE /api/users/me ──┐                              │
         agentNotes  userVideos         userCosts      │
               ▼         ▼                  ▼          │
         folders    idempotencyKeys   userCostAdjustments
+              ▼         ▼                  ▼          │
+      dispatch stamp  billing (pseudonymise, Q12)     │
               ▼         ▼                  ▼          │
           Qdrant      S3              users (last)    │
               │         │                  │          │
@@ -52,12 +54,12 @@ DELETE /api/admin/users/:id?immediate=true ──────────┘  �
 
 | Endpoint | Auth | Purpose |
 |---|---|---|
-| `DELETE /api/users/me` | JWT | Self-service soft delete. Returns 202 + `scheduledHardDeleteAt`. |
-| `POST /api/users/me/restore` | JWT (bypasses soft-delete check) | Cancel a pending deletion within 30 days. |
-| `DELETE /api/admin/users/:id?immediate=true` | `x-admin-key` header | Run the cascade now (compliance escape hatch). |
-| `DELETE /api/admin/users/:id` (no `immediate`) | `x-admin-key` header | Schedule the same soft delete as the user-initiated flow. |
-| `POST /internal/run-deletions` | `x-internal-secret` header | Sweep entrypoint — sweeps `hardDeleteAt <= now` and runs the cascade for each. It runs only when called; this repo configures no scheduler for it (see "Running the sweep"). |
-| `DELETE /api/admin/videos/:youtubeId` | `x-admin-key` header | Not GDPR: the **video** cascade (`VideoCascadeService`), which removes one video from every store for every user. Listed here because it is the only path that deletes the shared rows the user cascade keeps. |
+| `DELETE /api/users/me` | JWT | Self-service soft delete. Returns 202 + `scheduledHardDeleteAt`; `409 LAST_ADMIN` when the caller is the last active admin. |
+| `POST /api/users/me/restore` | JWT (bypasses soft-delete check) | Cancel a pending deletion within 30 days. When an admin had scheduled it, the cancellation is written to `adminAudit` (`users.delete.cancel`, actor the user, `before` naming the scheduling admin); undoing one's own deletion writes no row. |
+| `DELETE /api/admin/users/:id?immediate=true` | `x-admin-key` + signed `x-admin-actor` (`users:delete`) | Run the cascade now (compliance escape hatch). Writes an `adminAudit` row. |
+| `DELETE /api/admin/users/:id` (no `immediate`) | `x-admin-key` + signed `x-admin-actor` (`users:delete`) | Schedule the same soft delete as the user-initiated flow, with the admin stored as its origin. Writes an `adminAudit` row at request time. |
+| `POST /internal/run-deletions` | `x-internal-secret` header | Manual sweep entrypoint — sweeps `hardDeleteAt <= now` and runs the cascade for each. The same sweep runs on a schedule inside vie-api (see "Running the sweep"). |
+| `DELETE /api/admin/videos/:youtubeId` | `x-admin-key` + signed `x-admin-actor` (`videos:purge`) | Not GDPR: the **video** cascade (`VideoCascadeService`), which removes one video from every store for every user. Listed here because it is the only path that deletes the shared rows the user cascade keeps. |
 
 ## Key files
 
@@ -81,14 +83,21 @@ Steps run in `executeHardDelete()` in this exact order:
 5. **`userCostAdjustments`**
 6. **`idempotencyKeys`**
 7. **`videoSummaryCache` dispatch stamp** — `updateMany({ userId: "<id>" }, { $unset: { userId, requestId } })`. The row itself stays (shared); only the dispatching user's id and request id are unset. The id is a **string** here, not an ObjectId — `POST /summarize` receives it as JSON. Matched row count is logged as `videoCacheRowsUnstamped` (not part of the audit `counts`).
-8. **Qdrant user content** (placeholder — see below)
-9. **S3 user objects** (placeholder — see below)
-10. **`users`** (the FK anchor, dropped last)
-11. **`userDeletions`** audit insert
+8. **Billing and its audit trail — pseudonymised, not deleted (brief Q12, review C1)** (`api/src/repositories/billing-erasure.repository.ts`). The minutes ledger is append-only and its amounts are accounting records, so erasure drops every way back to the user and keeps the amounts. Leaving the real id anywhere would not be erasure: `userDeletions.originalUserId` keeps it, and the P3.8 migration derives its audit ids from it (`auditIdFor(userId, step)`), so anything holding the id — or a value computed from it — joins back.
+   - **User links → one fresh tombstone ObjectId**: `billingAccounts.ownerId`, `holds[].userId`, `ledgerEntries.userId`, and `adminAudit.targetId` of every row about the user, whatever its `targetType` (`user`, `role`, …), plus any copy of the id inside that row's `before` / `after` (an AccountSnapshot's `ownerId`).
+   - **Recomputable ids → fresh random values**, one per old value so the account's own joins still hold: the account's ledger `auditId`, `source.ref` and `idempotencyKey`, its lots' `source.ref`, its holds' run ids, `capsAuditIds`, its recurring grants' `auditId`, and the `_id` of its adminAudit rows (re-inserted; an `_id` cannot be updated). Random, never derived from the old value. `system` / `recurring` refs name only ids inside the account and stay.
+   - **Where the user acted as an admin**: `ledgerEntries.actorId` / `recurringGrants.actorId` / `adminAudit.actorId` become `system:erased-user`, and adminAudit's `actorEmail` and `ip` are removed. The rows themselves stay (they are the other users' history).
+   - The account's recurring grants are retired (`active: false`, `deletedAt`), its `creditLots` keep their amounts, the user's `billingShadow` rows (P1 diagnostics) are deleted. Other users' rows keep their ids, so the migration still recognises its own work for live users.
+   - One transaction, so a failed run moves nothing and a re-run is a no-op; a user with nothing to erase skips it (no replica set needed). Counts are logged as `billingErased` (not part of the audit `counts`). Free-text `reason` fields are kept, like the rest of the accounting record. The `users.delete` row an immediate admin delete writes *after* the cascade still names the real id — it is the deletion proof, like `userDeletions`.
+   - `gdpr-cascade.integration.test.ts` asserts there is no join back: the migration's recomputed ids find nothing, no adminAudit row contains the real id, email or IP, and the account's audit joins reach only the tombstone.
+9. **Qdrant user content** (placeholder — see below)
+10. **S3 user objects** (placeholder — see below)
+11. **`users`** (the FK anchor, dropped last)
+12. **`userDeletions`** audit insert
 
 ### Idempotency
 
-Every step is naturally idempotent: `deleteMany({ userId: oid })` (or, for the `videoSummaryCache` stamp, an `$unset` keyed on the user's id) produces the same result whether it runs once or fifty times. If the cascade fails partway, re-invoking it is safe — the first delete-many is a no-op (nothing matches), the second processes the remainder.
+Every step is naturally idempotent: `deleteMany({ userId: oid })` (or, for the `videoSummaryCache` stamp, an `$unset` keyed on the user's id; for billing, an update that moves every match off the user's id) produces the same result whether it runs once or fifty times. If the cascade fails partway, re-invoking it is safe — the first delete-many is a no-op (nothing matches), the second processes the remainder.
 
 ### Error handling
 
@@ -98,10 +107,11 @@ Each step is wrapped in `runStep`, which catches and records the error as a `war
 
 | Store | Why we don't delete |
 |---|---|
-| `videoSummaryCache` | Shared cache, keyed by YouTube ID, not user. Deletion would break other users with the same video. Removed only by the video cascade (`DELETE /api/admin/videos/:youtubeId`). **Exception — the dispatch stamp:** `POST /summarize` writes the dispatching user's `userId` and `requestId` onto the row (so the SSE producer can attribute `llm_usage`), overwritten on every dispatch and left in place after the run; cascade step 7 unsets both for the deleted user. |
+| `videoSummaryCache` | Shared cache, keyed by YouTube ID, not user. Deletion would break other users with the same video. Removed only by the video cascade (`DELETE /api/admin/videos/:youtubeId`). **Exception — the dispatch stamp:** `POST /summarize` writes the dispatching user's `userId` and `requestId` onto the row (so the SSE producer can attribute `llm_usage`), overwritten on every dispatch and left in place after the run (vie-api adds the ledger's `billingRunId` beside them); cascade step 7 unsets all three for the deleted user. |
 | Qdrant `transcript_chunks` | Same — video-scoped, not user-scoped. `user_id` payload is reserved but always `null` today (see `services/summarizer/src/services/vector/qdrant_service.py:153`). When that payload starts being populated for user-generated content, the cascade step is ready to flip from no-op to real delete. The video cascade deletes them by `video_id` through the summarizer's `POST /internal/videos/{id}/purge`. |
 | S3 `videos/{youtubeId}/...` | Same — video-scoped. No user-keyed S3 prefixes today; placeholder hook is wired for the future. The video cascade deletes the whole prefix. |
-| `llm_usage` | The cost ledger. Rows are kept indefinitely — there is **no TTL** (the legacy 90-day index is dropped at boot, see [`llm-cost-model.md`](./llm-cost-model.md#ledger-retention-decided-2026-07-06)). Rows carry the string `user_id` of whoever triggered the call, and the cascade has no `llm_usage` step, so after erasure the rows stay and keep that now-orphaned id (it is not hashed or unset). Deleting them would erase billing history and distort cost reports. If legal needs it gone, unset or hash `user_id` on the user's rows — not done today. |
+| `llm_usage` | The cost ledger. Rows are kept indefinitely — there is **no TTL** (the legacy 90-day index is dropped at boot, see [`llm-cost-model.md`](./llm-cost-model.md#ledger-retention-decided-2026-07-06)). Rows carry the string `user_id` of whoever triggered the call, and the cascade has no `llm_usage` step, so after erasure the rows keep that now-orphaned id until they are 90 days old. Deleting them would erase billing history and distort cost reports. **After 90 days the billing repair job unsets `user_id`, `request_id` and `prompt_preview`** on every row, from every service (`PRIVACY.md`: usage analytics older than 90 days carry no personal data; `request_id` would still join to the ledger's `source.ref`, whose rows name the user; `prompt_preview` is the first 200 characters of the prompt); cost, model, timestamp and `prompt_hash` stay. The assistant never stores `prompt_preview` at all (its chat prompts: `MongoDBUsageCallback(store_prompt_preview=False)`), and `scripts/migrate-billing.ts` clears it from the assistant rows written before that. |
+| Minutes ledger (`billingAccounts`, `ledgerEntries`, `creditLots`, `recurringGrants`) and the user's `adminAudit` rows | Accounting / audit records: pseudonymised by step 8 (user links → tombstone id, recomputable ids → fresh ones), never deleted. |
 | `shareLikes` / `shareViews` | Already anonymous (IP hashed). |
 | Paddle records | Out of our system — directed at Paddle's own GDPR portal in [`PRIVACY.md`](./PRIVACY.md). |
 
@@ -113,14 +123,16 @@ A previously-issued JWT remains cryptographically valid for its 15-minute TTL ev
 
 ## Running the sweep
 
-The sweep is just an internal HTTP endpoint, and **nothing in this repo calls it**: `scripts/backup-cron/crontab` only runs backups, and [`DEPLOY.md`](./DEPLOY.md) sets up no scheduler. Until a deployment drives the route from its own cron, a self-service deletion stays at the soft-delete stage past its 30-day `hardDeleteAt`; only the admin immediate delete (`?immediate=true`) runs the cascade without it.
+**Scheduled (billing-roles P1.6).** vie-api's billing repair job runs `userDeletionService.runScheduledDeletions()` every `BILLING_REPAIR_INTERVAL_SECONDS` (default 300) under the Redis lock `vie:api:billing-repair`, so a due account is hard-deleted within one interval of its `hardDeleteAt`. The job is on when `BILLING_REPAIR_ENABLED` is (default on in both composes since P3.2: the minutes ledger decides every submit, so Mongo must run as a replica set before this code is deployed, P6.4). A soft delete keeps the origin it was requested under when the job runs it: an admin's stays `initiatedBy: 'admin'`, the user's own is `'self'`; only a soft delete with no recorded origin (requested before origins were stored for self-service) is `'scheduler'`.
+
+The internal route stays for a manual or external run:
 
 ```bash
 curl -X POST -H "x-internal-secret: $INTERNAL_SECRET" \
   http://vie-api:3000/internal/run-deletions
 ```
 
-To schedule it, drive it from any cron source — Kubernetes CronJob, GitHub Actions on a schedule, host crontab, BullMQ if/when we adopt it. Daily at 03:00 UTC is the recommended cadence; running more often is harmless because every step is idempotent and a no-op past the first run.
+Driving it from an outside cron as well is harmless: every step is idempotent and a no-op past the first run.
 
 Example k8s CronJob skeleton (illustrative only; nothing in this repo deploys it):
 
@@ -153,11 +165,13 @@ spec:
 
 - `originalUserId` (string form of the deleted ObjectId)
 - `emailHash` — SHA-256 of the lowercased, trimmed email. Never the plaintext.
-- `initiatedBy`: `'self' | 'admin' | 'scheduler'`
+- `initiatedBy`: `'self' | 'admin' | 'scheduler'`. Every soft delete keeps its origin when the sweep later runs it: the request stores `users.deletionOrigin` (`initiatedBy`, `adminId`, `reason`; an operator id, no PII), the sweep reads it, and a restore (`cancelDeletion`) clears it. `DELETE /api/users/me` stores `'self'`, an admin's request stores `'admin'`; a soft delete with no stored origin (older rows) is recorded as `'scheduler'`.
 - `adminId`, `reason` — populated when `initiatedBy === 'admin'`
 - `counts` — rows deleted per inventory bucket
 - `startedAt`, `completedAt`, `durationMs`
 - `warnings[]` — per-step error messages when the cascade didn't run cleanly
+
+Admin deletions also write an **`adminAudit`** row (see [`SECURITY.md`](./SECURITY.md#roles-and-permissions)), at request time for both modes: action `users.delete`, `targetType: 'user'`, `targetId` the user id, `after.mode` `'immediate'` or `'scheduled'`, the admin (`actorId`, the user id from the signed `x-admin-actor` header), the `reason`, request id and client ip. So the soft delete is attributed when it is requested, 30 days before the `userDeletions` row exists. The `adminAudit` row carries the user id but no email.
 
 To prove a specific email was erased: hash the email with the same SHA-256 (lowercase, trim) and look it up in `userDeletions.emailHash`. The match plus the row's `completedAt` is the legal proof.
 

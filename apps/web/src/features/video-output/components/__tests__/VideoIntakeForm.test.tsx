@@ -12,18 +12,19 @@ const API_URL = "http://localhost:3000/api";
 const VIDEO_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
 const PLAYLIST_URL = "https://www.youtube.com/playlist?list=PLrAXtmErZgOeiKm4sgNOknGvNjby9efdf";
 
-function rejectWithDailyLimit(): void {
+function rejectWithInsufficientMinutes(): void {
   server.use(
     http.post(`${API_URL}/videos`, () =>
       HttpResponse.json(
         {
-          error: "DAILY_LIMIT_REACHED",
-          message: "Daily limit reached",
-          statusCode: 429,
-          resetAt: "2026-10-06T00:00:00.000Z",
-          limitUsd: 1,
+          error: "INSUFFICIENT_MINUTES",
+          message: "This video needs 31 minutes; 12 available",
+          statusCode: 402,
+          needed: 31,
+          available: 12,
+          nextFreeAt: null,
         },
-        { status: 429 },
+        { status: 402 },
       ),
     ),
   );
@@ -79,12 +80,12 @@ describe("VideoIntakeForm", () => {
       await waitFor(() => expect(window.location.pathname).toBe("/video/video-42"));
     });
 
-    it("should show the daily limit callout when the account is out of budget", async () => {
-      rejectWithDailyLimit();
+    it("should show the minutes callout when the account cannot pay for the video", async () => {
+      rejectWithInsufficientMinutes();
 
       renderWithProviders(<VideoIntakeForm initialUrl={VIDEO_URL} />, { route: "/generate" });
 
-      expect(await screen.findByTestId("daily-limit-callout")).toBeInTheDocument();
+      expect(await screen.findByTestId("minutes-callout")).toBeInTheDocument();
     });
   });
 
@@ -105,8 +106,8 @@ describe("VideoIntakeForm", () => {
       expect(submissions.urls).toEqual([VIDEO_URL]);
     });
 
-    it("should unlock the input again after an out-of-budget response", async () => {
-      rejectWithDailyLimit();
+    it("should unlock the input again after a not-enough-minutes response", async () => {
+      rejectWithInsufficientMinutes();
 
       renderWithProviders(
         <StrictMode>
@@ -115,7 +116,7 @@ describe("VideoIntakeForm", () => {
         { route: "/generate" },
       );
 
-      await screen.findByTestId("daily-limit-callout");
+      await screen.findByTestId("minutes-callout");
       expect(screen.getByLabelText("YouTube URL")).toBeEnabled();
     });
   });

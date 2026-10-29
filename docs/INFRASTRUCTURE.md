@@ -32,6 +32,10 @@ Process once, reuse forever. Three layers absorb identical work across users so 
 | L2    | MongoDB | `youtubeId` field     | Persistent video summary + assembled tabs |
 | L3    | S3      | `youtube_id` prefix   | Extracted scene frames (skip re-extraction) |
 
+The api also records each admin mutation's signed actor header once in Redis (`vie:api:admin-actor-sig:<signature>`, `SET NX EX`, kept as long as the header could still pass its 300 s age check) so a captured header cannot be replayed. Unlike the dispatch guard this one fails closed: with Redis down an admin mutation is refused `503` ([SECURITY.md](./SECURITY.md#admin-api-key)).
+
+The api also keeps `vie:api:video-meta:<youtubeId>` (24 h TTL): the title, channel, duration and thumbnail that `GET /video/metadata` on the summarizer returned, so a pre-flight quote does not re-ask YouTube. A summarizer 404 (unknown or private video) is remembered for 10 minutes under `vie:api:video-meta-miss:<youtubeId>` so a dead id is not looked up again on every submit; no other failure is cached, and a Redis error just skips both caches.
+
 ### Shared vs per-user
 
 System caches are shared across users (same video → same summary). User data is **never** cached at the system level.
@@ -275,6 +279,32 @@ REDIS_URL=redis://vie-redis:6379
 # Must exceed the summarizer's PIPELINE_LOCK_TTL_SECONDS (default 600s).
 DISPATCH_GUARD_TTL_SECONDS=900
 
+# Submit burst guard (Redis key vie:api:submit-burst:<userId>, fixed 1 h window):
+# submissions per user per hour, one bucket for POST /api/videos, the assistant's
+# generate route and playlist import. 0 = off. Fails open if Redis is down.
+SUBMIT_BURST_LIMIT_PER_HOUR=20
+
+# Chat fair use (Redis key vie:api:chat-fair-use:<userId>, rolling 24 h sorted set):
+# messages a FREE account may send, one allowance for both chat routes. Pro is
+# unlimited. 0 = off. Fails open if Redis is down.
+CHAT_FREE_MESSAGES_PER_DAY=50
+
+# Billing repair job (billing-roles P1.6), in vie-api, every interval behind the
+# Redis lock vie:api:billing-repair (SET NX EX, TTL = the interval):
+#   settle/release holds older than BILLING_HOLD_MAX_AGE_HOURS whose run is
+#   terminal, missing, unstamped or stalled; expire lots past their expiry;
+#   apply due recurring grants (a lot that expires at the next run); check
+#   changed accounts against the ledger (drift → warn + llm_alerts row
+#   `billing_drift`, once per account per 24 h); unset llm_usage.user_id,
+#   request_id and prompt_preview older than 90 days; run the GDPR hard-delete sweep. Unset = on (off under
+#   NODE_ENV=test); both composes default to true. The minutes ledger decides
+#   every submit (no switch, no dollar cap — P3.2), so Mongo must run as a
+#   replica set before this code is deployed.
+BILLING_REPAIR_ENABLED=true
+BILLING_REPAIR_INTERVAL_SECONDS=300
+# must exceed the job queue's message TTL (1 h, queue-topology.ts) — boot refuses otherwise
+BILLING_HOLD_MAX_AGE_HOURS=3
+
 # ────────────────────────────────────────────────────
 # Qdrant (Vector DB for RAG)
 # ────────────────────────────────────────────────────
@@ -407,7 +437,7 @@ The per-stage defaults are the pipeline-1min 4.0d model A/B picks, rounds 1 + 2 
 | `ENVIRONMENT` | prod only: `production` | `production` arms the default-`INTERNAL_SECRET` refusal and the SSE soft-fail and keeps `PROMPT_SOURCE=disk` off; dev keeps `config.py`'s `""` (a dev name) |
 | `LOG_FORMAT` | prod only: `json` | `json` = CloudWatch-parseable logs; dev keeps `console` |
 | `API_URL` | prod only: `http://vie-api:3000` | Target of the `/internal/status` callbacks (dev keeps the same `config.py` default) |
-| `MAX_VIDEO_DURATION_MINUTES` / `WHISPER_MAX_DURATION_MINUTES` | prod only: `600` / `600` | Longest accepted video, and longest video allowed onto the paid audio fallback (the server template sets the demo's 30 / 30) |
+| `MAX_VIDEO_DURATION_MINUTES` / `WHISPER_MAX_DURATION_MINUTES` | prod only: `600` / `600` | Longest accepted video, and longest video allowed onto the paid audio fallback. The server template sets `180` / `180` (D2): paid minutes cover videos up to 180 minutes, so a lower cap would let the minutes gate admit a video the summarizer then refuses after the hold. With no row, prod gets the compose default 600 (the summarizer's own default); the minutes gate still caps submits at 180 |
 | `STALL_SWEEP_ENABLED` / `STALL_SWEEP_INTERVAL_SECONDS` / `STALL_THRESHOLD_MINUTES` | `true` / `300` / `30` | Summarizer stall sweeper — fails `processing` rows with no progress + no live producer lock, alerts `pipeline_stalled` |
 
 **Service-level lines (not the anchor)**
@@ -556,8 +586,8 @@ The summarizer pipeline runs from a durable RabbitMQ queue (when `USE_QUEUE_PIPE
   "youtubeId": "11-char string",
   "url": "https://...",
   "userId": "ObjectId hex | null",
-  "tier": "free | pro | team",
-  "priority": 1 | 5,                  // free=1, pro/team=5
+  "plan": "free | paid",              // what the run's minutes hold paid with (billing-roles P3.4)
+  "priority": 1 | 5,                  // free=1 (the free video), paid=5 (any plan or credit minutes)
   "providers": { "default": "...", "fast": "...", "fallback": "..." } | null,
   "bypassCache": false,
   "requestId": "uuid",
@@ -565,6 +595,13 @@ The summarizer pipeline runs from a durable RabbitMQ queue (when `USE_QUEUE_PIPE
   "createdAt": "ISO-8601"
 }
 ```
+
+`plan` replaced `tier` in P3.4: the priority follows what pays for the run,
+not the account's plan (a Pro account's free video queues at 1, a free
+account's credit minutes at 5). The `x-plan` header carries it too, and the
+worker tags the job's Sentry transaction with `plan`. A message published
+before the deploy still carries `tier`; the worker ignores it (`plan` then
+reads `free` for the tag only — the message keeps its priority).
 
 **Retry policy** — on consumer error the worker waits
 `WORKER_RETRY_BACKOFF_SECONDS × 2^(attempt-1)` (default 5 → 10 → 20 s, capped at
@@ -578,7 +615,7 @@ SSE producer uses (`pipeline_event_stream.acquire_lock`). When a client opens
 `/api/videos/:id/stream`, the existing SSE handler sees the lock held and attaches
 as a consumer of the Redis Streams event log — no frontend changes.
 
-**Admin endpoints** (require `X-Admin-Key` header):
+**Admin endpoints** (require the `X-Admin-Key` header; `POST /replay` also needs a signed `X-Admin-Actor` naming an admin with `queue:replay`, see [SECURITY.md](./SECURITY.md#admin-api-key)):
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -592,7 +629,7 @@ as a consumer of the Redis Streams event log — no frontend changes.
 
 ### Single-node replica set (`rs0`)
 
-Dev and prod run `mongod --replSet rs0` with exactly one member, `vie-mongodb:27017`. The only reason is multi-document transactions (the upcoming billing ledger writes several documents atomically), which MongoDB allows on replica sets only. There is no second node and no failover.
+Dev and prod run `mongod --replSet rs0` with exactly one member, `vie-mongodb:27017`. The only reason is multi-document transactions (the billing ledger writes several documents atomically), which MongoDB allows on replica sets only. There is no second node and no failover.
 
 | | Dev (`docker-compose.yml`) | Prod (`docker-compose.prod.yml`) |
 |---|---|---|
@@ -609,6 +646,8 @@ Dev and prod run `mongod --replSet rs0` with exactly one member, `vie-mongodb:27
 - **On the host** (`localhost:27017`) the member list names `vie-mongodb`, which the host cannot resolve, so a normal URI fails with `getaddrinfo ENOTFOUND vie-mongodb` (or a server-selection timeout). Every host-side URI needs `directConnection=true`: `mongodb://localhost:27017/video-insight-engine?directConnection=true`. `.env.example`, the `scripts/` defaults and the Playwright smoke seed carry it. A `.env` copied from an older `.env.example` needs the suffix added by hand. `mongosh` with no URI, and `docker exec vie-mongodb mongosh`, already connect directly.
 
 **Oplog.** A replica set keeps an oplog. The default is 5% of free disk (up to 50 GB; 44.5 GiB on the dev box), which would let it grow into the dev disk; with one member nothing replicates from it, so both compose files cap it at `--oplogSize 1024` (MB). The size is applied when the set is initiated; on an existing set, change it with `db.adminCommand({ replSetResizeOplog: 1, size: 1024 })`.
+
+**Tests.** `api/src/test/setup.ts` starts a `MongoMemoryReplSet` (one node) for every test file, so `session.withTransaction` works in any api test; `api/src/plugins/__tests__/transactions.test.ts` pins the commit and abort behaviour. A replica set costs about 1.3 s more per file than a standalone `MongoMemoryServer` (0.4 s start, 0.9 s stop). Files that create their own `MongoMemoryServer` stay standalone and cannot use transactions.
 
 **Converting an existing volume** needs no data migration: restarting the same data directory with `--replSet rs0` and letting the healthcheck initiate it keeps every document. Dev: `docker compose up -d vie-mongodb`, then restart the services that hold Mongo connections. Prod: see [DEPLOY.md](./DEPLOY.md), "Convert Mongo to a replica set". Rolling back is a redeploy of the previous compose file; the volume starts as a standalone again with its data (tested).
 
@@ -745,6 +784,8 @@ listed change first:
 | SSE proxy attach (`/api/videos/:id/stream`) | `api/src/routes/stream.routes.ts` | fine per-request, but the LB must not buffer (`X-Accel-Buffering: no`) | any non-buffering LB; no shared state |
 | Summarizer pipeline lock + response cache | Redis (`vie:*`) | already shared via Redis — safe | — |
 | RabbitMQ worker | `vie-summarizer-worker` | safe — competing consumers is the design | just scale the worker |
+| Billing repair job | `api/src/services/billing/billing-repair.service.ts` | safe — one run at a time across processes via the Redis lock `vie:api:billing-repair`; per-account writes are transactions | — |
+| Billing account write queue + shadow runner | `api/src/services/billing/keyed-mutex.ts`, `shadow-runner.ts` | in-process ordering only; other replicas meet as transaction write conflicts (retried) | — |
 | Admin health poller + alert evaluator | `services/admin/src/services/*.py` | N replicas → duplicate health snapshots and duplicate alerts (cooldowns make dupes rare, not impossible) | leader election, or keep admin at 1 replica |
 
 vie-assistant is stateless per-request (state in Mongo/Qdrant) and can scale
@@ -793,7 +834,7 @@ cp .env.example .env.prod             # then fill EVERY ${VAR:?} secret:
                                       # (a 0400, uid-999 file — DEPLOY.md), REDIS_PASSWORD,
                                       # RABBITMQ_USER/PASS, JWT_SECRET,
                                       # JWT_REFRESH_SECRET, INTERNAL_SECRET,
-                                      # ADMIN_API_KEY, PADDLE_WEBHOOK_SECRET,
+                                      # ADMIN_API_KEY,
                                       # FRONTEND_URL, VITE_API_URL, VITE_WS_URL
 
 # 2. Validate interpolation (fails fast on any missing secret)

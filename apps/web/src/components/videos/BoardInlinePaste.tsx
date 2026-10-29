@@ -7,6 +7,8 @@ import { useAddVideo } from '@/hooks/use-videos';
 import { hasPlaylistId, hasVideoId, isYouTubeUrl } from '@/lib/youtube-utils';
 import { cn } from '@/lib/utils';
 import { showDuplicateToast } from '@/features/video-output/lib/duplicate-toast';
+import { BillingNoticeAlert } from '@/components/usage/BillingNoticeAlert';
+import { classifyBillingError, type BillingNotice } from '@/lib/billing-errors';
 
 interface BoardInlinePasteProps {
   /** Folder to add the video into — passed from the current Board selection.
@@ -30,6 +32,7 @@ export const BoardInlinePaste = memo(function BoardInlinePaste({
 }: BoardInlinePasteProps) {
   const [url, setUrl] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [billingNotice, setBillingNotice] = useState<BillingNotice | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
   const addVideo = useAddVideo();
@@ -54,6 +57,7 @@ export const BoardInlinePaste = memo(function BoardInlinePaste({
 
     try {
       setError(null);
+      setBillingNotice(null);
       const result = await addVideo.mutateAsync({
         url: value,
         folderId: folderId ?? undefined,
@@ -65,6 +69,11 @@ export const BoardInlinePaste = memo(function BoardInlinePaste({
         navigate(`/video/${result.video.id}`);
       }
     } catch (err) {
+      const notice = classifyBillingError(err);
+      if (notice) {
+        setBillingNotice(notice);
+        return;
+      }
       setError(
         err instanceof Error
           ? err.message
@@ -98,6 +107,7 @@ export const BoardInlinePaste = memo(function BoardInlinePaste({
             onChange={(e) => {
               setUrl(e.target.value);
               if (error) setError(null);
+              if (billingNotice) setBillingNotice(null);
             }}
             placeholder="Paste a YouTube URL to add a new summary…"
             aria-label="YouTube URL"
@@ -138,6 +148,8 @@ export const BoardInlinePaste = memo(function BoardInlinePaste({
           That doesn&apos;t look like a YouTube link.
         </p>
       )}
+
+      {billingNotice && <BillingNoticeAlert notice={billingNotice} className="mt-2" />}
 
       {error && (
         <p

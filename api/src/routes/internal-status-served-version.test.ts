@@ -59,6 +59,31 @@ describe('POST /internal/status — served version', () => {
     expect(mockContainer.videoRepository.restoreServedVersion).toHaveBeenCalledWith(videoSummaryId);
   });
 
+  it('should hand an update\'s entries back to the copy they left when the run fails (D-LIB)', async () => {
+    const videoSummaryId = new ObjectId().toHexString();
+
+    await relayStatus(videoSummaryId, 'failed');
+
+    expect(mockContainer.libraryUpdateRepository.restoreFailedUpdates).toHaveBeenCalledWith(videoSummaryId);
+  });
+
+  it('should forget the copy an update left when the run completes (D-LIB)', async () => {
+    const videoSummaryId = new ObjectId().toHexString();
+
+    await relayStatus(videoSummaryId, 'completed');
+
+    expect(mockContainer.libraryUpdateRepository.clearSettledUpdates).toHaveBeenCalledWith(videoSummaryId);
+  });
+
+  it('should still settle the served version when the update settle throws', async () => {
+    mockContainer.libraryUpdateRepository.restoreFailedUpdates.mockRejectedValueOnce(new Error('mongo blip'));
+    const videoSummaryId = new ObjectId().toHexString();
+
+    const statusCode = await relayStatus(videoSummaryId, 'failed');
+
+    expect([statusCode, mockContainer.videoRepository.restoreServedVersion.mock.calls.length]).toEqual([200, 1]);
+  });
+
   it('should not settle the served version on a progress status', async () => {
     await relayStatus(new ObjectId().toHexString(), 'processing');
 

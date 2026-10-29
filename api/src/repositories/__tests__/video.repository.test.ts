@@ -222,6 +222,46 @@ describe('VideoRepository', () => {
     });
   });
 
+  describe('markRedispatched (I2)', () => {
+    it('should make a stalled processing row read pending with a fresh updatedAt', async () => {
+      const { doc } = await repo.upsertCacheByDedupKey({ ...makeCacheData(), dedupKey: 'redispatch' });
+      const stalledAt = new Date(Date.now() - 60 * 60 * 1000);
+      await repo.updateCacheEntry(doc._id.toString(), { status: 'processing' });
+      await db.collection('videoSummaryCache').updateOne({ _id: doc._id }, { $set: { updatedAt: stalledAt } });
+
+      await repo.markRedispatched(doc._id.toString());
+
+      const row = await repo.findCacheById(doc._id.toString());
+      expect([row?.status, (row?.updatedAt.getTime() ?? 0) > stalledAt.getTime()]).toEqual(['pending', true]);
+    });
+
+    it('should let a FAILED for the new run claim the guard release again', async () => {
+      const { doc } = await repo.upsertCacheByDedupKey({ ...makeCacheData(), dedupKey: 'redispatch-claim' });
+      await repo.updateCacheEntry(doc._id.toString(), { status: 'failed' });
+      await repo.tryClaimDispatchRelease(doc._id.toString());
+
+      await repo.markRedispatched(doc._id.toString());
+      await repo.updateCacheEntry(doc._id.toString(), { status: 'failed' });
+
+      expect(await repo.tryClaimDispatchRelease(doc._id.toString())).toBe(true);
+    });
+  });
+
+  describe('findKnownDuration (I10)', () => {
+    it('should read the length from a completed version and ignore unfinished ones', async () => {
+      const pending = await repo.upsertCacheByDedupKey({ ...makeCacheData(), dedupKey: 'dur-pending' });
+      await repo.updateCacheEntry(pending.doc._id.toString(), { duration: 999 });
+      const done = await repo.upsertCacheByDedupKey({ ...makeCacheData(), dedupKey: 'dur-done' });
+      await repo.updateCacheEntry(done.doc._id.toString(), { status: 'completed', duration: 640 });
+
+      expect(await repo.findKnownDuration(done.doc.youtubeId)).toBe(640);
+    });
+
+    it('should answer null for a video nobody has summarised', async () => {
+      expect(await repo.findKnownDuration('neverSeen01')).toBeNull();
+    });
+  });
+
   describe('stampDispatchContext', () => {
     async function seedRow(dedupKey: string): Promise<string> {
       const { doc } = await repo.upsertCacheByDedupKey({ ...makeCacheData(), dedupKey });
@@ -254,6 +294,23 @@ describe('VideoRepository', () => {
       await repo.stampDispatchContext(id, 'user-b');
 
       expect(await rowOf(id)).not.toHaveProperty('requestId');
+    });
+
+    it('should stamp the billing run id beside the request id (P3.1)', async () => {
+      const id = await seedRow('stamp-run');
+
+      await repo.stampDispatchContext(id, 'user-a', 'req-a', 'run-a');
+
+      expect(await rowOf(id)).toMatchObject({ requestId: 'req-a', billingRunId: 'run-a' });
+    });
+
+    it('should unset an earlier billing run id so another dispatch never settles it', async () => {
+      const id = await seedRow('stamp-run-unset');
+      await repo.stampDispatchContext(id, 'user-a', 'req-a', 'run-a');
+
+      await repo.stampDispatchContext(id, 'user-b', 'req-b');
+
+      expect(await rowOf(id)).not.toHaveProperty('billingRunId');
     });
 
     it('should not change updatedAt (the stall sweeper reads it as liveness)', async () => {

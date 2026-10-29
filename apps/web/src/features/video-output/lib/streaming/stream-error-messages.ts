@@ -12,6 +12,9 @@ const CODE_MESSAGES: Record<string, string> = {
   VIDEO_UNAVAILABLE: "This video is unavailable. It may be private, deleted, or region-restricted.",
   VIDEO_RESTRICTED: "This video has restrictions that prevent it from being processed.",
   LIVE_STREAM: "Live streams cannot be summarized. Please wait until the stream ends.",
+  // The gateway answers the stream of a failed video with this and runs nothing; the card
+  // offers Retry, which starts a new, billed run (the stored raw message is never shown).
+  VIDEO_FAILED: "This video didn't finish processing. Retry starts it again as a new run.",
   LLM_ERROR: "Our AI service encountered an issue. Please try again in a few moments.",
   RATE_LIMITED: "Too many requests. Please wait a moment and try again.",
   UNKNOWN_ERROR: "Something went wrong while processing this video. Please try again.",

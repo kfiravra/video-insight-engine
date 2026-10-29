@@ -45,7 +45,10 @@ Both funnel through a **Redis broker lock** (`pipeline_event_stream.acquire_lock
 **consumes** the shared Redis event stream (`consume_from_broker`). Winning the lock
 also deletes the previous run's stream, so a re-run never replays old events. This is
 why a React StrictMode double-mount, three open tabs, and a worker job all collapse to
-a single pipeline run.
+a single pipeline run. The SSE route never competes for the lock on a `failed` row: it
+only consumes (an in-progress run, or what is left of the last one's events), because a
+re-run costs the user minutes and only vie-api's billed submit may start it (review W1;
+vie-api itself answers a `VIDEO_FAILED` error event before proxying).
 
 The producer calls **`stream_summarization()`** (`routes/pipeline_runner.py`), which:
 
@@ -563,7 +566,7 @@ Concrete traces showing which branch fires for common inputs (default settings).
 | Entry | `stream_summarization` opens the Langfuse trace (so the hit is counted). |
 | **Cache** | `response_cache.get_response(youtube_id)` returns the completed payload, integrity-checked (`status=completed`, matching `youtubeId`, non-empty `tabs`, non-empty `meta`). |
 | Trace | `update_trace_metadata({cacheHit: True})`. |
-| DB | If this user's doc isn't `completed`, a **fire-and-forget** save copies it (clearing any stale `transcriptMeta` first). |
+| DB | If this user's doc isn't `completed`, a **fire-and-forget** save copies it (clearing any stale `transcriptMeta` first), then reports `completed` with `cacheHit: true` on `POST /internal/status`, so vie-api releases the run's minutes hold as a cached serve instead of settling a run that never ran (review I3). |
 | Stream | `routes/cached_response.py:stream_cached_structured` replays the stored result: `cached`, `metadata`, `triage_complete`, `meta`, every tab once `final: true` at its index, `synthesis_complete`, `done`. **Zero LLM calls, $0.00.** |
 
 ### Scenario C — 90-minute Hebrew lecture (no captions → chunks × groups → translation)

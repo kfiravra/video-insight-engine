@@ -616,6 +616,25 @@ class TestSSEEventFormat:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+class TestStreamFailedRow:
+    """W1: opening the stream of a failed row never re-runs it (no minutes held)."""
+
+    @patch("src.services.video.youtube.extract_video_data")
+    async def test_failed_row_never_starts_a_producer(
+        self, mock_extract, client, mock_repository, sample_video_entry, valid_object_id
+    ):
+        mock_repository.get_video_summary.return_value = {
+            **sample_video_entry,
+            "status": ProcessingStatus.FAILED.value,
+        }
+
+        response = await client.get(f"/summarize/stream/{valid_object_id}")
+
+        assert response.status_code == 200
+        mock_extract.assert_not_called()
+        mock_repository.update_status.assert_not_called()
+
+
 class TestStreamErrorHandling:
     """Tests for stream error handling."""
 

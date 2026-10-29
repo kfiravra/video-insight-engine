@@ -4,11 +4,13 @@ import { ObjectId } from 'mongodb';
 import type { FastifyBaseLogger } from 'fastify';
 
 import type { UserRepository, UserDocument } from '../repositories/user.repository.js';
+import { BillingErasureRepository, type BillingErasureCounts } from '../repositories/billing-erasure.repository.js';
 import type {
   UserDeletionRepository,
   UserDeletionDocument,
   DeletionCounts,
   DeletionInitiator,
+  DeletionOrigin,
 } from '../repositories/user-deletion.repository.js';
 import { config } from '../config.js';
 import {
@@ -59,6 +61,9 @@ type UserScopedCollection =
  *   - Qdrant `transcript_chunks` (shared, video-scoped)
  *   - S3 objects (shared, video-scoped — no user prefix today)
  *   - `llm_usage` (no TTL; kept for cost reporting)
+ *   - the minutes ledger (`billingAccounts`, `ledgerEntries`, `creditLots`,
+ *     `recurringGrants`): pseudonymised, not deleted — see
+ *     BillingErasureRepository (brief Q12)
  */
 
 const DEFAULT_GRACE_DAYS = 30;
@@ -66,6 +71,13 @@ const SCHEDULER_BATCH_LIMIT = 50;
 
 export interface RequestDeletionOptions {
   graceDays?: number;
+  /**
+   * Who asked. Persisted on the user so the scheduled cascade is recorded under
+   * this origin (an admin's request stays `initiatedBy: 'admin'`, the user's
+   * own `'self'`) instead of `'scheduler'`. A request with no origin is
+   * recorded as the scheduler's.
+   */
+  origin?: DeletionOrigin;
 }
 
 export interface RequestDeletionResult {
@@ -94,6 +106,7 @@ export class UserDeletionService {
     private readonly userDeletionRepository: UserDeletionRepository,
     private readonly logger: FastifyBaseLogger,
     private readonly clock: () => Date = () => new Date(),
+    private readonly billingErasure: BillingErasureRepository = new BillingErasureRepository(db),
   ) {}
 
   // ─── Phase 2: soft delete ───────────────────────────────────────────────
@@ -102,7 +115,7 @@ export class UserDeletionService {
     userId: string,
     options: RequestDeletionOptions = {},
   ): Promise<RequestDeletionResult> {
-    const { graceDays = DEFAULT_GRACE_DAYS } = options;
+    const { graceDays = DEFAULT_GRACE_DAYS, origin } = options;
     if (graceDays < 0 || !Number.isFinite(graceDays)) {
       throw new Error(`Invalid graceDays: ${graceDays}`);
     }
@@ -123,7 +136,7 @@ export class UserDeletionService {
 
     const now = this.clock();
     const hardDeleteAt = new Date(now.getTime() + graceDays * 24 * 60 * 60 * 1000);
-    const updated = await this.userRepository.markSoftDeleted(userId, hardDeleteAt, now);
+    const updated = await this.userRepository.markSoftDeleted(userId, hardDeleteAt, now, origin);
     if (!updated) {
       // Someone else flipped the flag between our read and our write — surface
       // the conflict rather than silently overwriting their timestamp.
@@ -178,6 +191,9 @@ export class UserDeletionService {
     const userId = user._id.toString();
 
     const startedAt = this.clock();
+    // Duration comes from a monotonic clock: the wall clock can step back
+    // (NTP, a WSL host sleep) and would record a negative run time.
+    const monotonicStart = performance.now();
     const traceId = randomUUID();
     const counts: DeletionCounts = {
       userVideos: 0,
@@ -192,6 +208,7 @@ export class UserDeletionService {
     const warnings: string[] = [];
     // Not part of the audit `counts` (that shape is fixed); logged on completion.
     let videoCacheRowsUnstamped = 0;
+    let billingErased: BillingErasureCounts | null = null;
 
     this.logger.info(
       { traceId, userId, initiatedBy: ctx.initiatedBy, adminId: ctx.adminId ?? null },
@@ -235,6 +252,11 @@ export class UserDeletionService {
       videoCacheRowsUnstamped = await this.clearVideoCacheDispatchContext(userId);
     }, warnings);
 
+    // The minutes ledger keeps its amounts; only the link to the user goes (Q12).
+    await this.runStep('billing', traceId, async () => {
+      billingErased = await this.billingErasure.eraseUser(userId, this.clock());
+    }, warnings);
+
     // Qdrant + S3 placeholders — no-ops today, see inventory report. Wired so
     // a future user-keyed payload slots in without changing call sites.
     await this.runStep('qdrant', traceId, async () => {
@@ -264,6 +286,7 @@ export class UserDeletionService {
       counts,
       startedAt,
       completedAt,
+      durationMs: Math.max(0, Math.round(performance.now() - monotonicStart)),
       warnings,
     });
 
@@ -275,6 +298,7 @@ export class UserDeletionService {
       durationMs: audit.durationMs,
       counts,
       videoCacheRowsUnstamped,
+      billingErased,
       warnings: warnings.length,
     };
     if (warnings.length > 0) {
@@ -303,7 +327,8 @@ export class UserDeletionService {
     for (const candidate of candidates) {
       const userId = candidate._id.toString();
       try {
-        await this.executeHardDelete(userId, { initiatedBy: 'scheduler' });
+        // A soft delete keeps the origin it was requested under; one with none recorded is the scheduler's.
+        await this.executeHardDelete(userId, candidate.deletionOrigin ?? { initiatedBy: 'scheduler' });
         succeeded++;
       } catch (err) {
         // Log the full error for triage; expose only an opaque code in the
@@ -393,7 +418,7 @@ export class UserDeletionService {
   private async clearVideoCacheDispatchContext(userId: string): Promise<number> {
     const result = await this.db
       .collection('videoSummaryCache')
-      .updateMany({ userId }, { $unset: { userId: '', requestId: '' } });
+      .updateMany({ userId }, { $unset: { userId: '', requestId: '', billingRunId: '' } });
     return result.modifiedCount;
   }
 

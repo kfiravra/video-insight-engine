@@ -28,7 +28,7 @@
 # Shared env (YAML anchors)
 # ----------------------------------------
 # Explicit allow-list per Python service. api-only secrets (JWT_*,
-# MONGO_ROOT_PASS, ADMIN_API_KEY, PADDLE_WEBHOOK_SECRET) intentionally do
+# MONGO_ROOT_PASS, ADMIN_API_KEY) intentionally do
 # not appear here — they must not propagate into a Python container if that
 # service is compromised.
 x-summarizer-env: &summarizer-env
@@ -320,22 +320,34 @@ services:
       FRONTEND_URL: ${FRONTEND_URL:?FRONTEND_URL is required (public https origin of vie-web)}
       INTERNAL_SECRET: ${INTERNAL_SECRET:?INTERNAL_SECRET is required (openssl rand -base64 32)}
       ADMIN_API_KEY: ${ADMIN_API_KEY:?ADMIN_API_KEY is required (openssl rand -base64 32)}
-      # api/src/config.ts refuses to boot production without a webhook secret —
-      # unsigned Paddle events must never be accepted.
-      PADDLE_WEBHOOK_SECRET: ${PADDLE_WEBHOOK_SECRET:?PADDLE_WEBHOOK_SECRET is required in production}
-      PADDLE_PRO_PRICE_ID: ${PADDLE_PRO_PRICE_ID:-}
-      PADDLE_TEAM_PRICE_ID: ${PADDLE_TEAM_PRICE_ID:-}
+      # Verifies the signed X-Admin-Actor header vie-admin sends; must equal vie-admin's
+      # value. api/src/config.ts refuses to boot production on the dev default, a value
+      # under 32 characters, or the same value as ADMIN_API_KEY.
+      ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:?ADMIN_SESSION_SECRET is required (openssl rand -hex 32)}
+      # Login emails that hold the admin role; reconciled at every boot. Blank = no change.
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
       RABBITMQ_URL: *rabbitmq-url
       USE_QUEUE_PIPELINE: ${USE_QUEUE_PIPELINE:-true}
       REDIS_URL: *redis-url
       DISPATCH_GUARD_TTL_SECONDS: ${DISPATCH_GUARD_TTL_SECONDS:-900}
       # Behind the TLS reverse proxy: derive req.ip from X-Forwarded-For
       TRUST_PROXY: ${TRUST_PROXY:-1}
-      # Spend guards (defaults mirror api/src/config.ts; the demo .env tightens them)
-      VIDEO_DAILY_LIMIT: ${VIDEO_DAILY_LIMIT:-100}
+      # Spend guards (defaults mirror api/src/config.ts; the demo .env tightens them).
+      # What a run costs is decided by the minutes ledger, which needs Mongo as a
+      # replica set (transactions): deploy this only after the P6.4 conversion.
+      # Submissions per user per hour, one bucket for /api/videos, the assistant's generate route and playlist import (0 = off)
+      SUBMIT_BURST_LIMIT_PER_HOUR: ${SUBMIT_BURST_LIMIT_PER_HOUR:-20}
+      # Chat messages a FREE account may send per rolling 24 h, one allowance for both chat routes (0 = off)
+      CHAT_FREE_MESSAGES_PER_DAY: ${CHAT_FREE_MESSAGES_PER_DAY:-50}
+      # Billing repair job: stale holds, lot expiry, recurring grants, drift check,
+      # llm_usage.user_id after 90 days, GDPR hard-delete sweep. On: the ledger
+      # decides every submit, and a hold whose completion relay was lost is
+      # settled or released only by this job.
+      BILLING_REPAIR_ENABLED: ${BILLING_REPAIR_ENABLED:-true}
+      BILLING_REPAIR_INTERVAL_SECONDS: ${BILLING_REPAIR_INTERVAL_SECONDS:-300}
+      BILLING_HOLD_MAX_AGE_HOURS: ${BILLING_HOLD_MAX_AGE_HOURS:-3}
       # Requests per minute per IP on the public api
       RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-120}
-      USER_COST_LIMIT_FREE: ${USER_COST_LIMIT_FREE:-2}
       ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-true}
       # Demo mode — both set = POST /api/auth/login accepts { demo: true }; blank = off
       DEMO_USER_EMAIL: ${DEMO_USER_EMAIL:-}
@@ -522,7 +534,8 @@ services:
       ENVIRONMENT: ${ENVIRONMENT:-production}
       MONGODB_URI: *mongodb-uri
       ADMIN_API_KEY: ${ADMIN_API_KEY:?ADMIN_API_KEY is required (openssl rand -base64 32)}
-      # Signs admin login sessions; must differ from ADMIN_API_KEY. Rotating it logs admins out.
+      # Signs admin login sessions and the X-Admin-Actor header sent to vie-api; must differ from
+      # ADMIN_API_KEY and equal vie-api's value. Rotating it logs admins out: recreate both services.
       ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:?ADMIN_SESSION_SECRET is required (openssl rand -hex 32)}
       VIE_API_URL: http://vie-api:3000
       VIE_SUMMARIZER_URL: http://vie-summarizer:8000

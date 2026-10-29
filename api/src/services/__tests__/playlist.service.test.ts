@@ -1,31 +1,20 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import type { FastifyBaseLogger } from 'fastify';
 import { ObjectId } from 'mongodb';
+import type { FastifyBaseLogger } from 'fastify';
+import { mockLogger } from '../../test/setup.js';
 import { PlaylistService } from '../playlist.service.js';
 import type { VideoService } from '../video.service.js';
 import type { FolderService, FolderResponse } from '../folder.service.js';
 import type { SummarizerClient } from '../summarizer-client.js';
-import type { CostMonitorService } from '../cost-monitor.service.js';
+import type { LedgerEnforcement } from '../billing/ledger-enforcement.js';
 import {
-  DailyLimitReachedError,
+  InsufficientMinutesError,
   InvalidPlaylistUrlError,
+  RunNotAllowedError,
   PlaylistNotFoundError,
   PlaylistExtractionError,
   FolderNotFoundError,
 } from '../../utils/errors.js';
-
-// Mock logger
-const mockLogger = {
-  info: vi.fn(),
-  error: vi.fn(),
-  warn: vi.fn(),
-  debug: vi.fn(),
-  trace: vi.fn(),
-  fatal: vi.fn(),
-  child: vi.fn(() => mockLogger),
-  level: 'silent',
-  silent: vi.fn(),
-} as unknown as FastifyBaseLogger;
 
 // Mock global fetch
 const mockFetch = vi.fn();
@@ -104,8 +93,16 @@ describe('PlaylistService', () => {
   let mockFolderService: {
     getById: ReturnType<typeof vi.fn>;
     create: ReturnType<typeof vi.fn>;
+    delete: ReturnType<typeof vi.fn>;
   };
   let mockSummarizerClient: Record<string, unknown>;
+  /** The minutes ledger, admitting everything; playlist.enforce.test.ts runs the real one. */
+  let mockEnforcement: {
+    admit: ReturnType<typeof vi.fn>;
+    submitResolved: ReturnType<typeof vi.fn>;
+    submitFailed: ReturnType<typeof vi.fn>;
+    planPlaylist: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(() => {
     mockVideoService = {
@@ -115,15 +112,27 @@ describe('PlaylistService', () => {
     mockFolderService = {
       getById: vi.fn(),
       create: vi.fn(),
+      delete: vi.fn().mockResolvedValue(undefined),
     };
 
     mockSummarizerClient = {};
+
+    mockEnforcement = {
+      admit: vi.fn().mockResolvedValue({ split: { free: 1, plan: 0, credit: 0, lots: [] } }),
+      submitResolved: vi.fn().mockResolvedValue(undefined),
+      submitFailed: vi.fn().mockResolvedValue(undefined),
+      planPlaylist: vi.fn().mockImplementation(async (_userId: string, items: Array<{ durationSec: number | null }>) => ({
+        quote: { neededMinutes: 0, availableMinutes: 0, freeVideoAvailable: true, nextFreeAt: null, decisions: [] },
+        durationsSec: items.map((item) => item.durationSec),
+      })),
+    };
 
     playlistService = new PlaylistService(
       mockVideoService as unknown as VideoService,
       mockFolderService as unknown as FolderService,
       mockSummarizerClient as unknown as SummarizerClient,
-      mockLogger
+      mockEnforcement as unknown as LedgerEnforcement,
+      mockLogger as unknown as FastifyBaseLogger,
     );
 
     // Reset fetch mock
@@ -272,7 +281,7 @@ describe('PlaylistService', () => {
         name: 'Test Playlist',
           });
       expect(mockVideoService.createVideo).toHaveBeenCalledTimes(2);
-      expect(result.folder.id).toBe('folder123');
+      expect(result.folder?.id).toBe('folder123');
       expect(result.videos).toHaveLength(2);
       expect(result.totalVideos).toBe(2);
       expect(result.processingCount).toBe(2);
@@ -301,7 +310,7 @@ describe('PlaylistService', () => {
 
       expect(mockFolderService.getById).toHaveBeenCalledWith(userId, folderId);
       expect(mockFolderService.create).not.toHaveBeenCalled();
-      expect(result.folder.id).toBe(folderId);
+      expect(result.folder?.id).toBe(folderId);
     });
 
     it('should throw FolderNotFoundError when provided folder does not exist', async () => {
@@ -379,7 +388,8 @@ describe('PlaylistService', () => {
         youtubeId: 'video2',
         title: 'Video 2',
         position: 2,
-        error: 'Failed to process video',
+        // A code, never the raw message (I5).
+        error: 'INTERNAL_ERROR',
       });
     });
 
@@ -489,12 +499,12 @@ describe('PlaylistService', () => {
       expect(mockVideoService.createVideo).toHaveBeenCalledWith(
         userId,
         'https://www.youtube.com/watch?v=video1',
-        {
+        expect.objectContaining({
           folderId: folder.id,
           bypassCache: false,
           providers,
-          tier: 'free',
-        }
+          queuePlan: 'free',
+        })
       );
     });
 
@@ -510,17 +520,11 @@ describe('PlaylistService', () => {
     });
   });
 
-  describe('import with a cost monitor', () => {
+  describe('import through the minutes ledger', () => {
     const PLAYLIST_URL = 'https://www.youtube.com/playlist?list=PLtest123';
-    let mockCostMonitor: {
-      reserveUserCost: ReturnType<typeof vi.fn>;
-      refundReservation: ReturnType<typeof vi.fn>;
-    };
     let userId: string;
-
-    function createReservation(userIdForReservation: string, amountUsd = 0.15) {
-      return { userId: userIdForReservation, dateKey: '2026-10-27', amountUsd };
-    }
+    /** The run id createVideo was given for call `n` (each item holds on its own). */
+    const runIdOf = (n: number): string => mockVideoService.createVideo.mock.calls[n][2].billingRunId;
 
     function useVideos(count: number) {
       const videos = Array.from({ length: count }, (_, index) => ({
@@ -539,134 +543,112 @@ describe('PlaylistService', () => {
 
     beforeEach(() => {
       userId = new ObjectId().toHexString();
-      mockCostMonitor = {
-        reserveUserCost: vi.fn(),
-        refundReservation: vi.fn().mockResolvedValue(undefined),
-      };
-      playlistService = new PlaylistService(
-        mockVideoService as unknown as VideoService,
-        mockFolderService as unknown as FolderService,
-        mockSummarizerClient as unknown as SummarizerClient,
-        mockLogger,
-        mockCostMonitor as unknown as CostMonitorService,
-      );
     });
 
-    it('should refund the reservation when the video was served from cache', async () => {
+    it.each([
+      ['served from cache', { cached: true }, 'cached'],
+      ['attached to an in-flight run', { attached: true }, 'attached'],
+      ['a new pipeline run', {}, 'created'],
+    ])('should resolve the item\'s hold when the video was %s', async (_label, extra, outcome) => {
       useVideos(1);
-      const reservation = createReservation(userId);
-      mockCostMonitor.reserveUserCost.mockResolvedValue(reservation);
-      mockVideoService.createVideo.mockResolvedValue({ ...createVideoCreateResult(), cached: true });
+      mockVideoService.createVideo.mockResolvedValue({ ...createVideoCreateResult(), ...extra });
 
       await playlistService.import(userId, PLAYLIST_URL);
 
-      expect(mockCostMonitor.refundReservation.mock.calls).toEqual([[reservation]]);
+      expect(mockEnforcement.submitResolved.mock.calls).toEqual([[runIdOf(0), outcome]]);
     });
 
-    it('should refund the reservation when the video attached to an in-flight run', async () => {
-      useVideos(1);
-      const reservation = createReservation(userId);
-      mockCostMonitor.reserveUserCost.mockResolvedValue(reservation);
-      mockVideoService.createVideo.mockResolvedValue({ ...createVideoCreateResult(), attached: true });
-
-      await playlistService.import(userId, PLAYLIST_URL);
-
-      expect(mockCostMonitor.refundReservation.mock.calls).toEqual([[reservation]]);
-    });
-
-    it('should keep the reservation when a new pipeline run was created', async () => {
-      useVideos(1);
-      mockCostMonitor.reserveUserCost.mockResolvedValue(createReservation(userId));
-      mockVideoService.createVideo.mockResolvedValue(createVideoCreateResult());
-
-      const result = await playlistService.import(userId, PLAYLIST_URL);
-
-      expect(mockCostMonitor.refundReservation).not.toHaveBeenCalled();
-      expect(result.processingCount).toBe(1);
-    });
-
-    it('should still report the video as imported when the refund itself fails', async () => {
-      useVideos(1);
-      mockCostMonitor.reserveUserCost.mockResolvedValue(createReservation(userId));
-      mockCostMonitor.refundReservation.mockRejectedValue(new Error('mongo down'));
-      mockVideoService.createVideo.mockResolvedValue({ ...createVideoCreateResult(), attached: true });
-
-      const result = await playlistService.import(userId, PLAYLIST_URL);
-
-      expect(result.videos).toHaveLength(1);
-      expect(result.failedVideos).toEqual([]);
-      expect(mockCostMonitor.refundReservation).toHaveBeenCalledTimes(1);
-    });
-
-    it('should refund the reservation when createVideo throws', async () => {
-      useVideos(1);
-      const reservation = createReservation(userId);
-      mockCostMonitor.reserveUserCost.mockResolvedValue(reservation);
-      mockVideoService.createVideo.mockRejectedValue(new Error('Failed to process video'));
-
-      const result = await playlistService.import(userId, PLAYLIST_URL);
-
-      expect(mockCostMonitor.refundReservation.mock.calls).toEqual([[reservation]]);
-      expect(result.failedVideos[0]).toMatchObject({ youtubeId: 'video1', error: 'Failed to process video' });
-    });
-
-    it('should report the item failed and still process the rest when createVideo and its refund both throw', async () => {
+    it('should give the hold back and keep importing when createVideo throws', async () => {
       useVideos(3);
-      mockCostMonitor.reserveUserCost.mockResolvedValue(createReservation(userId));
-      mockCostMonitor.refundReservation.mockRejectedValueOnce(new Error('mongo down'));
       mockVideoService.createVideo
         .mockRejectedValueOnce(new Error('Failed to process video'))
         .mockResolvedValue(createVideoCreateResult());
 
       const result = await playlistService.import(userId, PLAYLIST_URL);
 
+      expect(mockEnforcement.submitFailed.mock.calls).toEqual([[runIdOf(0)]]);
       expect({
         failed: result.failedVideos.map(failed => [failed.youtubeId, failed.error]),
         imported: result.videos.map(video => video.youtubeId),
       }).toEqual({
-        failed: [['video1', 'Failed to process video']],
+        failed: [['video1', 'INTERNAL_ERROR']],
         imported: ['video2', 'video3'],
       });
     });
 
-    it('should mark the failing item and every later item DAILY_LIMIT_REACHED when the cap trips mid-import', async () => {
+    it('should stop at the first item the minutes cannot cover and mark every later one the same', async () => {
       useVideos(4);
-      mockCostMonitor.reserveUserCost
-        .mockResolvedValueOnce(createReservation(userId))
-        .mockRejectedValueOnce(new DailyLimitReachedError(1, '2026-10-28T00:00:00.000Z'));
-      mockVideoService.createVideo.mockResolvedValue(createVideoCreateResult());
+      mockEnforcement.admit
+        .mockResolvedValueOnce({ split: { free: 2, plan: 0, credit: 0, lots: [] } })
+        .mockRejectedValueOnce(new InsufficientMinutesError(2, 0, null));
+      mockVideoService.createVideo.mockImplementation(async (_user: string, _url: string, options: { serveOnly?: boolean }) => {
+        if (options.serveOnly) throw new RunNotAllowedError();
+        return createVideoCreateResult();
+      });
 
       const result = await playlistService.import(userId, PLAYLIST_URL);
 
       expect(result.videos).toHaveLength(1);
       expect(result.failedVideos.map(failed => [failed.youtubeId, failed.error])).toEqual([
-        ['video2', 'DAILY_LIMIT_REACHED'],
-        ['video3', 'DAILY_LIMIT_REACHED'],
-        ['video4', 'DAILY_LIMIT_REACHED'],
+        ['video2', 'INSUFFICIENT_MINUTES'],
+        ['video3', 'INSUFFICIENT_MINUTES'],
+        ['video4', 'INSUFFICIENT_MINUTES'],
       ]);
+      expect(mockEnforcement.admit).toHaveBeenCalledTimes(2);
     });
 
-    it('should not reserve or create anything for items after the cap trips', async () => {
-      useVideos(4);
-      mockCostMonitor.reserveUserCost
-        .mockResolvedValueOnce(createReservation(userId))
-        .mockRejectedValueOnce(new DailyLimitReachedError(1, '2026-10-28T00:00:00.000Z'));
+    it('should queue an item paid with plan or credit minutes as paid and a free-video item as free', async () => {
+      useVideos(2);
+      mockEnforcement.admit
+        .mockResolvedValueOnce({ split: { free: 2, plan: 0, credit: 0, lots: [] } })
+        .mockResolvedValueOnce({ split: { free: 0, plan: 2, credit: 0, lots: [] } });
       mockVideoService.createVideo.mockResolvedValue(createVideoCreateResult());
 
       await playlistService.import(userId, PLAYLIST_URL);
 
-      expect(mockCostMonitor.reserveUserCost).toHaveBeenCalledTimes(2);
-      expect(mockVideoService.createVideo).toHaveBeenCalledTimes(1);
+      expect(mockVideoService.createVideo.mock.calls.map((call) => call[2].queuePlan)).toEqual(['free', 'paid']);
     });
 
-    it('should refund nothing for the item that hit the cap since no reservation was taken', async () => {
+    it('should log an unexpected item failure and report a domain code as-is (I5)', async () => {
+      const { VideoNotFoundError } = await import('../../utils/errors.js');
       useVideos(2);
-      mockCostMonitor.reserveUserCost.mockRejectedValue(new DailyLimitReachedError(1, '2026-10-28T00:00:00.000Z'));
+      mockVideoService.createVideo
+        .mockRejectedValueOnce(new Error('mongo: connection reset'))
+        .mockRejectedValueOnce(new VideoNotFoundError());
 
       const result = await playlistService.import(userId, PLAYLIST_URL);
 
-      expect(mockCostMonitor.refundReservation).not.toHaveBeenCalled();
-      expect(result.failedCount).toBe(2);
+      expect(result.failedVideos.map((failed) => failed.error)).toEqual(['INTERNAL_ERROR', 'VIDEO_NOT_FOUND']);
+      expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ youtubeId: 'video1' }), 'playlist_item_import_failed');
+    });
+
+    it('should delete the folder it created when no item landed in it (I7)', async () => {
+      useVideos(1);
+      mockVideoService.createVideo.mockRejectedValueOnce(new Error('boom'));
+
+      const result = await playlistService.import(userId, PLAYLIST_URL);
+
+      expect([result.folder, mockFolderService.delete.mock.calls.length]).toEqual([null, 1]);
+    });
+
+    it('should never delete a folder the caller chose, even when nothing landed in it (I7)', async () => {
+      useVideos(1);
+      const folderId = new ObjectId().toHexString();
+      mockFolderService.getById.mockResolvedValue(createFolderResponse({ id: folderId }));
+      mockVideoService.createVideo.mockRejectedValueOnce(new Error('boom'));
+
+      const result = await playlistService.import(userId, PLAYLIST_URL, folderId);
+
+      expect([result.folder?.id, mockFolderService.delete.mock.calls.length]).toEqual([folderId, 0]);
+    });
+
+    it('should report the up-front quote with the result', async () => {
+      useVideos(1);
+      mockVideoService.createVideo.mockResolvedValue(createVideoCreateResult());
+
+      const result = await playlistService.import(userId, PLAYLIST_URL);
+
+      expect(result.billing).toEqual({ neededMinutes: 0, availableMinutes: 0, freeVideoAvailable: true });
     });
   });
 

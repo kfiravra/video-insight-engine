@@ -47,6 +47,28 @@ function _formatters(): NonNullable<typeof _formatterCache> {
  *
  * Returns "—" for null/undefined/invalid inputs.
  */
+const UTC_DATE_TIME = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric',
+  year: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+  timeZone: 'UTC',
+});
+
+/**
+ * Format an ISO timestamp in UTC, e.g. "Jun 3, 2026, 11:59 PM UTC". For the
+ * dates an admin types as "through the end of that day (UTC)", a plan's term
+ * end and a lot's expiry, so the table shows the instant they entered and not
+ * that instant shifted into the viewer's timezone. "—" for null/invalid.
+ */
+export function formatDateTimeUtc(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return `${UTC_DATE_TIME.format(d)} UTC`;
+}
+
 export function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return '—';
   const d = new Date(iso);
@@ -121,4 +143,9 @@ export function formatUsageVolume(row: UsageVolumeFields): string {
     return `${((row.audio_seconds ?? 0) / 60).toFixed(1)} min audio`;
   }
   return formatNumber((row.tokens_in ?? 0) + (row.tokens_out ?? 0));
+}
+
+/** `64f1a2…9c0b`: a long id shortened for tables and headers; short ids are returned as is. */
+export function shortId(id: string): string {
+  return id.length > 10 ? `${id.slice(0, 6)}…${id.slice(-4)}` : id;
 }

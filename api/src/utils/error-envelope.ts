@@ -1,20 +1,55 @@
 import { ZodError } from 'zod';
 import type { FastifyError } from 'fastify';
 import { config } from '../config.js';
-import { AppError, DailyLimitReachedError } from './errors.js';
+import {
+  AppError,
+  ChatLimitReachedError,
+  InsufficientMinutesError,
+  RateLimitedError,
+  TooManyRunsError,
+  VideoTooLongForPlanError,
+} from './errors.js';
 
 /**
  * The documented error body (docs/ERROR-HANDLING.md): `{ error, message,
  * statusCode }`, plus `details` when structured context exists (Zod issue
- * list) and the `resetAt`/`limitUsd` extras for the daily cost cap.
+ * list), `nextAt` for the free chat limit and the minutes gate's numbers.
  */
 export interface ErrorEnvelope {
   error: string;
   message: string;
   statusCode: number;
   details?: { issues: Array<{ path: string; message: string }> };
-  resetAt?: string;
-  limitUsd?: number;
+  nextAt?: string;
+  /** INSUFFICIENT_MINUTES: the video's minutes, the paid minutes there are, when the free video reopens. */
+  needed?: number;
+  available?: number;
+  nextFreeAt?: string;
+  /** VIDEO_TOO_LONG_FOR_PLAN */
+  maxMinutes?: number;
+  /** TOO_MANY_RUNS */
+  maxConcurrent?: number;
+  /** RATE_LIMITED: whole seconds until the limiter lets the caller back in; clients build their own copy from it. */
+  retryAfterSec?: number;
+}
+
+type BillingFields = Pick<
+  ErrorEnvelope,
+  'needed' | 'available' | 'nextFreeAt' | 'maxMinutes' | 'maxConcurrent' | 'retryAfterSec'
+>;
+
+/** The minutes gate's numbers and a limiter's wait, as top-level body fields (the web reads them from the body). */
+function billingFields(error: AppError): BillingFields {
+  if (error instanceof RateLimitedError) {
+    return error.retryAfterSec === undefined ? {} : { retryAfterSec: error.retryAfterSec };
+  }
+  if (error instanceof InsufficientMinutesError) {
+    const { needed, available, nextFreeAt } = error;
+    return { needed, available, ...(nextFreeAt && { nextFreeAt }) };
+  }
+  if (error instanceof VideoTooLongForPlanError) return { maxMinutes: error.maxMinutes };
+  if (error instanceof TooManyRunsError) return { maxConcurrent: error.maxConcurrent };
+  return {};
 }
 
 export interface ResolvedError {
@@ -48,16 +83,15 @@ export function resolveErrorEnvelope(error: HandledError): ResolvedError {
     };
   }
 
-  // Daily cost limit reached — surface resetAt for the UI countdown
-  if (error instanceof DailyLimitReachedError) {
+  // Free chat limit reached — surface nextAt so the UI can say when chat reopens
+  if (error instanceof ChatLimitReachedError) {
     return {
       statusCode: error.status,
       body: {
         error: error.code,
         message: error.message,
         statusCode: error.status,
-        resetAt: error.resetAt,
-        limitUsd: error.limitUsd,
+        nextAt: error.nextAt,
       },
     };
   }
@@ -65,7 +99,7 @@ export function resolveErrorEnvelope(error: HandledError): ResolvedError {
   if (error instanceof AppError) {
     return {
       statusCode: error.status,
-      body: { error: error.code, message: error.message, statusCode: error.status },
+      body: { error: error.code, message: error.message, statusCode: error.status, ...billingFields(error) },
     };
   }
 
@@ -79,9 +113,15 @@ export function resolveErrorEnvelope(error: HandledError): ResolvedError {
 
   const pluginStatus = pluginStatusCode(error);
   if (pluginStatus !== undefined) {
+    const retryAfterSec = pluginRetryAfterSec(error);
     return {
       statusCode: pluginStatus,
-      body: { error: pluginErrorCode(error), message: error.message, statusCode: pluginStatus },
+      body: {
+        error: pluginErrorCode(error),
+        message: error.message,
+        statusCode: pluginStatus,
+        ...(retryAfterSec !== undefined && { retryAfterSec }),
+      },
     };
   }
 
@@ -97,6 +137,12 @@ export function resolveErrorEnvelope(error: HandledError): ResolvedError {
 function pluginStatusCode(error: HandledError): number | undefined {
   const statusCode = (error as { statusCode?: unknown }).statusCode;
   return typeof statusCode === 'number' && statusCode !== 500 ? statusCode : undefined;
+}
+
+/** The wait a rate-limit builder put on the thrown envelope (`rateLimitedBody`); other plugin errors have none. */
+function pluginRetryAfterSec(error: HandledError): number | undefined {
+  const seconds = (error as { retryAfterSec?: unknown }).retryAfterSec;
+  return typeof seconds === 'number' && Number.isFinite(seconds) ? seconds : undefined;
 }
 
 /**

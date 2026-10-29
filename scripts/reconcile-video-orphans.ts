@@ -11,14 +11,20 @@
  * through vie-api's admin endpoint — the same cascade the admin panel uses —
  * so Qdrant/S3/Redis/Mongo cleanup stays in one code path.
  *
+ * A purge is an admin mutation, so --apply acts as a named admin: pass the
+ * `users._id` of an admin account with --actor <id> (or ADMIN_ACTOR_USER_ID).
+ * The script signs the `x-admin-actor` header with ADMIN_SESSION_SECRET exactly
+ * as vie-admin does, and the audit row names that admin. The shared admin key
+ * alone can no longer purge.
+ *
  * Usage (from the repo root; the api workspace has the drivers):
- *   pnpm --filter @vie/api exec tsx ../scripts/reconcile-video-orphans.ts           # dry run
- *   pnpm --filter @vie/api exec tsx ../scripts/reconcile-video-orphans.ts --apply   # purge
+ *   pnpm --filter @vie/api exec tsx ../scripts/reconcile-video-orphans.ts                        # dry run
+ *   pnpm --filter @vie/api exec tsx ../scripts/reconcile-video-orphans.ts --apply --actor <id>   # purge
  *
  * Env (from .env): MONGODB_URI, MONGODB_DATABASE, QDRANT_URL (default
  * http://localhost:6333), S3_BUCKET, AWS_REGION, AWS_ENDPOINT_URL,
  * AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (optional), API_URL (default
- * http://localhost:3000), ADMIN_API_KEY.
+ * http://localhost:3000), ADMIN_API_KEY, ADMIN_SESSION_SECRET, ADMIN_ACTOR_USER_ID.
  */
 
 import { MongoClient } from 'mongodb';
@@ -26,6 +32,7 @@ import type { Db } from 'mongodb';
 import { ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3';
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { sha256Hex, signActorHeader } from '../api/src/utils/admin-actor.js';
 
 // Load .env manually (no dotenv dependency needed)
 const envPath = resolve(import.meta.dirname ?? '.', '..', '.env');
@@ -43,6 +50,8 @@ const DATABASE_NAME = process.env.MONGODB_DATABASE || databaseFromUri(MONGODB_UR
 const QDRANT_URL = (process.env.QDRANT_URL || 'http://localhost:6333').replace(/\/$/, '');
 const API_URL = (process.env.API_URL || 'http://localhost:3000').replace(/\/$/, '');
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY ?? '';
+const ADMIN_SESSION_SECRET = process.env.ADMIN_SESSION_SECRET ?? '';
+const ACTOR_USER_ID = flagValue('--actor') ?? process.env.ADMIN_ACTOR_USER_ID ?? '';
 // The orphan set comes from MONGODB_URI/QDRANT_URL/S3_BUCKET, but the purge runs on
 // whatever stack API_URL points at. Only a loopback API is assumed to be the same stack.
 const REMOTE_API_ACKNOWLEDGED = process.argv.includes('--remote-api');
@@ -50,6 +59,11 @@ const LOOPBACK_API = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
 const S3_BUCKET = process.env.S3_BUCKET || '';
 const APPLY = process.argv.includes('--apply');
 const QDRANT_COLLECTION = 'transcript_chunks';
+
+function flagValue(name: string): string | undefined {
+  const at = process.argv.indexOf(name);
+  return at === -1 ? undefined : process.argv[at + 1];
+}
 
 interface OrphanRow {
   youtubeId: string;
@@ -160,14 +174,24 @@ function sleep(ms: number): Promise<void> {
 }
 
 async function purgeOnce(youtubeId: string): Promise<Response> {
-  return fetch(`${API_URL}/api/admin/videos/${encodeURIComponent(youtubeId)}`, {
+  const body = JSON.stringify({ reason: 'reconcile-video-orphans' });
+  const url = new URL(`${API_URL}/api/admin/videos/${encodeURIComponent(youtubeId)}`);
+  // The signature binds the exact request-target fetch puts on the wire (path plus query)
+  // and is single-use, so it is made fresh for every attempt, including a retry after a 429.
+  const actor = signActorHeader(
+    ADMIN_SESSION_SECRET,
+    ACTOR_USER_ID,
+    { method: 'DELETE', target: `${url.pathname}${url.search}`, bodySha256: sha256Hex(body) },
+    Math.floor(Date.now() / 1000),
+  );
+  return fetch(url, {
     method: 'DELETE',
     headers: {
       'x-admin-key': ADMIN_API_KEY,
-      'x-admin-id': 'reconcile-script',
+      'x-admin-actor': actor,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ reason: 'reconcile-video-orphans' }),
+    body,
   });
 }
 
@@ -196,6 +220,10 @@ async function purge(youtubeId: string): Promise<boolean> {
 function assertApplyIsSafe(): void {
   if (!APPLY) return;
   if (!ADMIN_API_KEY) throw new Error('ADMIN_API_KEY is required for --apply');
+  if (!ADMIN_SESSION_SECRET) throw new Error('ADMIN_SESSION_SECRET is required for --apply (it signs the admin actor)');
+  if (!/^[a-f0-9]{24}$/.test(ACTOR_USER_ID)) {
+    throw new Error('--apply needs the users._id (24 hex chars) of an admin: pass --actor <id> or set ADMIN_ACTOR_USER_ID');
+  }
   if (!REMOTE_API_ACKNOWLEDGED && !LOOPBACK_API.test(API_URL)) {
     throw new Error(
       `refusing --apply against ${API_URL}; pass --remote-api only if MONGODB_URI, QDRANT_URL and S3_BUCKET belong to that stack`,

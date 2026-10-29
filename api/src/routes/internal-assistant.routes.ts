@@ -1,9 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { idParamSchema, objectIdSchema } from '../utils/validation.js';
-import { config } from '../config.js';
 import { VideoSubmissionService } from '../services/video-submission.service.js';
-import type { UserTier } from '@vie/types';
 
 // Bound how many owned videos the assistant can enumerate in a single call so a
 // power user's library can't balloon the internal response unboundedly.
@@ -36,13 +34,6 @@ const generateSchema = z.object({
   folderId: objectIdSchema.optional(),
 });
 
-const VALID_TIERS = ['free', 'pro', 'team'] as const;
-
-/** Narrow a stored tier string to a known `UserTier`, defaulting to `free`. */
-function resolveTier(tier: string | undefined): UserTier {
-  return VALID_TIERS.find((t) => t === tier) ?? 'free';
-}
-
 /**
  * Internal assistant callback routes. These are thin wrappers over the existing
  * folder/video services so the assistant's tool plans can mutate the caller's
@@ -54,18 +45,17 @@ export async function internalAssistantRoutes(fastify: FastifyInstance): Promise
     folderService,
     videoService,
     videoRepository,
-    userRepository,
-    costMonitorService,
     idempotencyService,
+    submitBurstLimiter,
   } = fastify.container;
   // Same submission flow as POST /api/videos — the assistant must not be able
-  // to bypass the daily cost cap, idempotency gate, or reservation unwind.
+  // to bypass the minutes ledger, the idempotency gate, or the hold unwind.
   const videoSubmissionService = new VideoSubmissionService(
     videoService,
-    costMonitorService,
     idempotencyService,
     videoRepository,
     fastify.log,
+    fastify.container.billingEnforcement,
   );
 
   // GET /internal/assistant/folders
@@ -153,37 +143,23 @@ export async function internalAssistantRoutes(fastify: FastifyInstance): Promise
   });
 
   // POST /internal/assistant/generate
-  // Mirrors POST /api/videos: same per-user daily request limit (the limiter
-  // key is user-scoped because authenticateInternal populates req.user before
-  // the preHandler-hooked rate limit runs) and the same submission service.
-  const videoDailyLimit = config.RATE_LIMITS.VIDEO_DAILY;
+  // Mirrors POST /api/videos: the same hourly burst bucket and the same
+  // submission service (authenticateInternal populates req.user first).
   fastify.post<{
     Body: z.infer<typeof generateSchema>;
   }>('/generate', {
     preHandler: [fastify.authenticateInternal],
-    config: {
-      rateLimit: videoDailyLimit > 0 ? {
-        max: videoDailyLimit,
-        timeWindow: '24 hours',
-        errorResponseBuilder: () => ({
-          error: 'RATE_LIMITED',
-          message: `Daily video limit reached (${videoDailyLimit} videos per 24 hours). Try again tomorrow.`,
-          statusCode: 429,
-        }),
-      } : false, // Disable rate limiting when limit is 0
-    },
   }, async (req, reply) => {
     const { url, folderId } = generateSchema.parse(req.body);
     const userId = req.user.userId;
 
-    // Resolve the tier so the submission service enforces the right daily cap.
-    const user = await userRepository.findById(userId);
-    const tier = resolveTier(user?.tier);
+    // The same hourly bucket as POST /api/videos: the assistant cannot submit
+    // around the burst limit (RATE_LIMITED, 429).
+    await submitBurstLimiter.consume(userId);
 
     const submission = await videoSubmissionService.submit({
       userId,
       url,
-      tier,
       folderId,
       requestId: req.id,
     });

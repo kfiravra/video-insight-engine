@@ -1,21 +1,36 @@
-"""Per-user cost & credit endpoints."""
+"""Per-user cost views (read-only) and the credit-grant proxy."""
 
 from __future__ import annotations
 
 import asyncio
-import logging
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Annotated, Any
 
+import structlog
 from bson import ObjectId
 from bson.errors import InvalidId
 from cachetools import TTLCache
-from fastapi import APIRouter, HTTPException, Path, Query
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
+from src.auth import AdminActor, current_user_actor
 from src.dependencies import get_database
+from src.services.user_costs import (
+    DayCost,
+    UserCostSummary,
+    cost_days,
+    plan_id,
+    summarize,
+    user_cost_summaries,
+)
+from src.services.vie_api_client import (
+    IDEMPOTENCY_KEY_PATTERN,
+    MAX_ADMIN_MINUTES,
+    OBJECT_ID_PATTERN,
+    call_vie_api,
+)
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -23,17 +38,6 @@ router = APIRouter(prefix="/users", tags=["users"])
 _cache: TTLCache[str, Any] = TTLCache(maxsize=64, ttl=30)
 
 MAX_DAYS = 90
-
-
-def _utc_date_key(date: datetime) -> str:
-    """Format a UTC datetime as ``YYYY-MM-DD``."""
-    return date.strftime("%Y-%m-%d")
-
-
-def _since_date_key(days: int) -> str:
-    """UTC ``YYYY-MM-DD`` for ``days`` ago (inclusive of today)."""
-    since = datetime.now(UTC) - timedelta(days=max(days - 1, 0))
-    return _utc_date_key(since)
 
 
 def _parse_object_id(value: str) -> ObjectId:
@@ -47,7 +51,8 @@ class UserCostRow(BaseModel):
     userId: str
     email: str | None
     name: str | None
-    tier: str
+    # The account plan (``billingAccounts.plan.id``); ``free`` when the user has no account row yet.
+    plan: str
     totalCostUsd: float
     videoCount: int
     creditAdjustmentUsd: float
@@ -70,28 +75,15 @@ class UserCostDetail(BaseModel):
 
 
 class GrantCreditRequest(BaseModel):
-    amountUsd: float = Field(
-        ...,
-        description=(
-            "USD signed. Positive value grants credit (reduces effective usage). "
-            "Use 0 to log a no-op audit row."
-        ),
-    )
+    """Minutes to add to a user's account as a credit lot."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    minutes: int = Field(..., ge=1, le=MAX_ADMIN_MINUTES, description="Whole minutes of credit")
     reason: str = Field(..., min_length=1, max_length=500)
-    adminId: str = Field(..., description="ObjectId of the admin issuing the grant")
-    date: str | None = Field(
-        None,
-        pattern=r"^\d{4}-\d{2}-\d{2}$",
-        description="UTC YYYY-MM-DD; defaults to today",
+    expiresAt: AwareDatetime | None = Field(
+        None, description="ISO 8601 with an offset; absent or null = the lot never expires"
     )
-
-
-class GrantCreditResponse(BaseModel):
-    userId: str
-    date: str
-    amountUsd: float
-    creditAdjustmentUsd: float
-    effectiveUsd: float
 
 
 # ─── User-360 activity models ───
@@ -130,7 +122,7 @@ class UserAssistantCallRow(BaseModel):
 
 
 class UserCostTimelineRow(BaseModel):
-    """Daily cost total for the user (from userCosts collection)."""
+    """Daily cost total for the user (``llm_usage``, with ``userCosts`` as history)."""
 
     date: str
     totalCostUsd: float
@@ -147,66 +139,51 @@ class UserActivityResponse(BaseModel):
     costTimeline: list[UserCostTimelineRow]
 
 
+def _cost_row(summary: UserCostSummary) -> UserCostRow:
+    return UserCostRow(
+        userId=summary.user_id,
+        email=summary.email,
+        name=summary.name,
+        plan=summary.plan,
+        totalCostUsd=summary.total_cost_usd,
+        videoCount=summary.video_count,
+        creditAdjustmentUsd=summary.credit_adjustment_usd,
+        effectiveUsd=summary.effective_usd,
+        days=summary.days,
+    )
+
+
+def _daily_rows(days: dict[str, DayCost]) -> list[UserDailyRow]:
+    return [
+        UserDailyRow(
+            date=date,
+            totalCostUsd=day.total_cost_usd,
+            videoCount=day.video_count,
+            creditAdjustmentUsd=day.credit_adjustment_usd,
+            effectiveUsd=day.effective_usd,
+        )
+        for date, day in sorted(days.items())
+    ]
+
+
 @router.get("/costs")
 async def list_user_costs(
     days: int = Query(7, ge=1, le=MAX_DAYS),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ) -> list[UserCostRow]:
-    """Top users by effective cost over the trailing window."""
+    """Users by effective cost over the trailing window.
+
+    Cost is the user's attributed ``llm_usage`` spend; a user is listed with
+    spend in the range, a minutes account, or a sign-up in the range (see
+    ``src.services.user_costs``).
+    """
     cache_key = f"user-costs:{days}:{limit}:{offset}"
     if cache_key in _cache:
         return _cache[cache_key]
 
-    db = get_database()
-    since_key = _since_date_key(days)
-
-    pipeline = [
-        {"$match": {"date": {"$gte": since_key}}},
-        {
-            "$group": {
-                "_id": "$userId",
-                "totalCostUsd": {"$sum": "$totalCostUsd"},
-                "videoCount": {"$sum": "$videoCount"},
-                "creditAdjustmentUsd": {"$sum": "$creditAdjustmentUsd"},
-                "days": {"$sum": 1},
-            }
-        },
-        {
-            "$addFields": {
-                "effectiveUsd": {"$add": ["$totalCostUsd", "$creditAdjustmentUsd"]},
-            }
-        },
-        {"$sort": {"effectiveUsd": -1}},
-        {"$skip": offset},
-        {"$limit": limit},
-        {
-            "$lookup": {
-                "from": "users",
-                "localField": "_id",
-                "foreignField": "_id",
-                "as": "_user",
-                "pipeline": [{"$project": {"email": 1, "name": 1, "tier": 1}}],
-            }
-        },
-        {"$unwind": {"path": "$_user", "preserveNullAndEmptyArrays": True}},
-    ]
-
-    raw = await db.userCosts.aggregate(pipeline).to_list(limit)
-    data = [
-        UserCostRow(
-            userId=str(row["_id"]),
-            email=(row.get("_user") or {}).get("email"),
-            name=(row.get("_user") or {}).get("name"),
-            tier=(row.get("_user") or {}).get("tier") or "free",
-            totalCostUsd=row["totalCostUsd"],
-            videoCount=row["videoCount"],
-            creditAdjustmentUsd=row["creditAdjustmentUsd"],
-            effectiveUsd=row["effectiveUsd"],
-            days=row["days"],
-        )
-        for row in raw
-    ]
+    summaries = await user_cost_summaries(get_database(), days)
+    data = [_cost_row(s) for s in summaries[offset : offset + limit]]
     _cache[cache_key] = data
     return data
 
@@ -218,54 +195,31 @@ async def user_cost_detail(
 ) -> UserCostDetail:
     """Per-user daily breakdown + recent adjustments."""
     user_oid = _parse_object_id(user_id)
+    uid = str(user_oid)
     db = get_database()
-    since_key = _since_date_key(days)
 
-    user_doc = await db.users.find_one(
-        {"_id": user_oid},
-        {"email": 1, "name": 1, "tier": 1},
+    user_doc, plan, by_user, adjustments_raw = await asyncio.gather(
+        db.users.find_one({"_id": user_oid}, {"email": 1, "name": 1}),
+        plan_id(db, uid),
+        cost_days(db, days, uid),
+        db.userCostAdjustments.find({"userId": user_oid})
+        .sort("createdAt", -1)
+        .limit(20)
+        .to_list(20),
     )
-
-    daily_cursor = db.userCosts.find(
-        {"userId": user_oid, "date": {"$gte": since_key}},
-    ).sort("date", 1)
-    daily_docs = await daily_cursor.to_list(MAX_DAYS)
-
-    daily_rows: list[UserDailyRow] = []
-    raw_total = 0.0
-    raw_credit = 0.0
-    video_count = 0
-    for doc in daily_docs:
-        total = float(doc.get("totalCostUsd", 0) or 0)
-        credit = float(doc.get("creditAdjustmentUsd", 0) or 0)
-        videos = int(doc.get("videoCount", 0) or 0)
-        raw_total += total
-        raw_credit += credit
-        video_count += videos
-        daily_rows.append(
-            UserDailyRow(
-                date=doc["date"],
-                totalCostUsd=total,
-                videoCount=videos,
-                creditAdjustmentUsd=credit,
-                effectiveUsd=total + credit,
-            )
-        )
-
+    user_days = by_user.get(uid, {})
+    total, video_count, credit, active_days = summarize(user_days)
     summary = UserCostRow(
         userId=user_id,
         email=(user_doc or {}).get("email"),
         name=(user_doc or {}).get("name"),
-        tier=(user_doc or {}).get("tier") or "free",
-        totalCostUsd=raw_total,
+        plan=plan,
+        totalCostUsd=total,
         videoCount=video_count,
-        creditAdjustmentUsd=raw_credit,
-        effectiveUsd=raw_total + raw_credit,
-        days=len(daily_rows),
+        creditAdjustmentUsd=credit,
+        effectiveUsd=total + credit,
+        days=active_days,
     )
-
-    adj_cursor = db.userCostAdjustments.find({"userId": user_oid}).sort("createdAt", -1).limit(20)
-    adjustments_raw = await adj_cursor.to_list(20)
     adjustments = [
         {
             "id": str(a["_id"]),
@@ -277,86 +231,37 @@ async def user_cost_detail(
         }
         for a in adjustments_raw
     ]
-
-    return UserCostDetail(user=summary, daily=daily_rows, adjustments=adjustments)
+    return UserCostDetail(user=summary, daily=_daily_rows(user_days), adjustments=adjustments)
 
 
 @router.post("/{user_id}/grant-credit")
 async def grant_credit(
+    user_id: Annotated[str, Path(pattern=OBJECT_ID_PATTERN)],
     body: GrantCreditRequest,
-    user_id: str = Path(..., min_length=24, max_length=24),
-) -> GrantCreditResponse:
-    """Apply a signed adjustment to a user's day and audit it.
+    actor: Annotated[AdminActor, Depends(current_user_actor)],
+    idempotency_key: Annotated[
+        str | None, Header(alias="Idempotency-Key", pattern=IDEMPOTENCY_KEY_PATTERN)
+    ] = None,
+) -> dict:
+    """Grant minutes: a proxy to vie-api's ``POST /api/admin/billing/accounts/{id}/credits``.
 
-    `amountUsd` semantics (HTTP boundary):
-        - Positive  → grant credit (subtracts from effective usage).
-        - Negative  → admin manually charges the user extra.
-        - 0         → no-op audit row.
-
-    Storage convention (DB, canonical): `userCostAdjustments.amountUsd` is
-    stored signed where negative = credit, positive = charge. This route
-    negates the user-facing input on the way in so the storage convention
-    matches the Node `UserCostRepository.addAdjustment` contract.
-
-    Audit-trail caveat: this service authenticates with a shared `ADMIN_API_KEY`
-    (see `src/auth.py`), so `adminId` in the request body is self-attested. For
-    a single-admin team this is acceptable; for multi-admin orgs, swap the
-    shared key for per-admin credentials and derive `adminId` from the session
-    rather than trusting the request body.
+    vie-api is the only writer of the minutes ledger. It creates the credit lot,
+    stamps the ledger entry and the ``adminAudit`` row with the admin named by
+    the signed session (never a body field) and the reason, and returns
+    ``{before, after, lotId, auditId}``. Send a stable ``Idempotency-Key`` per
+    form submission so a retry after a timeout cannot grant twice. The old
+    dollar credit (``userCosts`` / ``userCostAdjustments``) is read-only
+    history now; nothing here writes it.
     """
-    if body.amountUsd > 1000 or body.amountUsd < -1000:
-        raise HTTPException(status_code=422, detail="amountUsd out of range [-1000, 1000]")
-
-    user_oid = _parse_object_id(user_id)
-    admin_oid = _parse_object_id(body.adminId)
-
-    db = get_database()
-
-    # Verify the user exists before recording the adjustment.
-    user_doc = await db.users.find_one({"_id": user_oid}, {"email": 1})
-    if not user_doc:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    date_key = body.date or _utc_date_key(datetime.now(UTC))
-
-    # Adjustment stored as a signed value where credits LOWER effective usage.
-    # `amountUsd` > 0 from the API means "grant N USD of credit" → stored as -N.
-    signed_amount = -body.amountUsd
-
-    await db.userCosts.update_one(
-        {"userId": user_oid, "date": date_key},
-        {
-            "$inc": {"creditAdjustmentUsd": signed_amount},
-            "$setOnInsert": {"totalCostUsd": 0.0, "videoCount": 0},
-            "$set": {"updatedAt": datetime.now(UTC)},
-        },
-        upsert=True,
+    logger.info(
+        "credit_grant_requested", user_id=user_id, admin_id=actor.user_id, minutes=body.minutes
     )
-
-    await db.userCostAdjustments.insert_one(
-        {
-            "userId": user_oid,
-            "date": date_key,
-            "amountUsd": signed_amount,
-            "reason": body.reason.strip(),
-            "adminId": admin_oid,
-            "createdAt": datetime.now(UTC),
-        }
-    )
-
-    refreshed = await db.userCosts.find_one({"userId": user_oid, "date": date_key})
-    raw_total = float((refreshed or {}).get("totalCostUsd", 0) or 0)
-    raw_credit = float((refreshed or {}).get("creditAdjustmentUsd", 0) or 0)
-
-    # Best-effort cache invalidation so the dashboard reflects the change quickly.
-    _cache.clear()
-
-    return GrantCreditResponse(
-        userId=user_id,
-        date=date_key,
-        amountUsd=body.amountUsd,
-        creditAdjustmentUsd=raw_credit,
-        effectiveUsd=raw_total + raw_credit,
+    return await call_vie_api(
+        "POST",
+        f"billing/accounts/{user_id}/credits",
+        actor,
+        body=body.model_dump(mode="json", exclude_none=True),
+        idempotency_key=idempotency_key,
     )
 
 
@@ -403,12 +308,12 @@ async def user_activity(
 
     Video ownership is resolved via the ``userVideos`` collection
     (``userId`` + ``videoSummaryId`` join). Assistant activity is sourced
-    from ``llm_usage`` rows where ``user_id`` matches. Cost timeline comes
-    from the ``userCosts`` daily aggregate. All three queries run in
-    parallel.
+    from ``llm_usage`` rows where ``user_id`` matches. The cost timeline is the
+    user's daily spend (``llm_usage``, with ``userCosts`` as history). All
+    three queries run in parallel.
     """
     user_oid = _parse_object_id(user_id)
-    since_key = _since_date_key(days)
+    uid = str(user_oid)
     db = get_database()
 
     user_videos_cursor = (
@@ -439,14 +344,10 @@ async def user_activity(
         .limit(200)
     )
 
-    cost_cursor = db.userCosts.find(
-        {"userId": user_oid, "date": {"$gte": since_key}},
-    ).sort("date", 1)
-
-    video_docs, assistant_docs, cost_docs = await asyncio.gather(
+    video_docs, assistant_docs, cost_by_user = await asyncio.gather(
         user_videos_cursor.to_list(100),
         assistant_cursor.to_list(200),
-        cost_cursor.to_list(MAX_DAYS),
+        cost_days(db, days, uid),
     )
 
     videos = [_format_user_video(d) for d in video_docs]
@@ -455,13 +356,12 @@ async def user_activity(
 
     cost_timeline = [
         UserCostTimelineRow(
-            date=d["date"],
-            totalCostUsd=float(d.get("totalCostUsd") or 0),
-            creditAdjustmentUsd=float(d.get("creditAdjustmentUsd") or 0),
-            effectiveUsd=float(d.get("totalCostUsd") or 0)
-            + float(d.get("creditAdjustmentUsd") or 0),
+            date=date,
+            totalCostUsd=day.total_cost_usd,
+            creditAdjustmentUsd=day.credit_adjustment_usd,
+            effectiveUsd=day.effective_usd,
         )
-        for d in cost_docs
+        for date, day in sorted(cost_by_user.get(uid, {}).items())
     ]
 
     return UserActivityResponse(

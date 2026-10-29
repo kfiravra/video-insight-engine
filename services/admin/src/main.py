@@ -16,6 +16,8 @@ from src.config import settings, validate_secrets
 from src.dependencies import close_mongo_client, get_database, init_mongo_client
 from src.routes.alerts import router as alerts_router
 from src.routes.auth import router as auth_router
+from src.routes.billing import router as billing_router
+from src.routes.billing_actions import router as billing_actions_router
 from src.routes.health import router as health_router
 from src.routes.queue import router as queue_router
 from src.routes.shares import router as shares_router
@@ -138,7 +140,10 @@ app = FastAPI(
     openapi_url=None,
 )
 
-# CORS — restrict to known origins
+# CORS — restrict to known origins. Middleware added later wraps earlier ones, so
+# the auth middleware below runs first: a cross-origin preflight (no Authorization
+# header) is answered 401 before CORS sees it. The panel is served from this
+# service, so it never sends one; this only affects a UI dev server on another origin.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -146,7 +151,7 @@ app.add_middleware(
         "http://localhost:8002",
     ],
     allow_methods=["GET", "POST", "DELETE"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
 )
 
 # Auth middleware
@@ -162,6 +167,8 @@ app.include_router(tiers_router)
 app.include_router(users_router)
 app.include_router(queue_router)
 app.include_router(videos_router)
+app.include_router(billing_router)
+app.include_router(billing_actions_router)
 
 
 @app.get("/health")

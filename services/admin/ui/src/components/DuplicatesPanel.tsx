@@ -48,8 +48,9 @@ export function DuplicatesPanel({ days = 7 }: DuplicatesPanelProps = {}) {
             <tbody>
               {data.map((row) => (
                 <tr key={row.prompt_hash} className="border-b border-[var(--color-border)] last:border-0">
-                  <td className="p-2 pl-4 truncate max-w-[320px]" title={row.prompt_preview ?? undefined}>
-                    {row.prompt_preview ?? row.prompt_hash}
+                  {/* "" is what the assistant stores (chat prompts are never kept), null what the 90-day step leaves. */}
+                  <td className="p-2 pl-4 truncate max-w-[320px]" title={row.prompt_preview || undefined}>
+                    {row.prompt_preview || row.prompt_hash}
                   </td>
                   <td className="p-2 truncate max-w-[140px]">{row.feature ?? '—'}</td>
                   <td className="p-2 font-mono truncate max-w-[160px]">{row.model ?? '—'}</td>

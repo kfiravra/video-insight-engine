@@ -93,7 +93,7 @@ async function streamAssistantChat(
     if (refreshed) {
       const retryResponse = await buildRequest(getAccessToken());
       if (!retryResponse.ok) {
-        throw chatRequestFailure(retryResponse.status);
+        throw await chatRequestFailure(retryResponse);
       }
       await readAssistantSSEStream(retryResponse, onEvent);
       return;
@@ -103,22 +103,39 @@ async function streamAssistantChat(
   }
 
   if (!response.ok) {
-    throw chatRequestFailure(response.status);
+    throw await chatRequestFailure(response);
   }
 
   await readAssistantSSEStream(response, onEvent);
 }
 
 /**
- * The gateway answers 429 RATE_LIMITED when the user is sending too fast. It
- * gets a typed `ApiError` so the chat can say "slow down" rather than the
- * generic connection-failure copy; other statuses stay a plain transport error.
+ * The gateway answers 429 RATE_LIMITED when the user is sending too fast, and
+ * 429 CHAT_LIMIT_REACHED (with `nextAt`) when a free account has used its
+ * messages for the last 24 hours. Both get a typed `ApiError` so the chat can
+ * say which one happened rather than the generic connection-failure copy;
+ * other statuses stay a plain transport error.
  */
-function chatRequestFailure(status: number): Error {
-  if (status === 429) {
-    return new ApiError(429, "Too many messages", "RATE_LIMITED");
+async function chatRequestFailure(response: Response): Promise<Error> {
+  if (response.status !== 429) {
+    return new Error(`Assistant chat failed: ${response.status}`);
   }
-  return new Error(`Assistant chat failed: ${status}`);
+  const body = await readErrorBody(response);
+  if (body?.error === "CHAT_LIMIT_REACHED") {
+    return new ApiError(429, "Chat limit reached", "CHAT_LIMIT_REACHED", { nextAt: body.nextAt });
+  }
+  return new ApiError(429, "Too many messages", "RATE_LIMITED");
+}
+
+/** The gateway's `{ error, message, ... }` body, or null when it is missing or not JSON. */
+async function readErrorBody(response: Response): Promise<Record<string, unknown> | null> {
+  try {
+    const body: unknown = await response.json();
+    return typeof body === "object" && body !== null ? (body as Record<string, unknown>) : null;
+  } catch {
+    // A 429 without a JSON body is still a 429; the caller falls back to RATE_LIMITED.
+    return null;
+  }
 }
 
 /** Build and send the fetch request to the single-video assistant chat endpoint. */

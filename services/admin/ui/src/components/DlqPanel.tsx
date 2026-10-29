@@ -15,6 +15,12 @@ function field(msg: DlqMessage, key: string): string {
   return value == null ? '—' : String(value);
 }
 
+/** What paid for the run (`free` / `paid`); a message published before billing-roles P3.4 carries `tier`. */
+function plan(msg: DlqMessage): string {
+  const value = msg.payload?.plan ?? msg.payload?.tier;
+  return value == null ? '—' : String(value);
+}
+
 function attempt(msg: DlqMessage): string {
   const value = msg.headers?.['x-attempt'] ?? msg.payload?.attempt;
   return value == null ? '—' : String(value);
@@ -74,7 +80,7 @@ function DlqTable({ messages }: { messages: DlqMessage[] }) {
             <th className="text-left p-2 pl-4 font-medium text-[var(--color-text-muted)]">Video</th>
             <th className="text-left p-2 font-medium text-[var(--color-text-muted)]">Summary id</th>
             <th className="text-left p-2 font-medium text-[var(--color-text-muted)]">Request id</th>
-            <th className="text-right p-2 font-medium text-[var(--color-text-muted)]">Tier</th>
+            <th className="text-right p-2 font-medium text-[var(--color-text-muted)]">Plan</th>
             <th className="text-right p-2 pr-4 font-medium text-[var(--color-text-muted)]">Attempt</th>
           </tr>
         </thead>
@@ -88,7 +94,7 @@ function DlqTable({ messages }: { messages: DlqMessage[] }) {
               <td className="p-2 pl-4 font-mono">{field(msg, 'youtubeId')}</td>
               <td className="p-2 font-mono truncate max-w-[200px]">{field(msg, 'videoSummaryId')}</td>
               <td className="p-2 font-mono truncate max-w-[200px]">{field(msg, 'requestId')}</td>
-              <td className="p-2 text-right">{field(msg, 'tier')}</td>
+              <td className="p-2 text-right">{plan(msg)}</td>
               <td className="p-2 pr-4 text-right tabular-nums">{attempt(msg)}</td>
             </tr>
           ))}

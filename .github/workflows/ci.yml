@@ -348,7 +348,6 @@ jobs:
           JWT_REFRESH_SECRET=ci-dummy-refresh-secret-32-chars-xx
           INTERNAL_SECRET=ci
           ADMIN_API_KEY=ci
-          PADDLE_WEBHOOK_SECRET=ci
           FRONTEND_URL=https://ci.invalid
           VITE_WS_URL=wss://ci.invalid/ws
           DOMAIN=ci.invalid

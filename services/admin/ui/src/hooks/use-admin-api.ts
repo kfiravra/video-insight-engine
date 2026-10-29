@@ -1,5 +1,7 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import { auditApi, type AuditEntry } from '../lib/billing-actions';
+import { mergeLedgerPages } from '../lib/billing';
 
 export function useUsageStats(days = 30) {
   return useQuery({ queryKey: ['usage-stats', days], queryFn: () => api.usage.stats(days), refetchInterval: 30_000 });
@@ -179,5 +181,52 @@ export function useUserActivity(userId: string | null | undefined) {
     queryFn: () => api.users.activity(userId!),
     enabled: !!userId,
     staleTime: 30_000,
+  });
+}
+
+export const BILLING_LEDGER_PAGE_SIZE = 50;
+
+/**
+ * A user's minutes account, read-only. The ledger is paged (`fetchNextPage` /
+ * `hasNextPage` load older entries); `data` is the merged `BillingAccountDetail`.
+ * Invalidate `['billing-account', userId]` after a billing change.
+ */
+export function useBillingAccount(userId: string | null | undefined) {
+  return useInfiniteQuery({
+    queryKey: ['billing-account', userId],
+    queryFn: ({ pageParam }) =>
+      api.billing.account(userId!, { limit: BILLING_LEDGER_PAGE_SIZE, before: pageParam }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.ledgerNextBefore ?? undefined,
+    select: mergeLedgerPages,
+    enabled: !!userId,
+    staleTime: 15_000,
+  });
+}
+
+export const AUDIT_PAGE_SIZE = 50;
+
+export interface AuditFilters {
+  targetId?: string;
+  actorId?: string;
+}
+
+function flattenAuditPages(data: { pages: Array<{ entries: AuditEntry[] }> }): AuditEntry[] {
+  return data.pages.flatMap((page) => page.entries);
+}
+
+/**
+ * The admin action log, newest first. `fetchNextPage` / `hasNextPage` page it
+ * with the `nextBefore` cursor; `data` is every loaded entry. Billing changes
+ * invalidate `['audit']`.
+ */
+export function useAuditLog(filters: AuditFilters) {
+  return useInfiniteQuery({
+    queryKey: ['audit', filters.targetId ?? null, filters.actorId ?? null],
+    queryFn: ({ pageParam }) => auditApi.list({ ...filters, limit: AUDIT_PAGE_SIZE, before: pageParam }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.nextBefore ?? undefined,
+    select: flattenAuditPages,
+    staleTime: 10_000,
   });
 }

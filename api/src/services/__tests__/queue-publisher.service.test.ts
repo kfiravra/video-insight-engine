@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import { QueuePublisher } from '../queue-publisher.service.js';
-import { QUEUE_TOPOLOGY, PRIORITY_FREE, PRIORITY_PAID } from '../queue-topology.js';
+import { QUEUE_TOPOLOGY, PRIORITY_FREE, PRIORITY_PAID, queuePlanOf, videoJobPayloadSchema } from '../queue-topology.js';
 import { QueuePublishError } from '../../utils/errors.js';
 
 const mockLogger = {
@@ -50,7 +50,7 @@ const validInput = {
   youtubeId: 'dQw4w9WgXcQ',
   url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
   userId: 'user-1',
-  tier: 'free' as const,
+  plan: 'free' as const,
 };
 
 describe('QueuePublisher', () => {
@@ -81,42 +81,35 @@ describe('QueuePublisher', () => {
       const parsed = JSON.parse(buffer.toString('utf8'));
       expect(parsed.videoSummaryId).toBe(validInput.videoSummaryId);
       expect(parsed.youtubeId).toBe(validInput.youtubeId);
-      expect(parsed.tier).toBe('free');
+      expect(parsed.plan).toBe('free');
       expect(parsed.attempt).toBe(1);
       expect(parsed.requestId).toBeTruthy();
       expect(payload.priority).toBe(PRIORITY_FREE);
     });
 
-    it('assigns higher priority to paid tiers', async () => {
+    it('should queue a paid run ahead of a free one', async () => {
       const channel = createSuccessfulChannel();
       const publisher = new QueuePublisher(async () => channel as never, mockLogger);
 
-      const free = await publisher.publishVideoJob({ ...validInput, tier: 'free' });
-      const pro = await publisher.publishVideoJob({ ...validInput, tier: 'pro' });
-      const team = await publisher.publishVideoJob({ ...validInput, tier: 'team' });
+      const free = await publisher.publishVideoJob({ ...validInput, plan: 'free' });
+      const paid = await publisher.publishVideoJob({ ...validInput, plan: 'paid' });
 
-      expect(free.priority).toBe(PRIORITY_FREE);
-      expect(pro.priority).toBe(PRIORITY_PAID);
-      expect(team.priority).toBe(PRIORITY_PAID);
-
-      const options = channel.publish.mock.calls.map(call => call[3]);
-      expect(options[0].priority).toBe(PRIORITY_FREE);
-      expect(options[1].priority).toBe(PRIORITY_PAID);
-      expect(options[2].priority).toBe(PRIORITY_PAID);
+      const options = channel.publish.mock.calls.map(call => call[3].priority);
+      expect([free.priority, paid.priority, ...options]).toEqual([PRIORITY_FREE, PRIORITY_PAID, PRIORITY_FREE, PRIORITY_PAID]);
     });
 
     it('marks messages persistent and stamps headers for observability', async () => {
       const channel = createSuccessfulChannel();
       const publisher = new QueuePublisher(async () => channel as never, mockLogger);
 
-      await publisher.publishVideoJob({ ...validInput, tier: 'pro' });
+      await publisher.publishVideoJob({ ...validInput, plan: 'paid' });
 
       const options = channel.publish.mock.calls[0][3];
       expect(options.persistent).toBe(true);
       expect(options.contentType).toBe('application/json');
       expect(options.headers).toEqual({
         'x-attempt': 1,
-        'x-tier': 'pro',
+        'x-plan': 'paid',
       });
     });
 
@@ -175,5 +168,31 @@ describe('QueuePublisher', () => {
       const options = channel.publish.mock.calls[0][3];
       expect(options.headers['x-attempt']).toBe(3);
     });
+  });
+});
+
+describe('queuePlanOf', () => {
+  const split = (free: number, plan: number, credit: number) => ({ free, plan, credit, lots: [] });
+
+  it.each([
+    ['plan minutes', split(0, 30, 0), 'paid'],
+    ['credit minutes', split(0, 0, 30), 'paid'],
+    ['the free video topped up with credits', split(10, 0, 5), 'paid'],
+    ['the free video alone', split(10, 0, 0), 'free'],
+  ])('should queue a run on %s as %s', (_label, holdSplit, plan) => {
+    expect(queuePlanOf(holdSplit)).toBe(plan);
+  });
+});
+
+describe('videoJobPayloadSchema', () => {
+  const message = {
+    videoSummaryId: 'abc', youtubeId: 'dQw4w9WgXcQ', url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+    priority: PRIORITY_FREE, requestId: 'r-1', createdAt: new Date().toISOString(),
+  };
+
+  it('should default the plan to free and drop a leftover tier', () => {
+    const parsed = videoJobPayloadSchema.parse({ ...message, tier: 'pro' });
+
+    expect([parsed.plan, 'tier' in parsed]).toEqual(['free', false]);
   });
 });

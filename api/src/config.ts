@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { z } from 'zod';
+import { MESSAGE_TTL_MS as QUEUE_MESSAGE_TTL_MS } from './services/queue-topology.js';
 
 // ─── Canonical pipeline version ───────────────────────────────────────
 // Single-sourced from packages/shared/src/config/pipeline-version.json,
@@ -54,7 +55,30 @@ const DEV_DEFAULT_SECRETS: Record<string, string[]> = {
     'your-internal-secret-generate-with-openssl-rand',
   ],
   ADMIN_API_KEY: ['dev-admin-key-change-me'],
+  ADMIN_SESSION_SECRET: ['dev-admin-session-secret-change-me'],
 };
+
+// `openssl rand -hex 32` yields 64 characters; shorter is a guessable HMAC key.
+// Only applied to ADMIN_SESSION_SECRET (same floor as vie-admin's validate_secrets);
+// the ADMIN_API_KEY already in production has an unknown length.
+const MIN_ADMIN_SESSION_SECRET_LENGTH = 32;
+
+/** Production-only rules for ADMIN_SESSION_SECRET beyond "not the dev default" (messages never echo the value). */
+function addAdminSessionSecretIssues(
+  env: { ADMIN_SESSION_SECRET: string; ADMIN_API_KEY: string },
+  ctx: z.RefinementCtx,
+): void {
+  const problems: string[] = [];
+  if (env.ADMIN_SESSION_SECRET.length < MIN_ADMIN_SESSION_SECRET_LENGTH) {
+    problems.push(`ADMIN_SESSION_SECRET must be at least ${MIN_ADMIN_SESSION_SECRET_LENGTH} characters (openssl rand -hex 32)`);
+  }
+  if (env.ADMIN_SESSION_SECRET === env.ADMIN_API_KEY) {
+    problems.push('ADMIN_SESSION_SECRET must differ from ADMIN_API_KEY — the machine key could otherwise act as any admin');
+  }
+  for (const message of problems) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['ADMIN_SESSION_SECRET'], message });
+  }
+}
 
 const envSchema = z.object({
   PORT: z.string().default('3000').transform(Number),
@@ -79,8 +103,13 @@ const envSchema = z.object({
   // Playlist-specific rate limits (higher in test mode to avoid test interference)
   PLAYLIST_PREVIEW_RATE_LIMIT: z.string().default('30').transform(Number),
   PLAYLIST_IMPORT_RATE_LIMIT: z.string().default('5').transform(Number),
-  // Video creation daily limit (0 = unlimited for admins/dev)
-  VIDEO_DAILY_LIMIT: z.string().default('100').transform(Number),
+  // Submit burst guard: submissions per user per fixed hour, one bucket shared by
+  // POST /api/videos, the assistant's generate route and playlist import
+  // (0 = off). An abuse limit, not a billing one.
+  SUBMIT_BURST_LIMIT_PER_HOUR: z.string().default('20').transform(Number),
+  // Chat fair use: messages a FREE account may send in any rolling 24 hours,
+  // across the single-video and library chat routes (0 = off). Pro is unlimited.
+  CHAT_FREE_MESSAGES_PER_DAY: z.string().default('50').transform(Number),
   // Self-service signup. 'false' closes POST /api/auth/register (403) and the
   // web app hides its signup links; accounts are then created out-of-band
   // (scripts/create-user.ts). Any other value keeps registration open.
@@ -90,15 +119,6 @@ const envSchema = z.object({
   // email is normalized like a login email because the lookup is exact-match.
   DEMO_USER_EMAIL: z.string().default('').transform(v => v.trim().toLowerCase()),
   DEMO_USER_PASSWORD: z.string().default(''),
-  // Payment (Paddle)
-  PADDLE_WEBHOOK_SECRET: z.string().default(''),
-  PADDLE_PRO_PRICE_ID: z.string().default(''),
-  PADDLE_TEAM_PRICE_ID: z.string().default(''),
-  // Cost monitoring
-  // Per-user daily cost limits in USD (0 disables the limit; -1 means unlimited)
-  USER_COST_LIMIT_FREE: z.string().default('2').transform(Number),
-  USER_COST_LIMIT_PRO: z.string().default('20').transform(Number),
-  USER_COST_LIMIT_TEAM: z.string().default('-1').transform(Number),
   // ─── RabbitMQ job queue ─────────────────────────────────────────────
   // amqplib connection URL. The credentials are supplied via docker-compose env
   // (RABBITMQ_DEFAULT_USER / PASS) so this default works in the dev compose.
@@ -112,6 +132,31 @@ const envSchema = z.object({
   // Admin endpoints for /api/admin/queue/* and DLQ replay. Different from
   // INTERNAL_SECRET so a leaked admin key cannot impersonate the summarizer.
   ADMIN_API_KEY: z.string().min(8).default('dev-admin-key-change-me'),
+  // HMAC key for the signed `X-Admin-Actor` header vie-admin sends with every
+  // call it makes for a named admin (utils/admin-actor.ts). The SAME value as
+  // vie-admin's ADMIN_SESSION_SECRET, which also signs its login sessions, so
+  // rotate both services together. Kept apart from ADMIN_API_KEY: holding the
+  // machine key must not let anyone act as an admin.
+  ADMIN_SESSION_SECRET: z.string().default('dev-admin-session-secret-change-me'),
+  // Comma-separated login emails that hold the admin role. Reconciled with the
+  // users collection at every boot (services/admin-seed.service.ts): listed
+  // existing accounts are promoted, `env` admins that leave the list are
+  // demoted. Empty = nothing changes (never locks anyone out).
+  ADMIN_EMAILS: z.string().default(''),
+  // ─── Billing ledger ─────────────────────────────────────────────────
+  // The minutes ledger decides every submit (web, assistant generate, playlist
+  // items): quoted and held BEFORE createVideo, refused with 402/422/403/429.
+  // There is no switch and no per-user dollar cap (P3.2). Needs Mongo
+  // transactions (a replica set).
+  // Billing repair job (P1.6), an in-process interval behind a Redis lock:
+  // settle/release stale holds, expire lots, apply recurring grants, check
+  // projections against the ledger, drop llm_usage.user_id after 90 days,
+  // run the GDPR hard-delete sweep. Unset = on, except under NODE_ENV=test.
+  BILLING_REPAIR_ENABLED: z.enum(['true', 'false']).optional(),
+  BILLING_REPAIR_INTERVAL_SECONDS: z.string().default('300').transform(Number).pipe(z.number().int().min(30)),
+  // A hold older than this whose run is terminal, missing or unstamped is
+  // settled (run completed) or released (anything else) by the repair job.
+  BILLING_HOLD_MAX_AGE_HOURS: z.string().default('3').transform(Number).pipe(z.number().positive()),
   // ─── Idempotency ────────────────────────────────────────────────────
   // NOTE: PIPELINE_VERSION is intentionally absent here — it is single-
   // sourced from pipeline-version.json (see loadPipelineVersion above) and
@@ -188,6 +233,15 @@ const envSchema = z.object({
   // ("10.0.0.0/8,172.16.0.0/12") for a stricter allowlist.
   TRUST_PROXY: z.string().default('false'),
 }).superRefine((env, ctx) => {
+  // A `pending` hold is released as stalled after BILLING_HOLD_MAX_AGE_HOURS,
+  // which is only safe once its queue message is surely gone (I4).
+  if (env.BILLING_HOLD_MAX_AGE_HOURS * 60 * 60 * 1000 <= QUEUE_MESSAGE_TTL_MS) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['BILLING_HOLD_MAX_AGE_HOURS'],
+      message: `BILLING_HOLD_MAX_AGE_HOURS must exceed the job queue's message TTL (${QUEUE_MESSAGE_TTL_MS / 3_600_000} h)`,
+    });
+  }
   if (env.NODE_ENV !== 'production') return;
 
   const secrets: Array<{ key: string; value: string }> = [
@@ -195,6 +249,7 @@ const envSchema = z.object({
     { key: 'JWT_REFRESH_SECRET', value: env.JWT_REFRESH_SECRET },
     { key: 'INTERNAL_SECRET', value: env.INTERNAL_SECRET },
     { key: 'ADMIN_API_KEY', value: env.ADMIN_API_KEY },
+    { key: 'ADMIN_SESSION_SECRET', value: env.ADMIN_SESSION_SECRET },
   ];
   for (const { key, value } of secrets) {
     if (DEV_DEFAULT_SECRETS[key].includes(value)) {
@@ -205,16 +260,7 @@ const envSchema = z.object({
       });
     }
   }
-
-  // Without a secret the webhook route would accept unverified Paddle events,
-  // letting anyone flip user tiers with a curl. Dev/test may skip it; prod may not.
-  if (!env.PADDLE_WEBHOOK_SECRET) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['PADDLE_WEBHOOK_SECRET'],
-      message: 'PADDLE_WEBHOOK_SECRET is required in production — unsigned webhooks must never be accepted',
-    });
-  }
+  addAdminSessionSecretIssues(env, ctx);
 });
 
 const parsedConfig = envSchema.parse(process.env);
@@ -282,6 +328,9 @@ export const config = {
   ALLOWED_ORIGINS: buildAllowedOrigins(),
   // Computed property: Fastify-shaped trustProxy value
   TRUST_PROXY_VALUE: parseTrustProxy(parsedConfig.TRUST_PROXY),
+  BILLING_REPAIR_ENABLED: parsedConfig.BILLING_REPAIR_ENABLED === undefined
+    ? parsedConfig.NODE_ENV !== 'test'
+    : parsedConfig.BILLING_REPAIR_ENABLED === 'true',
   // Computed rate limits - higher in test mode to avoid interference
   RATE_LIMITS: {
     PLAYLIST_PREVIEW: parsedConfig.NODE_ENV === 'test'
@@ -290,18 +339,5 @@ export const config = {
     PLAYLIST_IMPORT: parsedConfig.NODE_ENV === 'test'
       ? parsedConfig.PLAYLIST_IMPORT_RATE_LIMIT * TEST_RATE_LIMIT_MULTIPLIER
       : parsedConfig.PLAYLIST_IMPORT_RATE_LIMIT,
-    // Video daily limit (0 = unlimited, useful for dev/admin)
-    VIDEO_DAILY: parsedConfig.NODE_ENV === 'test'
-      ? parsedConfig.VIDEO_DAILY_LIMIT * TEST_RATE_LIMIT_MULTIPLIER
-      : parsedConfig.VIDEO_DAILY_LIMIT,
   },
-  // Per-user daily LLM cost limits in USD by tier.
-  //   -1 → unlimited (admin/team)
-  //    0 → disabled (treated as unlimited)
-  //   > 0 → enforced hard ceiling at UTC midnight reset
-  COST_LIMITS_PER_TIER: {
-    free: parsedConfig.USER_COST_LIMIT_FREE,
-    pro: parsedConfig.USER_COST_LIMIT_PRO,
-    team: parsedConfig.USER_COST_LIMIT_TEAM,
-  } as Record<'free' | 'pro' | 'team', number>,
 };

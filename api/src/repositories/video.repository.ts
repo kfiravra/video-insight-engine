@@ -86,6 +86,10 @@ export interface VideoSummaryCacheDocument {
    *  request runs the pipeline; `$unset` by the GDPR cascade. */
   userId?: string;
   requestId?: string;
+  /** The minutes ledger's run id for this dispatch (server-generated per
+   *  submission, P3.1): the terminal status settles / releases the hold keyed
+   *  by it, while `requestId` keeps naming the run's llm_usage rows. */
+  billingRunId?: string;
   retryCount: number;
   errorCode?: string;
   errorMessage?: string;
@@ -107,7 +111,7 @@ export interface VideoSummaryCacheDocument {
   // Canonical version stamp written by the summarizer at pipeline write time
   // (packages/shared/src/config/pipeline-version.json). Absent on docs that
   // predate stamping — those are treated as current-legacy and served as-is;
-  // a mismatching stamp triggers regen in video.service.ts.isStaleVersion.
+  // a mismatching stamp offers the user an update (library-update.ts isStaleVersion).
   pipelineVersion?: string;
   // Transcript provenance stamped by the summarizer per run (see TranscriptMeta).
   // Absent on Redis-served rows and on rows predating the field; the API never
@@ -139,6 +143,8 @@ export interface UserVideoDocument {
   thumbnailUrl?: string;
   status: string;
   folderId: ObjectId | null;
+  /** D-LIB: the completed copy an update left, while the row it moved to can still fail (library-update.repository.ts). */
+  previousVideoSummaryId?: ObjectId;
   playlistInfo?: {
     playlistId: string;
     playlistTitle: string;
@@ -239,6 +245,11 @@ export class VideoRepository {
    * `url`, `status`, or any other field — the row's state is owned by the
    * original winner and the in-progress pipeline.
    */
+  /** The shared row for a dedupKey, read-only (the serve-only path must not create one). */
+  async findCacheByDedupKey(dedupKey: string): Promise<VideoSummaryCacheDocument | null> {
+    return this.cacheCollection.findOne({ dedupKey });
+  }
+
   async upsertCacheByDedupKey(
     data: CreateVideoSummaryData & { dedupKey: string },
   ): Promise<{ doc: VideoSummaryCacheDocument; wasInsert: boolean }> {
@@ -353,6 +364,20 @@ export class VideoRepository {
   }
 
   /**
+   * A stalled row was re-dispatched (createVideo's stall branch): the new run
+   * owns it, so it reads `pending` with a fresh `updatedAt` — otherwise the
+   * summarizer's stall sweeper would fail it as the dead run's and the new
+   * run's hold with it (I2). Like `incrementRetryCount`, it also clears the
+   * guard-release marker so a FAILED for THIS run can still release.
+   */
+  async markRedispatched(id: string): Promise<void> {
+    await this.cacheCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { status: 'pending', updatedAt: new Date() }, $unset: { dispatchGuardReleasedAt: '' } },
+    );
+  }
+
+  /**
    * Atomically claim the right to release the dispatch guard for a FAILED
    * cache row. Returns `true` exactly once per terminal-failure transition —
    * subsequent duplicate FAILED events from summarizer status-callback
@@ -450,6 +475,19 @@ export class VideoRepository {
     return result.deletedCount;
   }
 
+  /**
+   * The video's length in seconds from any completed version, or null. A
+   * submit for a video already summarised reads it here instead of asking the
+   * summarizer's metadata pre-flight (I10): the length never changes.
+   */
+  async findKnownDuration(youtubeId: string): Promise<number | null> {
+    const row = await this.cacheCollection.findOne(
+      { youtubeId, status: 'completed', duration: { $gt: 0 } },
+      { projection: { duration: 1 } },
+    );
+    return row?.duration ?? null;
+  }
+
   /** Every version's id and share slug for a video — the global purge's work list. */
   async findCacheKeysByYoutubeId(youtubeId: string): Promise<Array<{ _id: ObjectId; shareSlug?: string }>> {
     return this.cacheCollection
@@ -495,6 +533,25 @@ export class VideoRepository {
     };
     const result = await this.userVideosCollection.insertOne(doc as UserVideoDocument);
     return { ...doc, _id: result.insertedId } as UserVideoDocument;
+  }
+
+  /**
+   * Point a library entry at another row (an update to the latest version):
+   * it keeps its id and folder and takes the row's denormalised fields where
+   * the data has them, remembering `previousVideoSummaryId` when given. Null
+   * when the entry is gone.
+   */
+  async repointUserVideo(userVideoId: string, data: CreateUserVideoData, previousVideoSummaryId?: string): Promise<UserVideoDocument | null> {
+    const { userId, videoSummaryId, status, title, channel, duration, thumbnailUrl } = data;
+    const previous = previousVideoSummaryId ? { previousVideoSummaryId: new ObjectId(previousVideoSummaryId) } : {};
+    return this.userVideosCollection.findOneAndUpdate(
+      { _id: new ObjectId(userVideoId), userId: new ObjectId(userId) },
+      {
+        $set: { videoSummaryId: new ObjectId(videoSummaryId), status, title, channel, duration, thumbnailUrl, ...previous, updatedAt: new Date() },
+        ...(!previousVideoSummaryId && { $unset: { previousVideoSummaryId: '' as const } }),
+      },
+      { returnDocument: 'after', ignoreUndefined: true },
+    );
   }
 
   async deleteUserVideo(userId: string, videoId: string): Promise<boolean> {
@@ -640,10 +697,17 @@ export class VideoRepository {
    * with the release marker — bumping it here would let a late duplicate
    * FAILED event release the guard this dispatch just acquired.
    */
-  async stampDispatchContext(id: string, userId: string, requestId?: string): Promise<void> {
-    const update: UpdateFilter<VideoSummaryCacheDocument> = requestId
-      ? { $set: { userId, requestId } }
-      : { $set: { userId }, $unset: { requestId: '' } };
+  async stampDispatchContext(id: string, userId: string, requestId?: string, billingRunId?: string): Promise<void> {
+    const set: Partial<VideoSummaryCacheDocument> = { userId };
+    const unset: Record<string, ''> = {};
+    if (requestId) set.requestId = requestId;
+    else unset.requestId = '';
+    // Same rule for the billing run: an earlier dispatch's run must never be settled by this one.
+    if (billingRunId) set.billingRunId = billingRunId;
+    else unset.billingRunId = '';
+    const update: UpdateFilter<VideoSummaryCacheDocument> = Object.keys(unset).length > 0
+      ? { $set: set, $unset: unset }
+      : { $set: set };
     await this.cacheCollection.updateOne({ _id: new ObjectId(id) }, update);
   }
 

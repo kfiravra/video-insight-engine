@@ -40,9 +40,11 @@ describe('VideoService', () => {
     stampDispatchContext: ReturnType<typeof vi.fn>;
     findHighestVersion: ReturnType<typeof vi.fn>;
     incrementRetryCount: ReturnType<typeof vi.fn>;
+    markRedispatched: ReturnType<typeof vi.fn>;
     getVersions: ReturnType<typeof vi.fn>;
     pruneVersions: ReturnType<typeof vi.fn>;
     userOwnsVideo: ReturnType<typeof vi.fn>;
+    userHasAccessToSummary: ReturnType<typeof vi.fn>;
     updateCacheEntry: ReturnType<typeof vi.fn>;
   };
   let mockSummarizerClient: {
@@ -81,9 +83,11 @@ describe('VideoService', () => {
       stampDispatchContext: vi.fn().mockResolvedValue(undefined),
       findHighestVersion: vi.fn(),
       incrementRetryCount: vi.fn(),
+      markRedispatched: vi.fn().mockResolvedValue(undefined),
       getVersions: vi.fn(),
       pruneVersions: vi.fn().mockResolvedValue(0),
       userOwnsVideo: vi.fn(),
+      userHasAccessToSummary: vi.fn(),
       updateCacheEntry: vi.fn(),
     };
     mockSummarizerClient = {
@@ -255,7 +259,7 @@ describe('VideoService', () => {
         status: 'pending',
       });
 
-      const result = await videoService.createVideo(userId, url, { tier: 'free' });
+      const result = await videoService.createVideo(userId, url, { queuePlan: 'free' });
 
       expect(result.video).toHaveProperty('videoSummaryId');
       expect(result.video.videoSummaryId).toBe(videoSummaryId);
@@ -286,7 +290,7 @@ describe('VideoService', () => {
         status: 'completed',
       });
 
-      const result = await videoService.createVideo(userId, url, { tier: 'free' });
+      const result = await videoService.createVideo(userId, url, { queuePlan: 'free' });
 
       expect(result.video.videoSummaryId).toBe(videoSummaryId);
       expect(result.cached).toBe(true);
@@ -312,7 +316,7 @@ describe('VideoService', () => {
         status: 'processing',
       });
 
-      const result = await videoService.createVideo(userId, url, { tier: 'free' });
+      const result = await videoService.createVideo(userId, url, { queuePlan: 'free' });
 
       expect(result.video.videoSummaryId).toBe(videoSummaryId);
       expect(result.cached).toBe(false);
@@ -340,12 +344,48 @@ describe('VideoService', () => {
       const result = await videoService.createVideo(
         'user-x',
         'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-        { tier: 'free' },
+        { queuePlan: 'free' },
       );
 
       expect(result.attached).toBe(true);
       expect(result.cached).toBe(false);
       expect(mockSummarizerClient.triggerSummarization).not.toHaveBeenCalled();
+    });
+
+    it('should mark a stalled row pending with a fresh updatedAt once it re-dispatches it (I2)', async () => {
+      const stalledAt = new Date(Date.now() - 31 * 60 * 1000);
+      mockVideoRepository.findUserVideoByYoutubeId.mockResolvedValue(null);
+      mockVideoRepository.upsertCacheByDedupKey.mockResolvedValue(
+        upsertResult(false, { _id: 'stalled-row', youtubeId: 'dQw4w9WgXcQ', status: 'processing', updatedAt: stalledAt }),
+      );
+      mockVideoRepository.createUserVideo.mockResolvedValue({
+        _id: { toString: () => 'uv-stalled' },
+        videoSummaryId: { toString: () => 'stalled-row' },
+        youtubeId: 'dQw4w9WgXcQ',
+        status: 'pending',
+      });
+
+      await videoService.createVideo('user-stall', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', { queuePlan: 'free' });
+
+      expect(mockVideoRepository.markRedispatched).toHaveBeenCalledWith('stalled-row');
+    });
+
+    it('should leave a stalled row alone when another dispatch holds the guard (I2)', async () => {
+      mockDispatchGuard.acquire.mockResolvedValueOnce({ acquired: false, token: null });
+      mockVideoRepository.findUserVideoByYoutubeId.mockResolvedValue(null);
+      mockVideoRepository.upsertCacheByDedupKey.mockResolvedValue(
+        upsertResult(false, { _id: 'stalled-held', youtubeId: 'dQw4w9WgXcQ', status: 'processing', updatedAt: new Date(Date.now() - 31 * 60 * 1000) }),
+      );
+      mockVideoRepository.createUserVideo.mockResolvedValue({
+        _id: { toString: () => 'uv-stalled-held' },
+        videoSummaryId: { toString: () => 'stalled-held' },
+        youtubeId: 'dQw4w9WgXcQ',
+        status: 'pending',
+      });
+
+      const result = await videoService.createVideo('user-stall', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', { queuePlan: 'free' });
+
+      expect([mockVideoRepository.markRedispatched.mock.calls.length, result.attached]).toEqual([0, true]);
     });
 
     it('should dispatch when retrying a failed cached row (wasInsert:false, status:failed)', async () => {
@@ -367,7 +407,7 @@ describe('VideoService', () => {
       const result = await videoService.createVideo(
         'user123',
         'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-        { tier: 'free' },
+        { queuePlan: 'free' },
       );
 
       expect(result.video.videoSummaryId).toBe(videoSummaryId);
@@ -395,7 +435,7 @@ describe('VideoService', () => {
       await videoService.createVideo(
         'user123',
         'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-        { tier: 'free', providers: { default: 'anthropic' } },
+        { queuePlan: 'free', providers: { default: 'anthropic' } },
       );
 
       expect(mockIdempotencyService.computeContentKey).toHaveBeenCalledWith({
@@ -434,7 +474,7 @@ describe('VideoService', () => {
         await videoService.createVideo(
           'user-q',
           'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-          { tier: 'pro' },
+          { queuePlan: 'paid' },
         );
 
         expect(mockQueuePublisher.publishVideoJob).toHaveBeenCalledTimes(1);
@@ -443,7 +483,7 @@ describe('VideoService', () => {
         const arg = mockQueuePublisher.publishVideoJob.mock.calls[0][0];
         expect(arg.videoSummaryId).toBe(videoSummaryId);
         expect(arg.youtubeId).toBe(youtubeId);
-        expect(arg.tier).toBe('pro');
+        expect([arg.plan, arg.tier]).toEqual(['paid', undefined]);
       });
 
       it('should publish to queue on failed-video retry', async () => {
@@ -464,7 +504,7 @@ describe('VideoService', () => {
         await videoService.createVideo(
           'user-q',
           'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-          { tier: 'free' },
+          { queuePlan: 'free' },
         );
 
         expect(mockQueuePublisher.publishVideoJob).toHaveBeenCalledTimes(1);
@@ -489,7 +529,7 @@ describe('VideoService', () => {
         await videoService.createVideo(
           'user-q',
           'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-          { tier: 'free', requestId: 'req-from-route-abc12' },
+          { queuePlan: 'free', requestId: 'req-from-route-abc12' },
         );
 
         const arg = mockQueuePublisher.publishVideoJob.mock.calls[0][0];
@@ -516,7 +556,7 @@ describe('VideoService', () => {
         await videoService.createVideo(
           'user-http',
           'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-          { tier: 'free', requestId: 'req-http-fallback-99' },
+          { queuePlan: 'free', requestId: 'req-http-fallback-99' },
         );
 
         const call = mockSummarizerClient.triggerSummarization.mock.calls[0][0];
@@ -544,7 +584,7 @@ describe('VideoService', () => {
         await videoService.createVideo(
           'user-g',
           'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-          { tier: 'free' },
+          { queuePlan: 'free' },
         );
 
         expect(mockDispatchGuard.acquire).toHaveBeenCalledWith(videoSummaryId);
@@ -577,7 +617,7 @@ describe('VideoService', () => {
         await videoService.createVideo(
           'user-g2',
           'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-          { tier: 'free' },
+          { queuePlan: 'free' },
         );
 
         expect(mockDispatchGuard.acquire).toHaveBeenCalledWith(videoSummaryId);
@@ -608,7 +648,7 @@ describe('VideoService', () => {
         await videoService.createVideo(
           'user-http-g',
           'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-          { tier: 'free' },
+          { queuePlan: 'free' },
         );
 
         expect(mockSummarizerClient.triggerSummarization).not.toHaveBeenCalled();
@@ -639,10 +679,28 @@ describe('VideoService', () => {
         await videoService.createVideo(
           'user-noretry',
           'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-          { tier: 'free' },
+          { queuePlan: 'free' },
         );
 
         expect(mockVideoRepository.incrementRetryCount).not.toHaveBeenCalled();
+      });
+
+      it('should report attached when the dispatch guard rejects, so the hold goes back now (I1)', async () => {
+        mockDispatchGuard.acquire.mockResolvedValueOnce({ acquired: false, token: null });
+        mockVideoRepository.findUserVideoByYoutubeId.mockResolvedValue(null);
+        mockVideoRepository.upsertCacheByDedupKey.mockResolvedValue(
+          upsertResult(false, { _id: 'failed-row-held', youtubeId: 'dQw4w9WgXcQ', status: 'failed' }),
+        );
+        mockVideoRepository.createUserVideo.mockResolvedValue({
+          _id: { toString: () => 'uv-held' },
+          videoSummaryId: { toString: () => 'failed-row-held' },
+          youtubeId: 'dQw4w9WgXcQ',
+          status: 'pending',
+        });
+
+        const result = await videoService.createVideo('user-held', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', { queuePlan: 'free' });
+
+        expect(result).toMatchObject({ cached: false, attached: true });
       });
 
       it('DOES increment retryCount when the dispatch actually publishes', async () => {
@@ -664,7 +722,7 @@ describe('VideoService', () => {
         await videoService.createVideo(
           'user-retry',
           'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-          { tier: 'free' },
+          { queuePlan: 'free' },
         );
 
         expect(mockVideoRepository.incrementRetryCount).toHaveBeenCalledWith('failed-row-2');
@@ -700,7 +758,7 @@ describe('VideoService', () => {
         await videoService.createVideo(
           'user-order',
           'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-          { tier: 'free' },
+          { queuePlan: 'free' },
         );
 
         expect(callOrder.indexOf('createUserVideo')).toBeLessThan(
@@ -743,7 +801,7 @@ describe('VideoService', () => {
         await videoService.createVideo(
           'user-bypass',
           'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-          { tier: 'free', bypassCache: true },
+          { queuePlan: 'free', bypassCache: true },
         );
 
         expect(mockIdempotencyService.computeContentKey).toHaveBeenCalledWith({
@@ -780,7 +838,7 @@ describe('VideoService', () => {
         await videoService.createVideo(
           'user-1',
           'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-          { tier: 'free', bypassCache: true },
+          { queuePlan: 'free', bypassCache: true },
         );
 
         const cacheArg = mockVideoRepository.createCacheEntry.mock.calls[0][0];
@@ -788,12 +846,13 @@ describe('VideoService', () => {
       });
     });
 
-    describe('pipelineVersion serve/regen gate (project-score-9 4.3)', () => {
+    describe('pipelineVersion serve/regen gate (project-score-9 4.3, D-LIB)', () => {
       // Docs are stamped with the canonical version at pipeline write time
-      // (packages/shared/src/config/pipeline-version.json). The serve path
-      // regens docs stamped with a DIFFERENT version; docs WITHOUT the field
-      // predate stamping and are served as-is (current-legacy) — a version
-      // bump must never mass-invalidate them.
+      // (packages/shared/src/config/pipeline-version.json). A user's own copy
+      // stamped with a DIFFERENT version is served as is with an update on
+      // offer (regenerated only on `updateToLatest`, video.service.library-
+      // update.test.ts); a shared stale row is regenerated for a user who never
+      // had the video. Docs WITHOUT the field are current-legacy.
       const youtubeId = 'dQw4w9WgXcQ';
       const url = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
       const videoSummaryId = 'summary-versioned';
@@ -805,7 +864,7 @@ describe('VideoService', () => {
         status: 'completed',
       });
 
-      it('re-dispatches (regen) when the user already has a completed doc stamped with a stale version', async () => {
+      it('should serve the user\'s own stale copy as is, offering the update (D-LIB)', async () => {
         mockVideoRepository.findUserVideoByYoutubeId.mockResolvedValue(existingUserVideo());
         mockVideoRepository.findCacheById.mockResolvedValue({
           _id: { toString: () => videoSummaryId },
@@ -816,12 +875,10 @@ describe('VideoService', () => {
           updatedAt: new Date(),
         });
 
-        const result = await videoService.createVideo('user123', url, { tier: 'free' });
+        const result = await videoService.createVideo('user123', url, { queuePlan: 'free' });
 
-        expect(mockSummarizerClient.triggerSummarization).toHaveBeenCalledTimes(1);
-        expect(result.video.status).toBe('pending');
-        expect(result.cached).toBe(false);
-        expect(result.regenerating).toBe(true);
+        expect(mockSummarizerClient.triggerSummarization).not.toHaveBeenCalled();
+        expect(result).toMatchObject({ cached: true, alreadyExists: true, updateAvailable: true });
       });
 
       it('serves as-is when the existing completed doc has NO pipelineVersion (current-legacy)', async () => {
@@ -834,7 +891,7 @@ describe('VideoService', () => {
           updatedAt: new Date(),
         });
 
-        const result = await videoService.createVideo('user123', url, { tier: 'free' });
+        const result = await videoService.createVideo('user123', url, { queuePlan: 'free' });
 
         expect(mockSummarizerClient.triggerSummarization).not.toHaveBeenCalled();
         expect(mockQueuePublisher.publishVideoJob).not.toHaveBeenCalled();
@@ -853,15 +910,16 @@ describe('VideoService', () => {
           updatedAt: new Date(),
         });
 
-        const result = await videoService.createVideo('user123', url, { tier: 'free' });
+        const result = await videoService.createVideo('user123', url, { queuePlan: 'free' });
 
         expect(mockSummarizerClient.triggerSummarization).not.toHaveBeenCalled();
         expect(result.cached).toBe(true);
         expect(result.alreadyExists).toBe(true);
       });
 
-      it('regens instead of serving when attaching to a completed row stamped with a stale version', async () => {
+      it('regens instead of serving when a user who never had the video attaches to a stale completed row', async () => {
         mockVideoRepository.findUserVideoByYoutubeId.mockResolvedValue(null);
+        mockVideoRepository.userHasAccessToSummary.mockResolvedValue(false);
         mockVideoRepository.upsertCacheByDedupKey.mockResolvedValue({
           wasInsert: false,
           doc: {
@@ -880,7 +938,7 @@ describe('VideoService', () => {
           status: 'pending',
         });
 
-        const result = await videoService.createVideo('user-2', url, { tier: 'free' });
+        const result = await videoService.createVideo('user-2', url, { queuePlan: 'free' });
 
         expect(mockSummarizerClient.triggerSummarization).toHaveBeenCalledTimes(1);
         expect(result.video.status).toBe('pending');
@@ -907,7 +965,7 @@ describe('VideoService', () => {
           status: 'completed',
         });
 
-        const result = await videoService.createVideo('user-2', url, { tier: 'free' });
+        const result = await videoService.createVideo('user-2', url, { queuePlan: 'free' });
 
         expect(mockSummarizerClient.triggerSummarization).not.toHaveBeenCalled();
         expect(result.cached).toBe(true);

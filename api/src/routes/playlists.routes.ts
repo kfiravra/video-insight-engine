@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { objectIdSchema } from '../utils/validation.js';
 import { config } from '../config.js';
+import { rateLimitedBody } from '../plugins/rate-limit.js';
 
 // Provider config schema (same as videos)
 const providerSchema = z.enum(['anthropic', 'openai', 'gemini']);
@@ -28,7 +29,7 @@ const playlistIdParamSchema = z.object({
 });
 
 export async function playlistsRoutes(fastify: FastifyInstance) {
-  const { playlistService } = fastify.container;
+  const { playlistService, submitBurstLimiter } = fastify.container;
 
   // POST /api/playlists/preview - Preview a playlist before importing
   fastify.post<{
@@ -39,11 +40,8 @@ export async function playlistsRoutes(fastify: FastifyInstance) {
       rateLimit: {
         max: config.RATE_LIMITS.PLAYLIST_PREVIEW,
         timeWindow: '1 hour',
-        errorResponseBuilder: () => ({
-          error: 'RATE_LIMITED',
-          message: 'Too many playlist preview requests. Try again later.',
-          statusCode: 429,
-        }),
+        errorResponseBuilder: (_req, context) =>
+          rateLimitedBody('Too many playlist preview requests. Try again later.', context.ttl),
       },
     },
   }, async (req) => {
@@ -56,16 +54,13 @@ export async function playlistsRoutes(fastify: FastifyInstance) {
   fastify.post<{
     Body: z.infer<typeof importSchema>;
   }>('/import', {
-    preHandler: [fastify.authenticate, fastify.resolveTier],
+    preHandler: [fastify.authenticate],
     config: {
       rateLimit: {
         max: config.RATE_LIMITS.PLAYLIST_IMPORT,
         timeWindow: '24 hours',
-        errorResponseBuilder: () => ({
-          error: 'RATE_LIMITED',
-          message: 'Daily playlist import limit reached. Try again tomorrow.',
-          statusCode: 429,
-        }),
+        errorResponseBuilder: (_req, context) =>
+          rateLimitedBody('Too many playlist imports. Try again later.', context.ttl),
       },
     },
   }, async (req, reply) => {
@@ -75,13 +70,15 @@ export async function playlistsRoutes(fastify: FastifyInstance) {
     if (providers) {
       await fastify.requireNotDemo(req);
     }
+    // A playlist import is one submission for the shared hourly burst bucket,
+    // however many videos it holds.
+    await submitBurstLimiter.consume(req.user.userId);
     const result = await playlistService.import(
       req.user.userId,
       url,
       folderId,
       maxVideos,
       providers,
-      req.tier.name,
     );
     return reply.code(201).send(result);
   });

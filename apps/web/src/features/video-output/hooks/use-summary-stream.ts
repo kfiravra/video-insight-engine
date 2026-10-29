@@ -100,6 +100,8 @@ export interface StreamState {
   metadata: VideoMetadata | null;
   duration: number | null;
   error: string | null;
+  /** The server's code for `error` (e.g. VIDEO_FAILED), when it sent one. */
+  errorCode: string | null;
   isCached: boolean;
   processingTimeMs: number | null;
   // Partial-result flag from the summarizer terminal events: extraction
@@ -143,6 +145,7 @@ export const INITIAL_STREAM_STATE: StreamState = {
   metadata: null,
   duration: null,
   error: null,
+  errorCode: null,
   isCached: false,
   processingTimeMs: null,
   degraded: false,
@@ -211,8 +214,9 @@ export function useSummaryStream({
     unsubscribeRef.current?.();
     unsubscribeRef.current = subscribeToStream(videoSummaryId, token, (event: StreamEvent) => {
       if (event.event === "error" && typeof event.message === "string") {
-        const userFriendlyError = getUserFriendlyError(event.message);
-        setState((prev) => ({ ...prev, phase: "error", error: userFriendlyError }));
+        const code = typeof event.code === "string" ? event.code : undefined;
+        const userFriendlyError = getUserFriendlyError(event.message, code);
+        setState((prev) => ({ ...prev, phase: "error", error: userFriendlyError, errorCode: code ?? null }));
         onErrorRef.current?.(userFriendlyError);
         return;
       }

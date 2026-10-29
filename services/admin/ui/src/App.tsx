@@ -10,6 +10,7 @@ import { AlertsPage } from './pages/AlertsPage';
 import { VideosPage } from './pages/VideosPage';
 import { VideoDetailPage } from './pages/VideoDetailPage';
 import { UsersPage } from './pages/UsersPage';
+import { AuditPage } from './pages/AuditPage';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ErrorState } from './components/ErrorState';
 import { RangePicker } from './components/RangePicker';
@@ -17,7 +18,7 @@ import { CommandPalette } from './components/CommandPalette';
 import type { Command } from './components/CommandPalette';
 import { useUrlRange } from './hooks/use-url-range';
 import { useCommandPalette } from './hooks/use-command-palette';
-import { GridIcon, VideoIcon, BarChartIcon, HeartPulseIcon, BellIcon, UsersIcon } from './components/icons';
+import { GridIcon, VideoIcon, BarChartIcon, HeartPulseIcon, BellIcon, UsersIcon, ClockIcon } from './components/icons';
 import './index.css';
 
 const queryClient = new QueryClient({
@@ -28,6 +29,7 @@ const navItems = [
   { to: '/', label: 'Dashboard', icon: GridIcon },
   { to: '/videos', label: 'Videos', icon: VideoIcon },
   { to: '/users', label: 'Users', icon: UsersIcon },
+  { to: '/audit-log', label: 'Audit', icon: ClockIcon },
   { to: '/usage', label: 'Usage', icon: BarChartIcon },
   { to: '/health', label: 'Health', icon: HeartPulseIcon },
   { to: '/alerts', label: 'Alerts', icon: BellIcon },
@@ -174,6 +176,13 @@ function AppShell() {
         action: () => navigate('/users'),
       },
       {
+        id: 'nav-audit',
+        label: 'Go to Audit log',
+        hint: 'g l',
+        keywords: ['audit', 'history', 'changes', 'admin actions'],
+        action: () => navigate('/audit-log'),
+      },
+      {
         id: 'nav-usage',
         label: 'Go to Usage',
         hint: 'g u',
@@ -230,6 +239,7 @@ function AppShell() {
           <Route path="/videos" element={<VideosPage days={days} />} />
           <Route path="/videos/:videoId" element={<VideoDetailPage />} />
           <Route path="/users" element={<UsersPage days={days} />} />
+          <Route path="/audit-log" element={<AuditPage />} />
           <Route path="/usage" element={<UsagePage days={days} />} />
           <Route path="/health" element={<HealthPage />} />
           <Route path="/alerts" element={<AlertsPage days={days} />} />

@@ -1,3 +1,5 @@
+import { describeApiError } from '../lib/api-error';
+
 interface ErrorStateProps {
   error: unknown;
   onRetry?: () => void;
@@ -5,8 +7,9 @@ interface ErrorStateProps {
   compact?: boolean;
 }
 
+/** An API failure shows the server's own explanation (vie-api's validation text, FastAPI's 422), not "API error: 403 Forbidden". */
 function getMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
+  if (error instanceof Error) return describeApiError(error);
   if (error == null) return 'Unknown error';
   return String(error);
 }

@@ -60,7 +60,6 @@ api/
     │   ├── share.routes.ts       # Share creation + public access
     │   ├── ssr.routes.ts         # /s/:slug server-rendered share pages
     │   ├── override.routes.ts    # Category override
-    │   ├── payment.routes.ts     # Paddle webhooks + checkout
     │   ├── internal.routes.ts    # Internal service-to-service calls
     │   ├── internal-assistant.routes.ts # /internal/assistant/* — assistant→api library callbacks (authenticateInternal)
     │   ├── preferences.routes.ts # User preferences
@@ -68,8 +67,7 @@ api/
     │
     ├── schemas/
     │   ├── video.schema.ts
-    │   ├── share.schema.ts
-    │   └── payment.schema.ts
+    │   └── share.schema.ts
     │
     ├── services/
     │   ├── auth.service.ts
@@ -80,8 +78,8 @@ api/
     │   ├── assistant-client.ts   # HTTP client for assistant (RAG chat)
     │   ├── share.service.ts
     │   ├── og-image.service.ts
-    │   ├── payment.service.ts
-    │   └── cost-monitor.service.ts
+    │   ├── video-submission.service.ts  # idempotency gate → minutes ledger → createVideo
+    │   └── billing/              # minutes ledger (BillingService, LedgerEnforcement, repair job), payment-provider.ts (noop until P4), burst-limit.ts
     │
     ├── templates/
     │   └── share-page.ts         # HTML template for /s/:slug (v1.4)
@@ -116,8 +114,8 @@ export interface Container {
   summarizerClient: SummarizerClient;
   shareService: ShareService;            // v1.4
   ogImageService: OgImageService;        // v1.4
-  paymentService: PaymentService;        // v1.4
-  costMonitorService: CostMonitorService; // v1.4
+  billingService: BillingService;        // minutes ledger (billing-roles)
+  billingEnforcement: LedgerEnforcement; // quote + hold on every submit
 }
 
 export function createContainer(db: Db): Container {
@@ -381,10 +379,16 @@ FRONTEND_URL=http://localhost:5173
 CORS_ADDITIONAL_ORIGINS=
 INTERNAL_SECRET=dev-internal-secret-change-me   # Shared secret for /internal/assistant/* (X-Internal-Secret); must match vie-assistant
 
-# Payment (Paddle) — v1.4
-PADDLE_WEBHOOK_SECRET=
-PADDLE_PRO_PRICE_ID=
-PADDLE_TEAM_PRICE_ID=
+# Submit burst guard: submissions per user per hour, one bucket for POST /api/videos,
+# the assistant's generate route and playlist import (0 = off)
+SUBMIT_BURST_LIMIT_PER_HOUR=20
+# Chat messages a free account may send per rolling 24 h, both chat routes (0 = off)
+CHAT_FREE_MESSAGES_PER_DAY=50
+# Billing repair job: stale holds, lot expiry, recurring grants, drift check,
+# llm_usage.user_id after 90 days, GDPR hard-delete sweep (needs the replica set)
+BILLING_REPAIR_ENABLED=true
+BILLING_REPAIR_INTERVAL_SECONDS=300
+BILLING_HOLD_MAX_AGE_HOURS=3
 ```
 
 ---

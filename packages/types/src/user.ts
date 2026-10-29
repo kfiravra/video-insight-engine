@@ -24,10 +24,6 @@ export interface User {
   themePreference?: ThemePreference;
   /** Share slug that referred this user during signup */
   referralSlug?: string | null;
-  /** Paddle customer ID for payment integration */
-  paddleCustomerId?: string | null;
-  /** Paddle subscription ID for active subscription tracking */
-  paddleSubscriptionId?: string | null;
   createdAt: string;  // ISO date
   updatedAt: string;  // ISO date
 }
@@ -47,18 +43,3 @@ export interface Like {
 
 /** User subscription tier */
 export type UserTier = 'free' | 'pro' | 'team';
-
-/** Rate limits and feature flags per tier */
-export interface TierLimits {
-  videosPerDay: number;    // -1 = unlimited
-  chatPerOutput: number;   // -1 = unlimited
-  shareEnabled: boolean;
-  exportEnabled: boolean;
-}
-
-/** Tier configuration. -1 means unlimited. */
-export const TIER_LIMITS: Record<UserTier, TierLimits> = {
-  free: { videosPerDay: 3, chatPerOutput: 5, shareEnabled: true, exportEnabled: false },
-  pro: { videosPerDay: -1, chatPerOutput: -1, shareEnabled: true, exportEnabled: true },
-  team: { videosPerDay: -1, chatPerOutput: -1, shareEnabled: true, exportEnabled: true },
-} as const;

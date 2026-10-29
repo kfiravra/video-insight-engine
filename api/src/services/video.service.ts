@@ -1,28 +1,42 @@
 import { FastifyBaseLogger } from 'fastify';
-import { VideoRepository, VideoSummaryCacheDocument } from '../repositories/video.repository.js';
+import { VideoRepository, VideoSummaryCacheDocument, type CreateUserVideoData, type UserVideoDocument } from '../repositories/video.repository.js';
 import { SummarizerClient, type ProviderConfig } from './summarizer-client.js';
 import { QueuePublisher } from './queue-publisher.service.js';
 import { IdempotencyService } from './idempotency.service.js';
 import type { IDispatchGuard } from './dispatch-guard.service.js';
 import { config } from '../config.js';
 import { extractYoutubeId } from '../utils/youtube.js';
-import { ColdRunForbiddenError, InvalidYouTubeUrlError, VideoNotFoundError, VersionCreationError, InvalidCategoryError, QueuePublishError } from '../utils/errors.js';
+import { ColdRunForbiddenError, InvalidYouTubeUrlError, VideoNotFoundError, VersionCreationError, InvalidCategoryError, QueuePublishError, RunNotAllowedError } from '../utils/errors.js';
 import { buildMetaFromDoc, buildTabsFromDoc } from '../utils/meta-builder.js';
 import { refreshFrameUrls } from '../utils/refresh-frame-urls.js';
 import { parseSourceLanguage } from '../utils/source-language.js';
-import type { UserTier } from '@vie/types';
+import { isOutdated, regeneratesOnAttach, updateOffer } from './library-update.js';
+import { fileOwnCopy, ownCopyToFile, placeLibraryEntry } from './library-entries.js';
+import type { QueuePlan } from './queue-topology.js';
 
 export interface CreateVideoOptions {
   folderId?: string;
   bypassCache?: boolean;
   providers?: ProviderConfig;
-  tier: UserTier;
+  /** What pays for a run this call dispatches (`paid` = plan / credit minutes): the queue priority. */
+  queuePlan: QueuePlan;
   /**
    * Originating Fastify `request.id`. Flows into the queue payload (as the
    * publisher's `requestId`) AND the legacy HTTP fallback (as `X-Request-ID`)
    * so the downstream pipeline binds the same id no matter which path runs.
    */
   requestId?: string;
+  /** The minutes ledger's run id (P3.1), stamped beside `requestId` on the dispatched row. */
+  billingRunId?: string;
+  /**
+   * P3.1: the ledger refused to pay for a run, so only serve what costs
+   * nothing — the user's own copy, a completed row, or attaching to a live
+   * in-flight run (Q6). Anything that would dispatch throws RunNotAllowedError
+   * before any write.
+   */
+  serveOnly?: boolean;
+  /** D-LIB: regenerate the user's own copy an older pipeline wrote (a paid run); without it that copy is served as is. */
+  updateToLatest?: boolean;
   /** 1a.7 benchmark flag (admin/eval only): skip the summarizer's media caches. */
   cold?: boolean;
 }
@@ -43,8 +57,9 @@ interface NewVersionInput {
   youtubeId: string;
   folderId?: string;
   providers?: ProviderConfig;
-  tier: UserTier;
+  queuePlan: QueuePlan;
   requestId?: string;
+  billingRunId?: string;
   evalRun: boolean;
   /** Skip the summarizer's response cache (the submission's bypassCache). */
   forceRefresh: boolean;
@@ -60,6 +75,17 @@ interface VersionRow {
 
 interface CreatedVersion extends VersionRow {
   userVideoId: string;
+  /** False when the dispatch guard was held: another run owns the row (I1). */
+  dispatched: boolean;
+}
+
+/**
+ * A dispatch the guard refused started no run for this caller — a live run
+ * already owns the row — so the caller is attached to it and its minutes hold
+ * goes back now (I1) instead of after the repair job's max hold age.
+ */
+function attachedUnless(dispatched: boolean): { attached?: true } {
+  return dispatched ? {} : { attached: true };
 }
 
 // Renumbering attempts for an eval run whose version number a concurrent run
@@ -112,10 +138,11 @@ export class VideoService {
       youtubeId: string;
       url: string;
       userId: string;
-      tier: UserTier;
+      queuePlan: QueuePlan;
       providers?: ProviderConfig;
       bypassCache?: boolean;
       requestId?: string;
+      billingRunId?: string;
     },
   ): Promise<{ dispatched: boolean }> {
     // Belt-and-suspenders: even though Step 1's content-addressed upsert
@@ -160,6 +187,7 @@ export class VideoService {
           payload.videoSummaryId,
           payload.userId,
           payload.requestId,
+          payload.billingRunId,
         ),
       ]);
       if (config.USE_QUEUE_PIPELINE) {
@@ -176,7 +204,7 @@ export class VideoService {
             youtubeId: payload.youtubeId,
             url: payload.url,
             userId: payload.userId,
-            tier: payload.tier,
+            plan: payload.queuePlan,
             providers: payload.providers,
             bypassCache: payload.bypassCache,
             requestId: payload.requestId,
@@ -231,22 +259,6 @@ export class VideoService {
         );
       throw err;
     }
-  }
-
-  /**
-   * A completed doc is stale when it carries a `pipelineVersion` stamp that
-   * differs from the canonical version (packages/shared/src/config/
-   * pipeline-version.json). Docs WITHOUT the field predate stamping and are
-   * treated as current-legacy — served as-is, never regenerated — so a
-   * version bump can never mass-invalidate the existing cache. Stamping
-   * happens summarizer-side at pipeline write time; the regen here replaces
-   * the old out-of-band DB flush.
-   */
-  private isStaleVersion(doc: Pick<VideoSummaryCacheDocument, 'pipelineVersion'>): boolean {
-    return (
-      typeof doc.pipelineVersion === 'string' &&
-      doc.pipelineVersion !== config.PIPELINE_VERSION
-    );
   }
 
   /**
@@ -334,19 +346,20 @@ export class VideoService {
         this.logger.warn({ youtubeId: input.youtubeId, error: err }, 'Failed to cleanup old versions');
       });
 
-    const { userId, url, youtubeId, tier, providers, requestId, forceRefresh } = input;
-    await this.dispatchPipeline({
+    const { userId, url, youtubeId, queuePlan, providers, requestId, billingRunId, forceRefresh } = input;
+    const { dispatched } = await this.dispatchPipeline({
       videoSummaryId: row.videoSummaryId,
       youtubeId,
       url,
       userId,
-      tier,
+      queuePlan,
       providers,
       bypassCache: forceRefresh,
       requestId,
+      billingRunId,
     });
 
-    return { userVideoId, ...row };
+    return { userVideoId, ...row, dispatched };
   }
 
   /** `insertVersion` with its failures mapped to VersionCreationError. */
@@ -369,7 +382,10 @@ export class VideoService {
   }
 
   async createVideo(userId: string, url: string, options: CreateVideoOptions) {
-    const { folderId, providers, tier, requestId, cold = false } = options;
+    const { folderId, providers, queuePlan, requestId, billingRunId, cold = false, serveOnly = false, updateToLatest = false } = options;
+    const refuseRun = (): void => {
+      if (serveOnly) throw new RunNotAllowedError();
+    };
     // A cold run measures a whole fresh pipeline, so the response cache must
     // not answer it either: cold implies bypassCache.
     const bypassCache = (options.bypassCache ?? false) || cold;
@@ -389,14 +405,16 @@ export class VideoService {
 
     // Cache bypass creates a new version instead of deleting (for A/B testing prompts)
     if (bypassCache || evalRun) {
+      refuseRun();
       const created = await this.createVersion({
         userId,
         url,
         youtubeId,
         folderId,
         providers,
-        tier,
+        queuePlan,
         requestId,
+        billingRunId,
         evalRun,
         forceRefresh: bypassCache,
         coldMedia: cold,
@@ -413,74 +431,10 @@ export class VideoService {
           },
           cached: false,
           newVersion: true,
+          ...attachedUnless(created.dispatched),
         };
       }
       // A user run on a video with no user versions falls through to the normal flow
-    }
-
-    // Check if user already has this video in this folder (skip if bypassCache)
-    if (!bypassCache) {
-      const existingInFolder = await this.videoRepository.findUserVideoByYoutubeId(userId, youtubeId, folderId);
-
-      if (existingInFolder) {
-        // Already exists in this folder - return existing
-        const summary = await this.videoRepository.findCacheById(existingInFolder.videoSummaryId.toString());
-
-        // Version-stamped doc from an older pipeline → regenerate on the same
-        // row instead of serving stale output. The user asked for this video
-        // NOW, so this is the natural (and only cost-reserved) regen moment;
-        // plain GETs never trigger regen. Unstamped docs never land here.
-        if (summary && summary.status === 'completed' && this.isStaleVersion(summary)) {
-          this.logger.info(
-            {
-              videoSummaryId: summary._id.toString(),
-              storedVersion: summary.pipelineVersion,
-              currentVersion: config.PIPELINE_VERSION,
-            },
-            'Completed doc has stale pipelineVersion — re-dispatching pipeline',
-          );
-
-          await this.dispatchPipeline({
-            videoSummaryId: summary._id.toString(),
-            youtubeId,
-            url,
-            userId,
-            tier,
-            providers,
-            requestId,
-          });
-
-          return {
-            video: {
-              id: existingInFolder._id.toString(),
-              videoSummaryId: summary._id.toString(),
-              youtubeId,
-              title: summary.title,
-              channel: summary.channel,
-              duration: summary.duration,
-              thumbnailUrl: summary.thumbnailUrl,
-              status: 'pending',
-            },
-            cached: false,
-            regenerating: true,
-          };
-        }
-
-        return {
-          video: {
-            id: existingInFolder._id.toString(),
-            videoSummaryId: existingInFolder.videoSummaryId.toString(),
-            youtubeId,
-            title: summary?.title || existingInFolder.title,
-            channel: summary?.channel || existingInFolder.channel,
-            duration: summary?.duration || existingInFolder.duration,
-            thumbnailUrl: summary?.thumbnailUrl || existingInFolder.thumbnailUrl,
-            status: summary?.status || existingInFolder.status,
-          },
-          cached: true,
-          alreadyExists: true,
-        };
-      }
     }
 
     // Content-addressed dedup — the atomic upsert collapses concurrent
@@ -492,7 +446,46 @@ export class VideoService {
       providers,
       version: 1,
     });
-    const { doc: cached, wasInsert } = await this.videoRepository.upsertCacheByDedupKey({
+
+    // D-LIB: an update to the latest version goes the new-video way below at
+    // the current dedupKey, re-pointing this entry instead of adding one; the
+    // old row is never touched. Null = a new entry.
+    let replaced: UserVideoDocument | null = null;
+    if (!bypassCache) {
+      const existingInFolder = await this.videoRepository.findUserVideoByYoutubeId(userId, youtubeId, folderId);
+
+      if (existingInFolder) {
+        const summary = await this.videoRepository.findCacheById(existingInFolder.videoSummaryId.toString());
+        if (!(updateToLatest && isOutdated(summary))) {
+          return {
+            video: {
+              id: existingInFolder._id.toString(),
+              videoSummaryId: existingInFolder.videoSummaryId.toString(),
+              youtubeId,
+              title: summary?.title || existingInFolder.title,
+              channel: summary?.channel || existingInFolder.channel,
+              duration: summary?.duration || existingInFolder.duration,
+              thumbnailUrl: summary?.thumbnailUrl || existingInFolder.thumbnailUrl,
+              status: summary?.status || existingInFolder.status,
+            },
+            cached: true,
+            alreadyExists: true,
+            ...updateOffer(summary),
+          };
+        }
+        replaced = existingInFolder;
+      } else if (folderId !== undefined && !updateToLatest) {
+        // Filing a video the user already has into another folder never forces a run (D-LIB).
+        const copy = await ownCopyToFile(this.videoRepository, { userId, youtubeId, dedupKey }, PIPELINE_STALL_THRESHOLD_MS);
+        if (copy) return fileOwnCopy(this.videoRepository, { userId, youtubeId, folderId }, copy);
+      }
+    }
+    const placeEntry = (data: CreateUserVideoData): Promise<UserVideoDocument> =>
+      placeLibraryEntry(this.videoRepository, replaced, data);
+
+    const { doc: cached, wasInsert } = serveOnly
+      ? await this.existingCacheRow(dedupKey)
+      : await this.videoRepository.upsertCacheByDedupKey({
       youtubeId,
       url,
       status: 'pending',
@@ -514,7 +507,7 @@ export class VideoService {
       // doesn't strand the originator without a row, then dispatch the
       // pipeline. Attachers from later submits (or earlier in-progress runs)
       // will branch into the !wasInsert paths below.
-      const userVideo = await this.videoRepository.createUserVideo({
+      const userVideo = await placeEntry({
         userId,
         videoSummaryId: cached._id.toString(),
         youtubeId,
@@ -522,15 +515,16 @@ export class VideoService {
         folderId,
       });
 
-      await this.dispatchPipeline({
+      const { dispatched } = await this.dispatchPipeline({
         videoSummaryId: cached._id.toString(),
         youtubeId,
         url,
         userId,
-        tier,
+        queuePlan,
         providers,
         bypassCache,
         requestId,
+        billingRunId,
       });
 
       return {
@@ -541,6 +535,7 @@ export class VideoService {
           status: 'pending',
         },
         cached: false,
+        ...attachedUnless(dispatched),
       };
     }
 
@@ -549,9 +544,10 @@ export class VideoService {
 
     if (cached.status === 'completed') {
       // Stale version stamp → regen on the same row (mirrors the failed-row
-      // retry mechanics below) instead of serving outdated output. Unstamped
-      // legacy docs are current by definition (see isStaleVersion).
-      if (this.isStaleVersion(cached)) {
+      // retry mechanics below) for a user to whom this is a new video, or one
+      // updating; one who already has this row is served it as is (D-LIB).
+      // Unstamped legacy docs are current (library-update.ts).
+      if (await regeneratesOnAttach(this.videoRepository, userId, cached, updateToLatest)) {
         this.logger.info(
           {
             videoSummaryId: cached._id.toString(),
@@ -561,7 +557,8 @@ export class VideoService {
           'Attached to completed doc with stale pipelineVersion — re-dispatching pipeline',
         );
 
-        const staleUserVideo = await this.videoRepository.createUserVideo({
+        refuseRun();
+        const staleUserVideo = await placeEntry({
           userId,
           videoSummaryId: cached._id.toString(),
           youtubeId,
@@ -569,15 +566,19 @@ export class VideoService {
           folderId,
         });
 
-        await this.dispatchPipeline({
+        const { dispatched } = await this.dispatchPipeline({
           videoSummaryId: cached._id.toString(),
           youtubeId,
           url,
           userId,
-          tier,
+          queuePlan,
           providers,
           requestId,
+          billingRunId,
         });
+        // `pending` at once: the summarizer's stream replays a `completed` row
+        // instead of running it (the HTTP path), and the page flips to the run.
+        if (dispatched) await this.videoRepository.markRedispatched(cached._id.toString());
 
         return {
           video: {
@@ -588,10 +589,11 @@ export class VideoService {
           },
           cached: false,
           regenerating: true,
+          ...attachedUnless(dispatched),
         };
       }
 
-      const userVideo = await this.videoRepository.createUserVideo({
+      const userVideo = await placeEntry({
         userId,
         videoSummaryId: cached._id.toString(),
         youtubeId,
@@ -611,16 +613,18 @@ export class VideoService {
           ...this.toCacheResponse(cached),
         },
         cached: true,
+        ...updateOffer(cached),
       };
     }
 
     if (cached.status === 'failed') {
+      refuseRun();
       // Existing row failed — retry the pipeline against the SAME row.
       // Order: userVideo first (so a dispatch error doesn't lose the user's
       // row), then dispatch, then increment retryCount ONLY when we actually
       // published. Without the dispatched-gate, concurrent attachers each
       // bump the counter even though only one publish happens.
-      const userVideo = await this.videoRepository.createUserVideo({
+      const userVideo = await placeEntry({
         userId,
         videoSummaryId: cached._id.toString(),
         youtubeId,
@@ -633,9 +637,10 @@ export class VideoService {
         youtubeId,
         url,
         userId,
-        tier,
+        queuePlan,
         providers,
         requestId,
+        billingRunId,
       });
 
       if (dispatched) {
@@ -649,6 +654,7 @@ export class VideoService {
           status: 'pending',
         },
         cached: false,
+        ...attachedUnless(dispatched),
       };
     }
 
@@ -671,7 +677,8 @@ export class VideoService {
         'Attaching to in-flight row exceeded stall threshold — re-dispatching',
       );
 
-      const userVideo = await this.videoRepository.createUserVideo({
+      refuseRun();
+      const userVideo = await placeEntry({
         userId,
         videoSummaryId: cached._id.toString(),
         youtubeId,
@@ -679,15 +686,19 @@ export class VideoService {
         folderId,
       });
 
-      await this.dispatchPipeline({
+      const { dispatched } = await this.dispatchPipeline({
         videoSummaryId: cached._id.toString(),
         youtubeId,
         url,
         userId,
-        tier,
+        queuePlan,
         providers,
         requestId,
+        billingRunId,
       });
+      // The row is this run's now: `pending` + a fresh updatedAt, so the
+      // summarizer's stall sweeper does not fail it as the dead run's (I2).
+      if (dispatched) await this.videoRepository.markRedispatched(cached._id.toString());
 
       return {
         video: {
@@ -696,14 +707,15 @@ export class VideoService {
           status: 'pending',
         },
         cached: false,
+        ...attachedUnless(dispatched),
       };
     }
 
-    // `attached: true` tells the route to refund this caller's cost
-    // reservation (they didn't trigger work; the SSE stream will deliver
-    // the producer's events). Same semantic as a cache hit, different label
-    // for observability.
-    const userVideo = await this.videoRepository.createUserVideo({
+    // `attached: true` tells the submit path to give this caller's minutes
+    // hold back (they didn't trigger work; the SSE stream will deliver the
+    // producer's events). Same semantic as a cache hit, different label for
+    // observability.
+    const userVideo = await placeEntry({
       userId,
       videoSummaryId: cached._id.toString(),
       youtubeId,
@@ -720,6 +732,13 @@ export class VideoService {
       cached: false,
       attached: true,
     };
+  }
+
+  /** Serve-only: the shared row must already exist — creating one would mean a run. */
+  private async existingCacheRow(dedupKey: string): Promise<{ doc: VideoSummaryCacheDocument; wasInsert: false }> {
+    const doc = await this.videoRepository.findCacheByDedupKey(dedupKey);
+    if (!doc) throw new RunNotAllowedError();
+    return { doc, wasInsert: false };
   }
 
   async getVideos(
@@ -793,6 +812,8 @@ export class VideoService {
       // videos rather than serialized as `null`. The FE checks presence to
       // decide whether to render the language toggle.
       ...(sourceLanguage ? { sourceLanguage } : {}),
+      // Absent unless an older pipeline wrote this completed copy (D-LIB).
+      ...updateOffer(summary),
     };
   }
 

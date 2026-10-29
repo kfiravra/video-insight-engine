@@ -150,7 +150,7 @@ cp .env.production.example .env && chmod 600 .env
 
 # Random hex secrets (hex is safe inside connection URIs)
 for key in MONGO_ROOT_PASS REDIS_PASSWORD RABBITMQ_PASS JWT_SECRET JWT_REFRESH_SECRET \
-           INTERNAL_SECRET ADMIN_API_KEY ADMIN_SESSION_SECRET PADDLE_WEBHOOK_SECRET; do
+           INTERNAL_SECRET ADMIN_API_KEY ADMIN_SESSION_SECRET; do
   sed -i "s|^${key}=.*|${key}=$(openssl rand -hex 32)|" .env
 done
 sed -i 's|your-domain.example|DOMAIN|g' .env
@@ -172,7 +172,7 @@ dc config -q   # prints nothing when .env is complete
 
 The deploy workflow also waits up to two minutes for `vie-admin` to report healthy and fails the run with its last log lines if it does not, so a refused start shows up as a red deploy instead of a silently missing panel.
 
-The first deploy after the change logs every admin out once, because older sessions were signed with `ADMIN_API_KEY`. To rotate `ADMIN_SESSION_SECRET` later, set a fresh value with `sed -i` and run `dc up -d vie-admin`. That logs everyone out again; `dc restart` does not re-read `.env`.
+The first deploy after the change logs every admin out once, because older sessions were signed with `ADMIN_API_KEY`. To rotate `ADMIN_SESSION_SECRET` later, set a fresh value with `sed -i` and run `dc up -d vie-admin vie-api`: vie-api verifies the signed actor header vie-admin sends with the same value, so recreate both or every admin proxy call (queue replay, video purge) fails with a 500 until they match. That logs everyone out again; `dc restart` does not re-read `.env`. vie-api also refuses to start in production on the dev default, on fewer than 32 characters, or on the same value as `ADMIN_API_KEY`.
 
 Then edit `.env` and set both required provider keys, `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`, plus any optional one (`GEMINI_API_KEY`). The OpenAI key is required since the pipeline-1min 4.0d model picks: description analysis and the output / title / RAG-text translation default to `openai/gpt-6-luna`, the quiz (only with `QUIZ_V2_ENABLED=false`) to `openai/gpt-4o-mini`, and the template sets `LLM_FAST_PROVIDER=openai` (the synthesis fallback, chapter detection and the faithfulness judge on gpt-4o-mini); it also enables the Whisper audio fallback. Compose passes the key through as optional, so `dc config -q` does not catch a missing one: without it those calls fail (fast-tier calls never fall back to another provider): pipeline runs lose the description analysis, translation, the synthesis fallback, AI chapter detection and the faithfulness judge (hero / quiz calls included), and vie-assistant loses its chat (the template sets `LLM_CHAT_MODEL=openai/gpt-4o-mini`) and its quiz tool (the fast tier). The OpenAI project behind the key must have access to `gpt-6-luna` and `gpt-4o-mini`. Check that `S3_BUCKET` names the bucket and `AWS_REGION` is the region the check in section a printed. Leave `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` unset, because the instance role supplies credentials.
 
@@ -306,21 +306,33 @@ docker run --rm --network vie-network \
   sh -c 'npx tsx create-user.ts "$VIE_USER_EMAIL" "$VIE_USER_PASSWORD"'
 ```
 
-The script creates an ordinary user and never sets a role, so account creation does not grant access to the vie-admin panel. The admin role comes from the `ADMIN_EMAILS` list in a later phase. Until then, on a fresh host see "First admin on a fresh host" below; for admins you already have, see the one-off demote step after it. The email is trimmed and lowercased, and an optional third argument sets the display name (default: the part of the email before the `@`).
+The script creates an ordinary user and never sets a role, so account creation does not grant access to the vie-admin panel. The admin role comes from the `ADMIN_EMAILS` list (see "Admin accounts: `ADMIN_EMAILS`" below); for admins you already have, see the one-off demote step after it. The email is trimmed and lowercased, and an optional third argument sets the display name (default: the part of the email before the `@`).
 
 Running it again with the same email changes nothing and prints `exists, unchanged`. To set a new password for an existing user, add `--reset-password` after the password inside the `sh -c` string; only `passwordHash` and `updatedAt` change. For an existing admin the script exits 1 without that flag, so a re-run can never change an admin's password by accident.
 
-### First admin on a fresh host (temporary, until `ADMIN_EMAILS` seeding)
+### Admin accounts: `ADMIN_EMAILS`
 
-A host provisioned only with `create-user.ts` has no admin, so nobody can log into the vie-admin panel. Until the `ADMIN_EMAILS` seeding lands, grant the role to one existing account by hand. Create that user first (above); the email is matched after trimming and lowercasing, like `create-user.ts` stores it:
+The admin role is not created by any script. vie-api reads `ADMIN_EMAILS` (comma-separated login emails) at every boot and reconciles it with the users collection, so the list in `.env` is the source of truth for who is an admin:
+
+1. Create the account first (`create-user.ts`, above). The list only promotes **existing** accounts; an email with no account is logged (masked, `k***@host`) and ignored.
+2. Set the list in `.env`: `ADMIN_EMAILS=you@example.com` (several are comma-separated, matched ignoring case).
+3. Recreate vie-api so it re-reads `.env` (`dc up -d vie-api`; `dc restart` does not), then check the boot log:
 
 ```bash
-read -r -p "Email to make admin: " VIE_ADMIN_EMAIL
-export VIE_ADMIN_EMAIL   # `docker exec -e NAME` forwards only exported variables
-docker exec -e VIE_ADMIN_EMAIL vie-mongodb sh -c 'mongosh --quiet -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin video-insight-engine --eval "printjson(db.users.updateOne({ email: process.env.VIE_ADMIN_EMAIL.trim().toLowerCase() }, { \$set: { role: \"admin\" } }))"'
+dc logs vie-api 2>&1 | grep admin_seed
 ```
 
-`matchedCount: 1` means the role is set. `matchedCount: 0` means no user has that email, so check the spelling or create the user first. The root credentials come from the container's own environment, so nothing secret is typed or left in shell history. Log into the panel afterwards; the role is read from the database at login.
+`admin_seed_reconciled` with `promoted: 1` means it worked. The other lines you can meet:
+
+| Log event | Meaning |
+| --- | --- |
+| `admin_seed_skipped_empty` | `ADMIN_EMAILS` is blank. Nothing changed. Emptying the list never demotes anyone. |
+| `admin_seed_unknown_email` | A listed email has no account. Check the spelling or create the user. |
+| `admin_seed_ineligible_user` | The listed account is soft-deleted or is the demo account (`DEMO_USER_EMAIL`), so it was not promoted. |
+| `admin_seed_refused_zero_admins` | Applying the list would have left no active admin (for example only a typo'd email is listed), so **nothing** was changed. Fix the list. |
+| `admin_seed_no_active_admin` | No active admin exists and the list promotes none. |
+
+Removing an email from the list demotes that account on the next boot, but only if the list promoted it (`roleSource: env`). Admins set any other way, and accounts that were made admin before the roles model existed, are never demoted by the list. Every change writes an `adminAudit` row with actor `system:boot`. Because an empty list is a no-op, to retire the last list-managed admin you add the replacement first.
 
 ### One-off: demote hand-provisioned admins
 
@@ -352,9 +364,93 @@ demote_admins              # 2. when the preview is exactly right, run it for re
 
 Read the preview before the second command: the accounts under "Would demote" lose panel access, and the account(s) under "Kept as admin" must include you. A kept email that is not a current admin is reported as a warning. If none of the kept emails is a current admin, the script exits 1 and writes nothing, with or without `--dry-run`, because demoting everyone would leave the panel with no admin. Fix the email and run it again.
 
-Demotion stops new panel logins at once. A demoted user who is already logged in keeps working until their session expires (up to 12 hours); to end every open session now, set a new `ADMIN_SESSION_SECRET` in `.env` and run `dc up -d vie-admin`, which logs all admins out, you included.
+Demotion stops new panel logins at once. A demoted user who is already logged in is rejected within about a minute, because every session request re-checks that the account is still an admin (the verdict is cached for 60 s); no secret rotation is needed. To end every open session immediately, set a new `ADMIN_SESSION_SECRET` in `.env` and run `dc up -d vie-admin vie-api`, which logs all admins out, you included.
 
-This step goes away in a later phase, when the admin role is seeded from the `ADMIN_EMAILS` list.
+Boot seeding from `ADMIN_EMAILS` does not replace this step: accounts that were made admin before the roles model existed carry no `roleSource`, so the list treats them as admins set by hand and never demotes them. A later billing migration moves them onto the list.
+
+### Migrate to the minutes ledger
+
+One-off, at the billing release. `scripts/migrate-billing.ts` moves the accounts from the dollar gate onto the minutes ledger, and `scripts/prod-count.js` counts what it will touch first. Do it after the replica-set conversion above (the script refuses a standalone Mongo, dry run included) and with `ADMIN_EMAILS` set in `.env`: the migration keeps `ADMIN_EMAILS` as its keep-list, and the boot seeding keeps a migrated admin only while that admin's email is on the list.
+
+> **Enforcement starts at the billing deploy, not at the migration.** There is no flag: from the moment the deploy finishes, the minutes ledger decides every submit. An account has no plan until the migration has run, so **Pro and team users count as free** (one free video of up to 30 minutes per 24 hours, nothing longer) until it does. Merge in a quiet moment, have the deploy healthy, and run the migration **immediately** after (minutes, not hours). Count before the merge; the dry run reads only, so it runs on the box itself right after the deploy, and Kfir reads its table before `--run`.
+
+Order:
+
+1. Before the merge, on the box: count (step 1).
+2. Before the merge, on the box: Mongo is already a replica set. The conversion ships first as its own small PR (`fix/mongo-replset`) and deploys alone, by "Convert Mongo to a replica set" above; do not merge billing until its step 4 has passed. Then the `.env` rows from the billing release and the `ADMIN_EMAILS` row.
+3. Merge. The deploy starts enforcement; it does not touch vie-mongodb, whose compose definition the replica-set PR already shipped.
+4. Immediately, on the box: `migrate_billing` dry run (reads only; Kfir signs off its table), run, run again, verify (steps 2 and 3).
+
+What it does, in this order, through the same code vie-api runs (the ledger invariants hold; nothing writes a billing collection by hand):
+
+1. An account for every user that is not soft-deleted.
+2. `tier: 'pro'` becomes a manual Pro plan for 12 months. `tier: 'team'` becomes the same Pro plan plus a 600-minute lot that expires in 12 months (reason `migration: team tier`). An account that is already on Pro is left alone and reported.
+3. Roles: an old `role: 'admin'` user whose email is on the keep-list becomes `roles: ['admin']` with `roleSource: 'env'`; every other old admin is demoted and loses the panel. It replaces the demote step above, so do not run both.
+4. Credit: the `userCostAdjustments` dated the day of the migration (UTC) that the user's spend that day has not used up become one lot at $1 = 30 minutes, expiring in 12 months. The rule is deliberately conservative: net credit granted that day minus everything spent that day, rounded down to whole minutes. Adjustments of any other day had already expired and are dropped.
+5. The demo account (`DEMO_USER_EMAIL`) gets the same manual Pro plan for 12 months, as a step of its own (`plan-demo`, reason `migration: demo account`), in addition to the recurring grant below. It is skipped and reported if the account is already on Pro, including when the tier step above puts it there.
+6. Recurring grants: `DEMO_USER_EMAIL` gets 300 minutes a month and each `--eval-emails` account 3,000. An account that already has an active recurring grant (a hand-made one counts), or is on both lists, gets no second grant and is reported under "Skipped". The first month is granted by the next repair-job tick, then monthly.
+7. Chat prompt text: vie-assistant no longer stores `prompt_preview` in `llm_usage`, and this step unsets the field on the `service: 'assistant'` rows written before that. The dry run prints the count of rows still holding text, `--run` clears them, and a second run finds none. It goes through `LlmUsageRepository`, like every other write here, and has no audit row because it changes no account. Deploy the new vie-assistant first (the billing deploy does); an old one would keep writing previews after the clear. After 90 days the repair job also unsets `prompt_preview`, `user_id` and `request_id` on every row (`docs/PRIVACY.md`).
+
+Every plan, lot, recurring-grant and role step (steps 2 to 6) also gets an `adminAudit` row (actor `system:migration`, the same action names the admin routes use, `roles.migration.promote` / `.demote` for roles), written before the step and keyed by the id the ledger entries carry.
+
+It refuses to run (exit 1, nothing written, dry run included) if it would leave no active admin or if Mongo is a standalone server, and it refuses `--run` against this server's Mongo unless you pass `--yes-prod`. Every step has an id derived from the user and the step, so running it again, even hours later, changes nothing; if a run stops halfway, run it again and it finishes.
+
+**Set up.** The migration reuses the `vie-api-tools` image from "Create the first user". Rebuild it after the deploy, because the script imports the billing code from the box's checkout. Both script files are mounted. The keep-list is `ADMIN_EMAILS` unless you pass `--admin-emails <list>`, and the dry run prints both lists and warns when they differ.
+
+```bash
+docker build --target builder -f api/Dockerfile -t vie-api-tools .
+set -a; . ./.env; set +a    # exports MONGO_ROOT_*, ADMIN_EMAILS, DEMO_USER_EMAIL
+read -r -p "Eval account email(s), comma-separated, blank for none: " VIE_EVAL_EMAILS
+export VIE_EVAL_EMAILS
+
+migrate_billing() {
+  URI="mongodb://${MONGO_ROOT_USER}:${MONGO_ROOT_PASS}@vie-mongodb:27017/video-insight-engine?authSource=admin"
+  docker run --rm --network vie-network \
+    -v "$PWD/scripts/migrate-billing.ts:/app/api/migrate-billing.ts:ro" \
+    -v "$PWD/scripts/migrate-billing-plan.ts:/app/api/migrate-billing-plan.ts:ro" \
+    -e MONGODB_URI="$URI" -e ADMIN_EMAILS -e DEMO_USER_EMAIL -e VIE_EVAL_EMAILS \
+    -w /app/api vie-api-tools \
+    sh -c 'npx tsx migrate-billing.ts --eval-emails "$VIE_EVAL_EMAILS" "$@"' migrate "$@"
+}
+```
+
+**1. Count (read-only).** Prints users by tier, the admins (masked emails, how each holds the role), today's adjustments with the minutes the migration would make of them, and how many `llm_usage` rows of the last 7 days carry a `user_id`. The script is not on the box before the merge, so copy it over first:
+
+```bash
+scp scripts/prod-count.js ec2-user@HOST:/tmp/prod-count.js
+# on the box:
+docker exec -i vie-mongodb sh -c 'mongosh --quiet -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin video-insight-engine --eval "$(cat)"' < /tmp/prod-count.js
+```
+
+**2. Run on the server, right after the deploy is healthy.**
+
+```bash
+migrate_billing --dry-run             # 1. preview: reads only, prints the summary table
+migrate_billing --run --yes-prod      # 2. when the preview is exactly right
+migrate_billing --run --yes-prod      # 3. again: every count is 0 and it says nothing to do
+```
+
+Read the preview before step 2. "Admins kept" must be exactly the account(s) you expect, "Admins demoted" the hand-made ones, "Active admins after" at least 1, and the keep-list line must say the two lists match (a kept admin who is not on `ADMIN_EMAILS` is demoted at the next vie-api boot). "Skipped" lists what it deliberately left alone, for example a credit the day's spend had already used up.
+
+**3. Verify.** The script comes from a quoted heredoc, so the shell leaves the `$` operators alone:
+
+```bash
+docker exec -i vie-mongodb sh -c 'mongosh --quiet -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin video-insight-engine --eval "$(cat)"' <<'EOF'
+printjson({
+  accounts: db.billingAccounts.countDocuments(),
+  activeUsers: db.users.countDocuments({ deletedAt: null }),
+  migrationEntries: db.ledgerEntries.aggregate([
+    { $match: { actorId: 'system:migration' } },
+    { $group: { _id: '$type', entries: { $sum: 1 }, minutes: { $sum: '$minutes' } } },
+  ]).toArray(),
+  admins: db.users.countDocuments({ $or: [{ roles: 'admin' }, { roles: { $exists: false }, role: 'admin' }] }),
+});
+EOF
+```
+
+`accounts` equals `activeUsers`, the grant entries add up to what the preview printed, and `admins` is the number under "Admins kept" plus any admin the roles model already held. Then open vie-admin: a Pro account shows its plan, a team account its lot. Boot seeding keeps working afterwards because `ADMIN_EMAILS` names the same admins.
+
+There is no automatic undo. A plan or lot is a ledger entry: set the plan back to free, or adjust the lot, from vie-admin. A demoted admin gets the role back by adding the email to `ADMIN_EMAILS` and restarting vie-api (`dc up -d vie-api`), or from backup.
 
 ### Demo mode
 
@@ -380,7 +476,9 @@ Only vie-api needs recreating when these variables change (`dc restart` does not
 
 - **Turn it off:** blank both variables and run `dc up -d vie-api`. The button disappears and `{ "demo": true }` returns 403 `DEMO_DISABLED`. Demo sessions that are already open keep working until their refresh cookie expires, up to 7 days; to end them now, also rotate `JWT_REFRESH_SECRET`, which signs every user out. The user and its videos stay in the database.
 - **Change the password, or repair the account:** edit `DEMO_USER_PASSWORD`, run `dc up -d vie-api`, then run the script again. It resets the password and cancels a pending account deletion (the API picks that up within 30 seconds).
-- **Limits:** the demo user is an ordinary free-tier user, and every visitor shares it. Its allowance is whatever `.env` gives free users: `USER_COST_LIMIT_FREE` (USD per UTC day) and `VIDEO_DAILY_LIMIT` (submissions per 24 hours). When either runs out, visitors see the normal limit message and can still browse the videos already in the demo library. The admin panel can top up one day's budget (Users → the user → Adjustments → Grant credit); it cannot change the tier or the limits.
+- **Limits:** every visitor shares the demo account, so they share its minutes: the free video, the Pro plan's monthly minutes, the recurring grant and any lot an admin grants in vie-admin (Users → the user → Account tab). The billing migration (P3.8) puts the account on manual Pro for 12 months (step `plan-demo`) and gives it 300 recurring minutes a month, both on top of the free video. When the minutes run out, visitors see the normal "not enough minutes" message and can still browse the videos already in the demo library, and a video someone already summarised is still served free. There is no per-user dollar cap.
+- **Chat:** because the account is on Pro, the free chat allowance does not apply to it. Chat fair use (`CHAT_FREE_MESSAGES_PER_DAY`, 50 messages per rolling 24 hours per account) only counts an account whose plan is `free`; any other plan is unlimited. When the 12 months end the plan reverts to free and the allowance applies again, shared by all visitors, until you set the plan again in vie-admin (Users → the user → Account tab).
+- **Submit burst:** `SUBMIT_BURST_LIMIT_PER_HOUR` (20) is counted per account, so all demo visitors share one bucket of 20 submissions an hour. That is accepted for the demo.
 - **Rate limit:** demo sign-ins count against the login limit of 10 per 15 minutes per IP address.
 - **Account deletion:** while `DEMO_USER_EMAIL` is set, `DELETE /api/users/me` returns 403 `DEMO_RESTRICTED` for the demo user, so a visitor cannot lock the demo for everyone. The admin immediate delete still works.
 - **Read-mostly:** the demo user cannot change the shared library or spend the shared budget. While `DEMO_USER_EMAIL` is set, these return 403 `DEMO_RESTRICTED` for it: deleting or moving videos, changing a video's category, renaming, moving or deleting folders, `bypassCache` / `cold` / `providers` on submit, `providers` on playlist import, the assistant's library-rewriting actions (organize, rename, move, delete folder, move video), and changing `displayName` or `username`. Browsing, creating folders and plain submits still work. The account is identified by its user id, looked up from `DEMO_USER_EMAIL`. After you recreate the demo user, the guard follows the new id within 10 minutes (or restart vie-api). If no account matches the email yet, the guard retries every minute. See [SECURITY.md](./SECURITY.md#demo-account-read-mostly).

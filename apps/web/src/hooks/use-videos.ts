@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { videosApi, type ProviderConfig } from "@/api/videos";
 import { queryKeys } from "@/lib/query-keys";
+import { usageQueryKey } from "@/hooks/use-usage";
 
 // Fetch all videos (no folder filter)
 export function useAllVideos(options?: { enabled?: boolean }) {
@@ -49,6 +50,8 @@ export function useAddVideo() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.videos.lists() });
+      // A submit can spend the free video or hold minutes; refresh the tile.
+      queryClient.invalidateQueries({ queryKey: usageQueryKey });
     },
   });
 }
@@ -121,7 +124,8 @@ export function useBulkMoveVideos() {
   });
 }
 
-// Retry/re-summarize a failed video
+// Retry/re-summarize a video. A billed submit like any other: a 402 / 422 / 403 / 429
+// refusal comes back as the mutation's `error` (render it with RetryErrorNotice).
 export function useRetryVideo() {
   const queryClient = useQueryClient();
 
@@ -139,6 +143,37 @@ export function useRetryVideo() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.videos.lists() });
+      // A retry is a billed submit: it holds minutes, so the tile must re-read them.
+      queryClient.invalidateQueries({ queryKey: usageQueryKey });
+    },
+  });
+}
+
+// "Update to latest version" for a stale copy. A billed run like a new video
+// (free video or minutes), so a 402 / 403 / 422 / 429 refusal comes back as the
+// mutation's `error` (render it with UpdateAvailableNotice). Never automatic.
+export function useUpdateVideoToLatest() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      youtubeId,
+      folderId,
+    }: {
+      videoId: string;
+      youtubeId: string;
+      folderId?: string | null;
+    }) => {
+      const url = `https://www.youtube.com/watch?v=${youtubeId}`;
+      return videosApi.updateToLatest(url, folderId ?? undefined);
+    },
+    onSuccess: (_result, { videoId }) => {
+      // The copy is regenerated on the same row: refetching it flips the page
+      // to the pending / stream view.
+      queryClient.invalidateQueries({ queryKey: queryKeys.videos.detail(videoId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.videos.lists() });
+      // The run holds minutes or spends the free video; the tile must re-read them.
+      queryClient.invalidateQueries({ queryKey: usageQueryKey });
     },
   });
 }

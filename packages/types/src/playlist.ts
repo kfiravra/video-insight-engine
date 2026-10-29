@@ -48,7 +48,8 @@ export interface PlaylistImportVideo {
 
 /** Result of importing a playlist. */
 export interface PlaylistImportResult {
-  folder: { id: string; name: string };
+  /** null when the import created a folder and left it empty (the server deletes it). */
+  folder: { id: string; name: string } | null;
   videos: PlaylistImportVideo[];
   totalVideos: number;
   cachedCount: number;

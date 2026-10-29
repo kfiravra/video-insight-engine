@@ -1,5 +1,5 @@
 import Fastify from 'fastify';
-import type { FastifyBaseLogger, FastifyInstance, FastifyServerOptions } from 'fastify';
+import type { FastifyBaseLogger, FastifyInstance, FastifyServerOptions, RouteOptions } from 'fastify';
 import { config } from './config.js';
 import { resolveErrorEnvelope } from './utils/error-envelope.js';
 import { createContainer, Container } from './container.js';
@@ -11,8 +11,10 @@ import { jwtPlugin } from './plugins/jwt.js';
 import { corsPlugin } from './plugins/cors.js';
 import { rateLimitPlugin } from './plugins/rate-limit.js';
 import { websocketPlugin } from './plugins/websocket.js';
-import { tierPlugin } from './plugins/tier.js';
 import { demoGuardPlugin } from './plugins/demo-guard.js';
+import { adminSeedPlugin } from './plugins/admin-seed.js';
+import { billingRepairPlugin } from './plugins/billing-repair.js';
+import { adminAuthPlugin } from './plugins/admin-auth.js';
 import { rabbitmqPlugin } from './plugins/rabbitmq.js';
 import { redisPlugin } from './plugins/redis.js';
 import { genRequestId, requestIdPlugin } from './plugins/request-id.js';
@@ -32,11 +34,14 @@ import { streamRoutes } from './routes/stream.routes.js';
 import { shareRoutes } from './routes/share.routes.js';
 import { ssrRoutes } from './routes/ssr.routes.js';
 import { overrideRoutes } from './routes/override.routes.js';
-import { paymentRoutes } from './routes/payment.routes.js';
-import { preferencesRoutes, userUsageRoutes } from './routes/preferences.routes.js';
+import { preferencesRoutes } from './routes/preferences.routes.js';
+import { userUsageRoutes } from './routes/user-usage.routes.js';
 import { adminQueueRoutes } from './routes/admin/queue.routes.js';
 import { userMeRoutes, adminUsersRoutes } from './routes/users.routes.js';
 import { adminVideosRoutes } from './routes/admin/videos.routes.js';
+import { adminBillingRoutes } from './routes/admin/billing.routes.js';
+import { adminAuditRoutes } from './routes/admin/audit.routes.js';
+import { adminAlertsRoutes } from './routes/admin/alerts.routes.js';
 import { healthRoutes } from './routes/health.routes.js';
 
 /** The object form of Fastify's `logger` option (pino options + Fastify extras). */
@@ -50,6 +55,7 @@ const SECRET_HEADER_NAMES = [
   'set-cookie',
   'x-internal-secret',
   'x-admin-key',
+  'x-admin-actor',
   'x-csrf-token',
   'x-api-key',
   'proxy-authorization',
@@ -99,6 +105,11 @@ export interface BuildAppOptions {
   logger?: FastifyServerOptions['logger'];
   /** Optional partial container override for testing */
   container?: Partial<Container>;
+  /**
+   * Called for every route as it is registered (Fastify's `onRoute`), so a test
+   * can enumerate the real routes instead of listing them by hand.
+   */
+  onRoute?: (route: RouteOptions) => void;
 }
 
 export async function buildApp(options?: BuildAppOptions): Promise<FastifyInstance> {
@@ -125,6 +136,8 @@ export async function buildApp(options?: BuildAppOptions): Promise<FastifyInstan
     logger: options?.logger ?? defaultLoggerOptions(isDev),
     disableRequestLogging: isDev,
   });
+
+  if (options?.onRoute) fastify.addHook('onRoute', options.onRoute);
 
   // Dev: single-line request logging (replaces Fastify's verbose two-line default)
   // Skips health check endpoints to reduce noise from Docker/admin polling
@@ -180,10 +193,14 @@ export async function buildApp(options?: BuildAppOptions): Promise<FastifyInstan
   }
   fastify.decorate('container', container);
 
-  // Tier middleware (after JWT, uses container)
-  await fastify.register(tierPlugin);
   // Demo-account guard (after the container: it resolves the demo user through it)
   await fastify.register(demoGuardPlugin);
+  // /api/admin/* auth: signed actor header or the read-only machine key
+  await fastify.register(adminAuthPlugin);
+  // ADMIN_EMAILS role reconcile (runs on ready, after the mongodb index hook)
+  await fastify.register(adminSeedPlugin);
+  // Billing repair job (started on ready, stopped on close)
+  await fastify.register(billingRepairPlugin);
 
   // Global error handler. The status/envelope mapping lives in
   // utils/error-envelope.ts so this stays a thin log-then-send: 5xx at
@@ -223,7 +240,6 @@ export async function buildApp(options?: BuildAppOptions): Promise<FastifyInstan
   await fastify.register(assistantLibraryRoutes, { prefix: '/api/assistant' });
   await fastify.register(assistantActionRoutes, { prefix: '/api/assistant' });
   await fastify.register(shareRoutes, { prefix: '/api/share' });
-  await fastify.register(paymentRoutes, { prefix: '/api/payments' });
   await fastify.register(preferencesRoutes, { prefix: '/api/users/me/preferences' });
   await fastify.register(userUsageRoutes, { prefix: '/api/users/me/usage' });
   await fastify.register(userMeRoutes, { prefix: '/api/users/me' });
@@ -232,6 +248,9 @@ export async function buildApp(options?: BuildAppOptions): Promise<FastifyInstan
   await fastify.register(adminQueueRoutes, { prefix: '/api/admin/queue' });
   await fastify.register(adminUsersRoutes, { prefix: '/api/admin/users' });
   await fastify.register(adminVideosRoutes, { prefix: '/api/admin/videos' });
+  await fastify.register(adminBillingRoutes, { prefix: '/api/admin/billing' });
+  await fastify.register(adminAuditRoutes, { prefix: '/api/admin/audit' });
+  await fastify.register(adminAlertsRoutes, { prefix: '/api/admin/alerts' });
 
   // SSR routes (top-level, no /api prefix — for social media crawlers)
   await fastify.register(ssrRoutes);

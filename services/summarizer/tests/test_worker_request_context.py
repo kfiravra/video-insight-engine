@@ -23,7 +23,7 @@ VALID_PAYLOAD = {
     "youtubeId": "dQw4w9WgXcQ",
     "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
     "userId": "user-42",
-    "tier": "free",
+    "plan": "free",
     "priority": 1,
     "providers": None,
     "bypassCache": False,

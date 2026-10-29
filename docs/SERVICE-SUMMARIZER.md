@@ -43,7 +43,8 @@ services/summarizer/
     │   ├── deps.py               # require_internal_secret (X-Internal-Secret, constant-time)
     │   ├── stream.py             # SSE streaming endpoint
     │   ├── override.py           # Detection override endpoint
-    │   └── purge.py              # POST /internal/videos/{id}/purge (global video delete)
+    │   ├── purge.py              # POST /internal/videos/{id}/purge (global video delete)
+    │   └── video_metadata.py     # GET /video/metadata (pre-flight duration/title for the billing quote)
     │
     ├── services/
     │   ├── llm.py                # LLMService (call_llm + call_llm_fast, each under call_deadline)
@@ -1786,6 +1787,42 @@ Extract playlist metadata using yt-dlp (fast, no video download).
 **Error Codes:**
 - `404`: Playlist not found or private
 - `500`: yt-dlp extraction failed
+
+### GET /video/metadata
+
+Pre-flight facts about one video for the API's billing quote: yt-dlp metadata
+only (the same `extract_video_data` call the pipeline starts with), **no
+captions fetched, no LLM**. Internal: it sends `X-Internal-Secret` like the purge
+route, and the summarizer publishes no port in prod. It goes through the proxy
+exit rotation (`YOUTUBE_PROXY_URL`) every other YouTube call uses and has no
+route-level timeout, like `/playlist/extract`; the API client gives up after 25 s (the rotation budget is 15 s, checked only before starting an exit beyond the third, so a rotation that is still working can answer after ~15 s plus the attempt in flight).
+
+**Request:** `GET /video/metadata?youtubeId=dQw4w9WgXcQ` with header `X-Internal-Secret`.
+
+**Response (200):**
+```json
+{
+  "youtubeId": "dQw4w9WgXcQ",
+  "title": "Never Gonna Give You Up",
+  "channel": "Rick Astley",
+  "duration": 212,
+  "thumbnailUrl": "https://i.ytimg.com/vi/dQw4w9WgXcQ/maxresdefault.jpg"
+}
+```
+`duration` is seconds and always above 0.
+
+**Error Codes:**
+- `400`: `youtubeId` is not 11 characters of `A-Za-z0-9_-`; yt-dlp is not called
+- `401`: missing or wrong `X-Internal-Secret`
+- `404`: the video is unknown, private, removed or age-gated (yt-dlp's `expected` extractor errors, or an empty extraction)
+- `422`: a live stream, or a video with no duration yet (premiere, still processing)
+- `503`: YouTube could not be asked: bot check or 429 on every exit, or a transport failure
+
+The `detail` text is fixed per status; yt-dlp's own message is never returned.
+vie-api caches a 200 for 24 h at `vie:api:video-meta:<youtubeId>`, remembers a 404 for 10
+minutes at `vie:api:video-meta-miss:<youtubeId>`, and turns every non-200 into
+`METADATA_UNAVAILABLE`: 404 is `not_found`, 422 is `unsupported` (status 422), anything
+else `upstream`; an abort after 25 s is `timeout`.
 
 ### POST /regenerate/{video_summary_id}
 

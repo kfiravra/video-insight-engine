@@ -2,8 +2,8 @@ import { FastifyInstance, type FastifyBaseLogger } from 'fastify';
 import { z } from 'zod';
 import { ObjectId } from 'mongodb';
 import { isValidInternalSecret } from '../utils/internal-auth.js';
-import { getUtcDateKey } from '../repositories/user-cost.repository.js';
 import type { VideoRepository } from '../repositories/video.repository.js';
+import type { LibraryUpdateRepository } from '../repositories/library-update.repository.js';
 
 const videoStatusSchema = z.object({
   type: z.literal('video.status'),
@@ -14,6 +14,8 @@ const videoStatusSchema = z.object({
     progress: z.number().optional(),
     message: z.string().optional(),
     error: z.string().optional().nullable(),
+    /** `completed` served from the summarizer's response cache: no run happened (I3). */
+    cacheHit: z.boolean().optional(),
   }),
 });
 
@@ -29,11 +31,6 @@ const expansionStatusSchema = z.object({
 });
 
 const statusEventSchema = z.union([videoStatusSchema, expansionStatusSchema]);
-
-const reconcileQuerySchema = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  userId: z.string().regex(/^[a-f0-9]{24}$/i, 'userId must be a 24-char hex ObjectId').optional(),
-});
 
 const runDeletionsBodySchema = z
   .object({
@@ -65,13 +62,39 @@ async function settleServedVersion(
   }
 }
 
+/**
+ * D-LIB: the entries an update to the latest version moved onto this row go
+ * back to the copy they left when its run fails, so the update stays on offer
+ * and can be retried, and forget that copy when it completes. Idempotent and
+ * best-effort, like the served-version settle; it runs first, so a failed
+ * version row's restore cannot carry such an entry elsewhere.
+ */
+async function settleLibraryUpdates(
+  libraryUpdates: LibraryUpdateRepository,
+  videoSummaryId: string,
+  status: 'completed' | 'failed',
+  log: FastifyBaseLogger,
+): Promise<void> {
+  try {
+    if (status === 'completed') {
+      await libraryUpdates.clearSettledUpdates(videoSummaryId);
+      return;
+    }
+    const { stranded } = await libraryUpdates.restoreFailedUpdates(videoSummaryId);
+    if (stranded > 0) log.warn({ videoSummaryId, stranded }, 'update failed and the copy it left is gone; entries keep the failed state');
+  } catch (err) {
+    log.warn({ err, videoSummaryId, status }, 'library-update settle failed');
+  }
+}
+
 export async function internalRoutes(fastify: FastifyInstance) {
   const {
-    costMonitorService,
     idempotencyService,
     dispatchGuardService,
     userDeletionService,
     videoRepository,
+    libraryUpdateRepository,
+    billingEnforcement,
   } = fastify.container;
 
   // POST /internal/status - Receive status updates from summarizer/agent
@@ -95,7 +118,7 @@ export async function internalRoutes(fastify: FastifyInstance) {
 
     if (event.type === 'video.status') {
       // Update userVideos status to match
-      const { videoSummaryId, status, userId } = event.payload;
+      const { videoSummaryId, status, userId, cacheHit } = event.payload;
 
       await fastify.mongo.db.collection('userVideos').updateMany(
         { videoSummaryId: new ObjectId(videoSummaryId) },
@@ -182,39 +205,12 @@ export async function internalRoutes(fastify: FastifyInstance) {
         }
       }
 
-      // On terminal status (completed OR failed), reconcile the user's day
-      // from llm_usage so the cost gate reflects actual spend and the upfront
-      // reservation gets corrected. Without reconciling failures, a failed
-      // video's reservation would linger until the next reconcile
-      // (`POST /internal/reconcile-costs`; nothing schedules it).
-      // This IS the canonical refund-on-failure for the per-user gate; do not
-      // add a separate `refundReservation` path on failure or it will double-refund.
       if (status === 'completed' || status === 'failed') {
-        const targetUsers = new Set<string>();
-        if (userId) targetUsers.add(userId);
-        if (targetUsers.size === 0) {
-          const userVideos = await fastify.mongo.db
-            .collection('userVideos')
-            .find({ videoSummaryId: new ObjectId(videoSummaryId) })
-            .toArray();
-          for (const uv of userVideos) {
-            if (uv.userId) {
-              targetUsers.add(uv.userId.toHexString());
-            }
-          }
-        }
-
-        const todayKey = getUtcDateKey();
-        await Promise.all(
-          Array.from(targetUsers).map(async (uid) => {
-            try {
-              await costMonitorService.reconcileUserDay(uid, todayKey);
-            } catch (err) {
-              req.log.warn({ err, userId: uid }, 'reconcileUserDay failed on completion');
-            }
-          }),
-        );
-        // Last: the reconcile lookup above still needs the failed row's library entries.
+        // Minutes ledger: settle (completed) / release (failed, or a cache
+        // hit that ran nothing) the run's hold. Awaited, never throws; a hold
+        // it misses is the repair job's.
+        await billingEnforcement.runFinished(videoSummaryId, status === 'completed' && cacheHit ? 'cached' : status);
+        await settleLibraryUpdates(libraryUpdateRepository, videoSummaryId, status, req.log);
         await settleServedVersion(videoRepository, videoSummaryId, status, req.log);
       }
     } else if (event.type === 'expansion.status') {
@@ -235,39 +231,11 @@ export async function internalRoutes(fastify: FastifyInstance) {
     return { received: true };
   });
 
-  // POST /internal/reconcile-costs — manual/ops rebuild of the userCosts cache from llm_usage
-  // (no scheduler calls it; terminal status reconciles today's UTC day on its own).
-  // Supply ?date=YYYY-MM-DD to reconcile a specific UTC day, or ?userId=... for a single user.
-  fastify.post<{
-    Querystring: z.infer<typeof reconcileQuerySchema>;
-  }>('/reconcile-costs', async (req, reply) => {
-    if (!isValidInternalSecret(req.headers['x-internal-secret'])) {
-      return reply.status(401).send({ error: 'Unauthorized' });
-    }
-
-    const parsed = reconcileQuerySchema.safeParse(req.query);
-    if (!parsed.success) {
-      return reply.status(400).send({
-        error: 'Bad Request',
-        message: parsed.error.errors[0]?.message || 'Invalid query',
-      });
-    }
-
-    const dateKey = parsed.data.date ?? getUtcDateKey();
-    if (parsed.data.userId) {
-      const total = await costMonitorService.reconcileUserDay(parsed.data.userId, dateKey);
-      return { dateKey, userId: parsed.data.userId, totalCostUsd: total };
-    }
-
-    const result = await costMonitorService.reconcileAllUsersForDay(dateKey);
-    return { dateKey, ...result };
-  });
-
   // POST /internal/run-deletions — sweep `users.hardDeleteAt <= now()` and
-  // run the GDPR cascade for each. Driven by an external cron (k8s CronJob,
-  // GitHub Actions schedule, host crontab — anything that can curl). Daily
-  // is the recommended cadence; running more often is harmless because
-  // every step is idempotent. See `docs/GDPR.md` for runbook.
+  // run the GDPR cascade for each. The billing repair job runs the same sweep
+  // on its interval (BILLING_REPAIR_ENABLED); this route is the manual /
+  // external-cron entrypoint. Running it more often is harmless because every
+  // step is idempotent. See `docs/GDPR.md` for runbook.
   fastify.post<{
     Body: z.infer<typeof runDeletionsBodySchema>;
   }>('/run-deletions', async (req, reply) => {

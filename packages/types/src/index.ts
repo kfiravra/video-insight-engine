@@ -29,3 +29,9 @@ export * from './output-types.js';
 
 // VIE Response (domain data interfaces, triage result)
 export * from './vie-response.js';
+
+// Roles, permissions, admin audit trail
+export * from './roles.js';
+
+// Billing: plans, minutes ledger, credit lots
+export * from './billing.js';

@@ -89,19 +89,6 @@ describe('share routes', () => {
 
       expect(response.statusCode).toBe(409);
     });
-
-    it('should return 403 when sharing is not allowed for user tier', async () => {
-      const { ShareNotAllowedError } = await import('../utils/errors.js');
-      mockContainer.shareService.createShare.mockRejectedValue(new ShareNotAllowedError());
-
-      const response = await app.inject({
-        method: 'POST',
-        url: `/api/share/${validVideoSummaryId}`,
-        headers: { authorization: authHeader },
-      });
-
-      expect(response.statusCode).toBe(403);
-    });
   });
 
   describe('GET /api/share/:slug', () => {

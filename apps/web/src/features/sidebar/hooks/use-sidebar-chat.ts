@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/api/client";
+import { useBillingText, type BillingText } from "@/hooks/use-billing-text";
 import {
   sendAssistantMessage,
   sendLibraryMessage,
@@ -8,7 +9,10 @@ import {
   type AssistantChatEvent,
   type AssistantSource,
 } from "@/lib/assistant";
+import { classifyBillingError } from "@/lib/billing-errors";
+import { describeBillingNotice } from "@/lib/billing-notice-text";
 import { useLabels } from "@/lib/i18n";
+import { usageQueryKey } from "@/hooks/use-usage";
 import { queryKeys } from "@/lib/query-keys";
 import {
   useChatStore,
@@ -41,11 +45,24 @@ const MUTATING_ACTIONS = new Set([
   "organize_library",
 ]);
 
+// Agent actions that start a run, which holds minutes: the usage tile must re-read them.
+const SPENDING_ACTIONS = new Set(["generate_video"]);
+
 const RATE_LIMITED_MESSAGE = "Too many messages. Please wait a moment and try again.";
 const CONNECT_FAILED_MESSAGE = "Failed to connect to assistant. Please try again.";
 
-/** Copy for a request that failed before any SSE event arrived. */
-function requestFailureMessage(err: unknown): string {
+/**
+ * Copy for a request that failed before any SSE event arrived. A used-up free
+ * chat allowance (429 CHAT_LIMIT_REACHED) says, in the user's language, when
+ * more messages open up, from the `nextAt` the gateway sends. The message is
+ * saved in the persisted transcript, so it names a clock time, never a
+ * countdown that would be wrong by the time it is read again.
+ */
+function requestFailureMessage(err: unknown, billingText: BillingText): string {
+  const notice = classifyBillingError(err);
+  if (notice?.kind === "chat_limit") {
+    return describeBillingNotice(notice, billingText, Date.now());
+  }
   const rateLimited =
     err instanceof ApiError && (err.status === 429 || err.code === "RATE_LIMITED");
   return rateLimited ? RATE_LIMITED_MESSAGE : CONNECT_FAILED_MESSAGE;
@@ -94,6 +111,7 @@ export function useSidebarChat(options: UseSidebarChatOptions = {}) {
   const storeClearMessages = useChatStore((s) => s.clearMessages);
 
   const labels = useLabels();
+  const billingText = useBillingText();
 
   const queryClient = useQueryClient();
 
@@ -112,6 +130,8 @@ export function useSidebarChat(options: UseSidebarChatOptions = {}) {
   // Tracks whether the current turn triggered a library-mutating agent action,
   // so we refetch the folder/video trees once at the end (not per tool call).
   const didMutateRef = useRef(false);
+  // Same, for an action that spent minutes (refetch the usage tile once per turn).
+  const didSpendRef = useRef(false);
 
   // Reset on mount, clean up on unmount. Re-setting `true` here is essential:
   // React 19 StrictMode (dev) does mount → unmount → remount, and the cleanup
@@ -228,6 +248,9 @@ export function useSidebarChat(options: UseSidebarChatOptions = {}) {
             if (typeof action === "string" && MUTATING_ACTIONS.has(action)) {
               didMutateRef.current = true;
             }
+            if (typeof action === "string" && SPENDING_ACTIONS.has(action)) {
+              didSpendRef.current = true;
+            }
 
             const step = event.content;
             if (!step) break;
@@ -276,6 +299,10 @@ export function useSidebarChat(options: UseSidebarChatOptions = {}) {
               });
               didMutateRef.current = false;
             }
+            if (didSpendRef.current) {
+              queryClient.invalidateQueries({ queryKey: usageQueryKey });
+              didSpendRef.current = false;
+            }
             break;
         }
       };
@@ -299,7 +326,7 @@ export function useSidebarChat(options: UseSidebarChatOptions = {}) {
             m.id === assistantId
               ? {
                   ...m,
-                  content: requestFailureMessage(err),
+                  content: requestFailureMessage(err, billingText),
                   isStreaming: false,
                 }
               : m,
@@ -307,7 +334,7 @@ export function useSidebarChat(options: UseSidebarChatOptions = {}) {
         );
       });
     },
-    [videoSummaryId, setMessages, setStatus, setPendingConfirmation, queryClient],
+    [videoSummaryId, setMessages, setStatus, setPendingConfirmation, queryClient, billingText],
   );
 
   // Every message — single-video or library — now goes through the streaming
@@ -372,6 +399,7 @@ export function useSidebarChat(options: UseSidebarChatOptions = {}) {
   const clearMessages = useCallback(() => {
     abortControllerRef.current?.abort();
     didMutateRef.current = false;
+    didSpendRef.current = false;
     storeClearMessages();
   }, [storeClearMessages]);
 

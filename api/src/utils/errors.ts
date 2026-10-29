@@ -30,6 +30,22 @@ export class UnauthorizedError extends AppError {
   }
 }
 
+/** An `/api/admin/*` caller without the permission the route needs (the shared key on a mutation, or a demoted admin). */
+export class AdminPermissionError extends AppError {
+  constructor(message = 'Admin permission required') {
+    super('ADMIN_PERMISSION_DENIED', 403, message);
+    this.name = 'AdminPermissionError';
+  }
+}
+
+/** A mutation's Idempotency-Key was already used for a different request. */
+export class IdempotencyKeyReusedError extends AppError {
+  constructor() {
+    super('IDEMPOTENCY_KEY_REUSED', 422, 'This Idempotency-Key was already used for a different request');
+    this.name = 'IdempotencyKeyReusedError';
+  }
+}
+
 export class ConflictError extends AppError {
   constructor(code: string, message: string) {
     super(code, 409, message);
@@ -236,13 +252,6 @@ export class AlreadySharedError extends AppError {
   }
 }
 
-export class ShareNotAllowedError extends AppError {
-  constructor() {
-    super('SHARE_NOT_ALLOWED', 403, 'Sharing is not available on your current tier');
-    this.name = 'ShareNotAllowedError';
-  }
-}
-
 // Override-specific errors
 export class InvalidCategoryError extends AppError {
   constructor(category: string) {
@@ -251,56 +260,49 @@ export class InvalidCategoryError extends AppError {
   }
 }
 
-// Payment-specific errors
-export class PaymentError extends AppError {
-  constructor(message = 'Payment processing failed') {
-    super('PAYMENT_ERROR', 500, message);
-    this.name = 'PaymentError';
-  }
-}
-
-export class InvalidWebhookError extends AppError {
-  constructor(message = 'Invalid webhook signature') {
-    super('INVALID_WEBHOOK', 400, message);
-    this.name = 'InvalidWebhookError';
-  }
-}
-
-// Tier-specific errors
-export class TierLimitExceededError extends AppError {
-  constructor(resource: string, limit: number) {
-    super('TIER_LIMIT_EXCEEDED', 403, `${resource} limit reached (${limit}). Upgrade your plan for more.`);
-    this.name = 'TierLimitExceededError';
-  }
-}
-
-export class DailyLimitReachedError extends AppError {
-  /** ISO timestamp of next UTC midnight reset. */
-  public readonly resetAt: string;
-  /** Daily limit for the user's tier in USD. */
-  public readonly limitUsd: number;
-
-  constructor(limitUsd: number, resetAt: string) {
-    super(
-      'DAILY_LIMIT_REACHED',
-      429,
-      `You've reached your daily cost limit ($${limitUsd.toFixed(2)}). Resets at midnight UTC.`,
-    );
-    this.name = 'DailyLimitReachedError';
-    this.resetAt = resetAt;
-    this.limitUsd = limitUsd;
+// Payment errors. 501, not 503: no provider is built or configured, which a
+// retry never fixes, and clients can tell "not offered" from "down right now".
+export class ProviderNotConfiguredError extends AppError {
+  constructor() {
+    super('PROVIDER_NOT_CONFIGURED', 501, 'Payments are not available yet.');
+    this.name = 'ProviderNotConfiguredError';
   }
 }
 
 /**
- * The assistant throttled this user (its own 30/min chat window). Same wire
- * shape as the rate-limit plugin's envelope — `RATE_LIMITED`, 429 — so clients
- * keep one code map for both.
+ * A throttle answered 429: the assistant's own 30/min chat window, or the
+ * shared submit burst limit. Same wire shape as the rate-limit plugin's
+ * envelope — `RATE_LIMITED`, 429 — so clients keep one code map for all of
+ * them; the message says which limit was hit and `retryAfterSec` (when the
+ * limiter knows it) is what clients localize their own copy from.
  */
 export class RateLimitedError extends AppError {
-  constructor() {
-    super('RATE_LIMITED', 429, 'Too many messages. Please wait a moment and try again.');
+  /** Whole seconds until the limiter lets the caller back in; undefined when it cannot tell. */
+  public readonly retryAfterSec?: number;
+
+  constructor(message = 'Too many messages. Please wait a moment and try again.', retryAfterSec?: number) {
+    super('RATE_LIMITED', 429, message);
     this.name = 'RateLimitedError';
+    this.retryAfterSec = retryAfterSec;
+  }
+}
+
+/**
+ * A free account used its chat messages for the rolling 24 hours (Q7). Not
+ * RATE_LIMITED: clients tell "slow down" from "you are out until `nextAt`".
+ */
+export class ChatLimitReachedError extends AppError {
+  /** ISO timestamp of the moment the oldest counted message leaves the window. */
+  public readonly nextAt: string;
+
+  constructor(messagesPerWindow: number, nextAt: Date) {
+    super(
+      'CHAT_LIMIT_REACHED',
+      429,
+      `Free accounts can send ${messagesPerWindow} chat messages in 24 hours. More open up as the last 24 hours pass.`,
+    );
+    this.name = 'ChatLimitReachedError';
+    this.nextAt = nextAt.toISOString();
   }
 }
 
@@ -355,5 +357,111 @@ export class SummarizerPurgeError extends AppError {
   constructor(detail: string) {
     super('SUMMARIZER_PURGE_FAILED', 502, `Video purge failed: ${detail}`);
     this.name = 'SummarizerPurgeError';
+  }
+}
+
+/**
+ * Why the pre-flight metadata call failed. `not_found` (unknown or private
+ * video) and `unsupported` (a live stream, or a premiere with no duration yet)
+ * will not heal on an immediate retry; `timeout` and `upstream` may.
+ */
+export type MetadataUnavailableReason = 'not_found' | 'timeout' | 'upstream' | 'unsupported';
+
+const METADATA_UNAVAILABLE_MESSAGES: Record<MetadataUnavailableReason, string> = {
+  not_found: "We couldn't find this video. Check the link and that the video is public.",
+  timeout: 'Looking up the video took too long. Please try again.',
+  upstream: 'Video details are temporarily unavailable. Please try again.',
+  unsupported:
+    "Live streams and premieres can't be processed yet. Try again once the video is a regular upload.",
+};
+
+const METADATA_UNAVAILABLE_STATUS: Record<MetadataUnavailableReason, number> = {
+  not_found: 404,
+  timeout: 503,
+  upstream: 503,
+  unsupported: 422,
+};
+
+/**
+ * The summarizer could not give the duration/title of a video before submit
+ * (unknown video, YouTube rate limit, summarizer down, slow, a live stream).
+ * A billing quote built on it fails closed (no run without a length);
+ * `reason` says whether retrying can help.
+ */
+export class MetadataUnavailableError extends AppError {
+  public readonly reason: MetadataUnavailableReason;
+
+  constructor(reason: MetadataUnavailableReason) {
+    super('METADATA_UNAVAILABLE', METADATA_UNAVAILABLE_STATUS[reason], METADATA_UNAVAILABLE_MESSAGES[reason]);
+    this.name = 'MetadataUnavailableError';
+    this.reason = reason;
+  }
+}
+
+// ─── Minutes gate (billing-roles) ───────────────────────────────────────
+// Thrown by the minutes ledger on every submit; error-envelope.ts
+// carries the numbers (`needed`, `available`, `nextFreeAt`, `maxMinutes`,
+// `maxConcurrent`) as top-level body fields.
+
+/** The account cannot pay for the video: `needed` minutes, `available` paid minutes. */
+export class InsufficientMinutesError extends AppError {
+  constructor(
+    public readonly needed: number,
+    public readonly available: number,
+    public readonly nextFreeAt: string | null,
+  ) {
+    super('INSUFFICIENT_MINUTES', 402, `This video needs ${needed} minutes; ${available} available`);
+    this.name = 'InsufficientMinutesError';
+  }
+}
+
+/** Longer than any minutes on this account can pay for (paid 180, free 30, or an admin cap). */
+export class VideoTooLongForPlanError extends AppError {
+  constructor(public readonly maxMinutes: number) {
+    super('VIDEO_TOO_LONG_FOR_PLAN', 422, `Videos up to ${maxMinutes} minutes are supported on this account`);
+    this.name = 'VideoTooLongForPlanError';
+  }
+}
+
+export class AccountBlockedError extends AppError {
+  constructor() {
+    super('ACCOUNT_BLOCKED', 403, 'This account cannot start new videos');
+    this.name = 'AccountBlockedError';
+  }
+}
+
+/** `caps.maxConcurrent` runs are already in flight. */
+export class TooManyRunsError extends AppError {
+  constructor(public readonly maxConcurrent: number) {
+    super('TOO_MANY_RUNS', 429, `At most ${maxConcurrent} videos can run at once on this account`);
+    this.name = 'TooManyRunsError';
+  }
+}
+
+/** A hold was requested for a requestId whose run was already settled or released. */
+export class HoldFinalizedError extends ConflictError {
+  constructor() {
+    super('HOLD_FINALIZED', 'This run has already been settled or released');
+    this.name = 'HoldFinalizedError';
+  }
+}
+
+/** A hold already exists under this run id for another user or video (W3) — never ride on someone else's hold. */
+export class HoldConflictError extends ConflictError {
+  constructor() {
+    super('HOLD_CONFLICT', 'This run id is already holding minutes for another video');
+    this.name = 'HoldConflictError';
+  }
+}
+
+/**
+ * createVideo with `serveOnly` (the ledger refused to pay) hit a branch that
+ * would start a run. The submission catches it and throws the ledger's own
+ * refusal instead; it should never reach a client.
+ */
+export class RunNotAllowedError extends AppError {
+  constructor() {
+    super('RUN_NOT_ALLOWED', 409, 'This video would need a new run');
+    this.name = 'RunNotAllowedError';
   }
 }

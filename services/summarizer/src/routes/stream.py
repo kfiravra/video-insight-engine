@@ -125,6 +125,18 @@ async def stream_summary(
             headers=_SSE_HEADERS,
         )
 
+    # A failed row is never re-run by opening its stream: re-running costs the
+    # user minutes, so only vie-api's billed submit / retry may start it (W1).
+    # Consume only — attach to a run already in progress, or replay what is
+    # left of the last one.
+    if entry.get("status") == ProcessingStatus.FAILED.value:
+        logger.info("Stream on failed row %s — consuming only, no producer", video_summary_id)
+        return StreamingResponse(
+            consume_from_broker(video_summary_id),
+            media_type="text/event-stream",
+            headers=_SSE_HEADERS,
+        )
+
     # Normal flow: claim producer ownership via the broker. Whoever wins runs
     # the pipeline once; everyone else (including this same client on a
     # StrictMode reconnect) just consumes the shared event stream.

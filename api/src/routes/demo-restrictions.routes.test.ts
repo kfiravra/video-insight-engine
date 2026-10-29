@@ -138,7 +138,7 @@ describe('demo account restrictions', () => {
   });
 
   describe('POST /api/videos', () => {
-    it('should refuse bypassCache for the demo account before reserving any cost', async () => {
+    it('should refuse bypassCache for the demo account before holding any minutes', async () => {
       const response = await app.inject({
         method: 'POST',
         url: '/api/videos',
@@ -147,7 +147,7 @@ describe('demo account restrictions', () => {
       });
 
       expectRestricted(response);
-      expect(mockContainer.costMonitorService.reserveUserCost).not.toHaveBeenCalled();
+      expect(mockContainer.billingEnforcement.admit).not.toHaveBeenCalled();
       expect(mockContainer.videoService.createVideo).not.toHaveBeenCalled();
     });
 

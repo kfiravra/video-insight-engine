@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useSidebarChat } from "../use-sidebar-chat";
 import { useChatStore } from "@/stores/chat-store";
 import { ApiError } from "@/api/client";
+import { DirectionProvider } from "@/contexts/DirectionContext";
 import {
   sendAssistantMessage,
   sendLibraryMessage,
@@ -30,12 +31,22 @@ const mockedSendLibraryMessage = vi.mocked(sendLibraryMessage);
 
 // The hook calls useQueryClient(), so every render needs a provider. A fresh
 // client per test keeps cache state from bleeding across tests.
-function makeWrapper() {
+function makeWrapper(language?: string) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   const wrapper = ({ children }: { children: ReactNode }) =>
-    createElement(QueryClientProvider, { client: queryClient }, children);
+    createElement(
+      QueryClientProvider,
+      { client: queryClient },
+      language
+        ? createElement(
+            DirectionProvider,
+            { language, isRTL: language === "he" || language === "ar" },
+            children,
+          )
+        : children,
+    );
   return { queryClient, wrapper };
 }
 
@@ -191,6 +202,57 @@ describe("useSidebarChat", () => {
       expect(invalidateSpy).toHaveBeenCalledWith({
         queryKey: ["videos", "list"],
       });
+    });
+  });
+
+  describe("usage refresh after the agent spends minutes", () => {
+    function runTurn(action: string) {
+      const { queryClient, wrapper } = makeWrapper();
+      const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+      const { result } = renderHook(() => useSidebarChat(), { wrapper });
+      act(() => {
+        result.current.sendMessage("summarize that video");
+      });
+      const handleEvent = mockedSendLibraryMessage.mock.calls[0][2] as (event: AssistantChatEvent) => void;
+      act(() => {
+        handleEvent({ type: "tool", content: "Started", metadata: { status: "done", action } });
+        handleEvent({ type: "done" });
+      });
+      return invalidateSpy;
+    }
+
+    it("should re-read the usage tile when the agent starts a video", () => {
+      const invalidateSpy = runTurn("generate_video");
+
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["usage", "me"] });
+    });
+
+    it("should leave the usage tile alone for an action that costs no minutes", () => {
+      const invalidateSpy = runTurn("create_folder");
+
+      expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ["usage", "me"] });
+    });
+
+    it("should refresh the usage once per turn, not once per tool call", () => {
+      const { queryClient, wrapper } = makeWrapper();
+      const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+      const { result } = renderHook(() => useSidebarChat(), { wrapper });
+      act(() => {
+        result.current.sendMessage("summarize both");
+      });
+      const handleEvent = mockedSendLibraryMessage.mock.calls[0][2] as (event: AssistantChatEvent) => void;
+
+      act(() => {
+        handleEvent({ type: "tool", content: "A", metadata: { status: "done", action: "generate_video" } });
+        handleEvent({ type: "tool", content: "B", metadata: { status: "done", action: "generate_video" } });
+        handleEvent({ type: "done" });
+      });
+
+      const usageCalls = invalidateSpy.mock.calls.filter(([filters]) => {
+        const key = (filters as { queryKey?: readonly string[] } | undefined)?.queryKey;
+        return key?.[0] === "usage";
+      });
+      expect(usageCalls).toHaveLength(1);
     });
   });
 
@@ -543,8 +605,9 @@ describe("useSidebarChat", () => {
   describe("request failures", () => {
     async function sendAndGetAssistantReply(
       options: Parameters<typeof useSidebarChat>[0],
+      language?: string,
     ): Promise<string | undefined> {
-      const { wrapper } = makeWrapper();
+      const { wrapper } = makeWrapper(language);
       const { result } = renderHook(() => useSidebarChat(options), { wrapper });
 
       await act(async () => {
@@ -572,6 +635,91 @@ describe("useSidebarChat", () => {
       const reply = await sendAndGetAssistantReply({});
 
       expect(reply).toBe("Too many messages. Please wait a moment and try again.");
+    });
+
+    describe("when the free chat allowance is used up (CHAT_LIMIT_REACHED)", () => {
+      const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
+
+      function rejectWithChatLimit(nextAt: string | undefined): void {
+        const limitReached = new ApiError(
+          429,
+          "Chat limit reached",
+          "CHAT_LIMIT_REACHED",
+          nextAt === undefined ? undefined : { nextAt },
+        );
+        mockedSendAssistantMessage.mockRejectedValueOnce(limitReached);
+        mockedSendLibraryMessage.mockRejectedValueOnce(limitReached);
+      }
+
+      const inThreeHours = () => new Date(Date.now() + THREE_HOURS_MS).toISOString();
+
+      it.each([
+        ["single-video", { videoSummaryId: "vid-123" }],
+        ["library", {}],
+      ])("should say at what time more messages open up when the %s chat hits the limit", async (_name, options) => {
+        rejectWithChatLimit(inThreeHours());
+
+        const reply = await sendAndGetAssistantReply(options);
+
+        expect(reply).toMatch(/^You've used your free chat messages for now\. More open up at .*\d/);
+      });
+
+      it("should save a clock time in the transcript, never a countdown that would go stale", async () => {
+        rejectWithChatLimit(inThreeHours());
+
+        const reply = await sendAndGetAssistantReply({});
+
+        expect(reply).not.toMatch(/ in \d+\s?[hm]/);
+        expect(useChatStore.getState().messages.find((m) => m.role === "assistant")?.content).toBe(reply);
+      });
+
+      it("should name the date when the next message opens on another day", async () => {
+        rejectWithChatLimit(new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString());
+
+        const reply = await sendAndGetAssistantReply({});
+
+        expect(reply).toMatch(/More open up at [A-Z][a-z]{2} \d{1,2}, \d{4}/);
+      });
+
+      it("should say only that the messages are used up when the gateway sends no nextAt", async () => {
+        rejectWithChatLimit(undefined);
+
+        const reply = await sendAndGetAssistantReply({});
+
+        expect(reply).toBe("You've used your free chat messages for now.");
+      });
+
+      it("should say only that the messages are used up when nextAt has already passed", async () => {
+        rejectWithChatLimit(new Date(Date.now() - 60_000).toISOString());
+
+        const reply = await sendAndGetAssistantReply({});
+
+        expect(reply).toBe("You've used your free chat messages for now.");
+      });
+
+      it("should say it in Hebrew under a Hebrew direction context", async () => {
+        rejectWithChatLimit(inThreeHours());
+
+        const reply = await sendAndGetAssistantReply({}, "he");
+
+        expect(reply).toMatch(/^ניצלתם את הודעות הצ׳אט החינמיות לעת עתה\. הודעות נוספות ייפתחו ב־/);
+      });
+
+      it("should say it in Arabic under an Arabic direction context", async () => {
+        rejectWithChatLimit(inThreeHours());
+
+        const reply = await sendAndGetAssistantReply({}, "ar");
+
+        expect(reply).toMatch(/^لقد استخدمت رسائل الدردشة المجانية حاليًا\. ستتوفر رسائل أخرى في /);
+      });
+
+      it("should put the chat into the error state", async () => {
+        rejectWithChatLimit(inThreeHours());
+
+        await sendAndGetAssistantReply({});
+
+        expect(useChatStore.getState().status).toBe("error");
+      });
     });
 
     it("should keep the connection-failure copy for any other failure", async () => {

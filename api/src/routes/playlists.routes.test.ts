@@ -304,7 +304,6 @@ describe('playlists routes', () => {
         undefined, // folderId
         100, // default maxVideos
         undefined, // providers
-        'free', // tier resolved by fastify.resolveTier preHandler
       );
       expect(response.json()).toEqual(mockResult);
     });
@@ -333,7 +332,6 @@ describe('playlists routes', () => {
         '507f1f77bcf86cd799439011',
         100,
         undefined,
-        'free',
       );
     });
 
@@ -361,7 +359,6 @@ describe('playlists routes', () => {
         undefined,
         25,
         undefined,
-        'free',
       );
     });
 
@@ -397,7 +394,6 @@ describe('playlists routes', () => {
           fast: 'openai',
           fallback: 'gemini',
         },
-        'free',
       );
     });
 

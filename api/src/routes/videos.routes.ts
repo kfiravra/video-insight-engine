@@ -1,8 +1,8 @@
-import { FastifyInstance } from 'fastify';
+import { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { idParamSchema, objectIdSchema, youtubeIdSchema } from '../utils/validation.js';
-import { config } from '../config.js';
 import { VideoSubmissionService } from '../services/video-submission.service.js';
+import { withoutUpdateOffer, type UpdateOffer } from '../services/library-update.js';
 
 // Stripe's spec is "1–255 chars, opaque to us". Reject longer to keep junk out
 // of the DB; reject control chars/whitespace because they're never produced by
@@ -21,6 +21,9 @@ const createVideoSchema = z.object({
   url: z.string().url(),
   folderId: objectIdSchema.optional(),
   bypassCache: z.boolean().optional().default(false),
+  // D-LIB: regenerate the user's own copy an older pipeline wrote. A paid
+  // re-run charged like a new video; without it that copy is served free.
+  updateToLatest: z.boolean().optional().default(false),
   // Benchmark-only (admin/eval accounts; anyone else gets 403): skip the
   // summarizer's S3 transcript + scene-frame caches so the run measures cold
   // media. Implies bypassCache.
@@ -47,16 +50,30 @@ const versionsQuerySchema = z.object({
 });
 
 export async function videosRoutes(fastify: FastifyInstance) {
-  const { videoService, videoCascadeService, costMonitorService, idempotencyService, videoRepository } = fastify.container;
+  const {
+    videoService,
+    videoCascadeService,
+    idempotencyService,
+    videoRepository,
+    submitBurstLimiter,
+  } = fastify.container;
   // Constructed here (not in the container) so route tests that override
   // container services via `buildTestApp` keep full control over its deps.
   const videoSubmissionService = new VideoSubmissionService(
     videoService,
-    costMonitorService,
     idempotencyService,
     videoRepository,
     fastify.log,
+    fastify.container.billingEnforcement,
   );
+
+  // The shared demo account may not pay for an update (requireNotDemo refuses
+  // `updateToLatest`), so it is never offered one: the web shows the notice
+  // only when the flag is present.
+  async function offerUnlessDemo<T extends object>(req: FastifyRequest, response: T & UpdateOffer): Promise<object> {
+    if (!response.updateAvailable || !(await fastify.isDemoUser(req))) return response;
+    return withoutUpdateOffer(response);
+  }
 
   // GET /api/videos
   fastify.get<{
@@ -77,33 +94,22 @@ export async function videosRoutes(fastify: FastifyInstance) {
     preHandler: [fastify.authenticate],
   }, async (req) => {
     const { id } = idParamSchema.parse(req.params);
-    return videoService.getVideo(req.user.userId, id);
+    return offerUnlessDemo(req, await videoService.getVideo(req.user.userId, id));
   });
 
-  // POST /api/videos
-  // Video daily limit is configurable via VIDEO_DAILY_LIMIT env var (0 = unlimited)
-  const videoDailyLimit = config.RATE_LIMITS.VIDEO_DAILY;
+  // POST /api/videos — no per-route daily limit: the minutes ledger decides
+  // what a run costs and the hourly burst guard below stops abuse (P3.2/P3.3).
   fastify.post<{
     Body: z.infer<typeof createVideoSchema>;
   }>('/', {
-    preHandler: [fastify.authenticate, fastify.resolveTier],
-    config: {
-      rateLimit: videoDailyLimit > 0 ? {
-        max: videoDailyLimit,
-        timeWindow: '24 hours',
-        errorResponseBuilder: () => ({
-          error: 'RATE_LIMITED',
-          message: `Daily video limit reached (${videoDailyLimit} videos per 24 hours). Try again tomorrow.`,
-          statusCode: 429,
-        }),
-      } : false, // Disable rate limiting when limit is 0
-    },
+    preHandler: [fastify.authenticate],
   }, async (req, reply) => {
     const input = createVideoSchema.parse(req.body);
 
     // Every demo visitor shares one account and one cost budget, so none of
-    // them may force a paid re-run or pick providers; a plain submit is fine.
-    if (input.bypassCache || input.cold || input.providers) {
+    // them may force a paid re-run (bypassCache, updateToLatest) or pick
+    // providers; a plain submit is fine.
+    if (input.bypassCache || input.updateToLatest || input.cold || input.providers) {
       await fastify.requireNotDemo(req);
     }
 
@@ -120,16 +126,20 @@ export async function videosRoutes(fastify: FastifyInstance) {
       });
     }
 
-    // Full submission flow (idempotency gate → cost reservation → createVideo
-    // → unwind on failure) lives in the service so the assistant's internal
-    // generate route enforces the exact same gates. DailyLimitReachedError and
-    // createVideo errors propagate to the app-level error handler.
+    // One hourly bucket shared with the assistant's generate route and playlist
+    // import: an abuse guard, checked before any work (RATE_LIMITED, 429).
+    await submitBurstLimiter.consume(req.user.userId);
+
+    // Full submission flow (idempotency gate → ledger quote + hold →
+    // createVideo → unwind on failure) lives in the service so the assistant's
+    // internal generate route enforces the exact same gates. Ledger refusals
+    // and createVideo errors propagate to the app-level error handler.
     const submission = await videoSubmissionService.submit({
       userId: req.user.userId,
       url: input.url,
-      tier: req.tier.name,
       folderId: input.folderId,
       bypassCache: input.bypassCache,
+      updateToLatest: input.updateToLatest,
       cold: input.cold,
       providers: input.providers,
       clientKey,
@@ -137,7 +147,8 @@ export async function videosRoutes(fastify: FastifyInstance) {
     });
 
     if (submission.outcome === 'duplicate') {
-      return reply.code(200).send({ video: submission.video, cached: true, duplicate: true });
+      const { video, updateAvailable } = submission;
+      return reply.code(200).send(await offerUnlessDemo(req, { video, cached: true, duplicate: true, ...(updateAvailable && { updateAvailable }) }));
     }
     if (submission.outcome === 'in_flight') {
       return reply.code(409).send({
@@ -145,7 +156,7 @@ export async function videosRoutes(fastify: FastifyInstance) {
         message: 'Another request with the same key is currently processing. Retry shortly.',
       });
     }
-    return reply.code(201).send(submission.result);
+    return reply.code(201).send(await offerUnlessDemo(req, submission.result));
   });
 
   // DELETE /api/videos/:id

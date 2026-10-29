@@ -44,6 +44,33 @@ class TestSendVideoStatus:
 
     @patch("src.services.status_callback.httpx.AsyncClient")
     @patch("src.services.status_callback.settings")
+    async def test_marks_a_cache_hit_completion(self, mock_settings, mock_client_class):
+        """A completion served from the response cache says so (I3)."""
+        mock_settings.API_URL = "http://api:3000"
+        mock_settings.INTERNAL_SECRET = "test-secret"
+        mock_client = AsyncMock()
+        mock_client_class.return_value.__aenter__.return_value = mock_client
+
+        await send_video_status(
+            video_summary_id="vid123", user_id=None, status="completed", cache_hit=True
+        )
+
+        assert mock_client.post.call_args.kwargs["json"]["payload"]["cacheHit"] is True
+
+    @patch("src.services.status_callback.httpx.AsyncClient")
+    @patch("src.services.status_callback.settings")
+    async def test_omits_the_cache_hit_flag_on_a_real_run(self, mock_settings, mock_client_class):
+        mock_settings.API_URL = "http://api:3000"
+        mock_settings.INTERNAL_SECRET = "test-secret"
+        mock_client = AsyncMock()
+        mock_client_class.return_value.__aenter__.return_value = mock_client
+
+        await send_video_status(video_summary_id="vid123", user_id=None, status="completed")
+
+        assert "cacheHit" not in mock_client.post.call_args.kwargs["json"]["payload"]
+
+    @patch("src.services.status_callback.httpx.AsyncClient")
+    @patch("src.services.status_callback.settings")
     async def test_status_with_progress(self, mock_settings, mock_client_class):
         """Test sending status with progress."""
         mock_settings.API_URL = "http://api:3000"

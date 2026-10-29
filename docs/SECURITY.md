@@ -205,9 +205,8 @@ The account is identified **by user id, not by the JWT `email` claim**. The clai
 | `POST /share/:slug/like` | 10 | 1 min   | IP    |
 | `GET /s/:slug`        | 60    | 1 min    | IP    |
 | `GET /s/:slug/og-image.png` | 30 | 1 min | IP    |
-| `POST /payments/webhook` | none | -     | Signature verified |
-| `GET /payments/checkout` | 10  | 1 hour  | User  |
-| `GET /payments/tier`  | 60    | 1 min    | User  |
+| `POST /videos`, `POST /internal/assistant/generate`, `POST /playlists/import` | 20 (`SUBMIT_BURST_LIMIT_PER_HOUR`) | 1 hour, fixed | User, one shared bucket (see below) |
+| `POST /videos/:id/chat`, `POST /assistant/library/chat` | 50 (`CHAT_FREE_MESSAGES_PER_DAY`), free accounts only | rolling 24 hours | User, one shared allowance (see [SERVICE-ASSISTANT.md](./SERVICE-ASSISTANT.md#free-account-chat-fair-use)) |
 | `* (default)`         | 100   | 1 min    | User  |
 
 Demo logins (`POST /auth/login` with `{ "demo": true }`, see [DEPLOY.md](./DEPLOY.md#demo-mode)) are ordinary requests to the login route and share its 10 / 15 min per-IP limit. The demo account's credentials stay in vie-api's environment and are never sent to the browser. Because every visitor holds a token for that one account, it cannot schedule its own deletion: `DELETE /users/me` returns 403 `DEMO_RESTRICTED`. The rest of its read-mostly restrictions are listed under [Demo Account (Read-Mostly)](#demo-account-read-mostly).
@@ -265,15 +264,47 @@ lasts only as long as the outage and self-heals; a strategy that gives up
 permanently ends the ioredis client and would silently disable rate limiting
 for the remainder of the process lifetime.
 
+### Submit burst limit
+
+An abuse guard, not a billing limit: one Redis counter per user,
+`vie:api:submit-burst:<userId>`, a **fixed one-hour window** that opens at the
+user's first submission of the hour and holds `SUBMIT_BURST_LIMIT_PER_HOUR`
+(default 20; `0` turns it off). `api/src/services/billing/burst-limit.ts` does
+`INCR` and `EXPIRE` in one Lua script, so a crash cannot leave a counter without
+a TTL. It is deliberately not `@fastify/rate-limit`, whose keys include the
+route: `POST /api/videos`, the assistant's `POST /internal/assistant/generate`
+and `POST /api/playlists/import` all draw from the same bucket, so a user cannot
+triple the allowance by switching routes. A playlist import costs one, however
+many videos it holds. A rejected attempt counts but never extends the window.
+
+When the bucket is full the route answers `429`, error code `RATE_LIMITED`, with
+`Too many submissions in the last hour. Try again in N min.` (N rounds the time
+left up, minimum 1). The message never says "daily". Like the limiter above it
+fails open: a Redis error logs a `submit_burst_check_failed` warning and lets
+the submission through. The check runs before any work, after the Idempotency-Key
+header check, so an idempotent replay counts like a new submission. It replaced
+the per-route 24 h `VIDEO_DAILY_LIMIT` limiter, removed with the dollar gate
+(billing-roles P3.2).
+
 ### Response on Limit
 
 ```json
 {
   "error": "RATE_LIMITED",
-  "message": "Too many requests. Try again in 3600 seconds.",
-  "retryAfter": 3600
+  "message": "Too many requests",
+  "statusCode": 429,
+  "retryAfterSec": 42
 }
 ```
+
+`retryAfterSec` is the whole seconds (at least 1) until the window reopens. Every
+limiter that answers `RATE_LIMITED` sends it: the global limiter and the per-route
+quotas (`@fastify/rate-limit`, from the plugin's own reset time, via
+`rateLimitedBody` in `api/src/plugins/rate-limit.ts`) and the submit burst limit
+(the seconds left in its hour). The web app builds its localized copy from this
+number, not from the English `message`. The only exception is the assistant's own
+30/min chat window, which reports no wait. The playlist import quota is a 24 hour
+window and its message says only "Too many playlist imports. Try again later."
 
 Headers:
 
@@ -364,27 +395,23 @@ networks:
   vie-internal: # Internal only (workers)
 ```
 
-### Webhook Authentication (v1.4)
+### Webhook Authentication
 
-Paddle webhooks are verified using HMAC signature:
+No webhook endpoint exists today: the Paddle Classic stub and its
+`PADDLE_WEBHOOK_SECRET` were removed (its events never matched a user), so
+there is no payment secret to set in any environment. The payment adapter that
+P4 adds (`PaymentProviderAdapter.verifyWebhook`, see
+`api/src/services/billing/payment-provider.ts`; `NoopPaymentProvider` throws
+`PROVIDER_NOT_CONFIGURED` until then) must meet these rules before a webhook
+route is registered:
 
-```typescript
-// api/src/services/payment.service.ts
-verifyWebhook(rawBody: string, signature: string): boolean {
-  // Paddle-Signature header contains ts= and h1= components
-  // 1. Reject if ts is older than 5 minutes (replay window bound)
-  // 2. Verify HMAC-SHA256 of `${ts}:${rawBody}` with PADDLE_WEBHOOK_SECRET
-  //    using a constant-time comparison
-}
-```
-
-- **Production:** Signature verification is mandatory — config validation
-  refuses to start when `PADDLE_WEBHOOK_SECRET` is empty and
-  `NODE_ENV=production` (`api/src/config.ts`)
-- **Freshness:** Signatures with a `ts` older than 5 minutes are rejected,
-  bounding the replay window of a captured webhook
-- **Development:** Skipped when `PADDLE_WEBHOOK_SECRET` is empty
-- **Idempotent:** Webhook events are processed idempotently (safe to replay)
+- **Mandatory:** the signature is verified over the exact raw body with a
+  constant-time comparison; an unsigned or unverifiable event is never acted on,
+  in any environment
+- **Freshness:** a signature older than 5 minutes is rejected, bounding the
+  replay window of a captured webhook
+- **Idempotent:** the provider event id is the unique key of the `paymentEvents`
+  collection, so a replayed event changes nothing
 
 ### WebSocket Authentication
 
@@ -404,22 +431,64 @@ new WebSocket(`${WS_URL}/ws`, ["vie-auth", accessToken]);
 
 ### Admin API Key
 
-`x-admin-key` guarded routes (`DELETE /api/admin/users/:id[?immediate=true]`, `/api/admin/queue/*`, `DELETE /api/admin/videos/:youtubeId`)
-compare the header against `ADMIN_API_KEY` with `crypto.timingSafeEqual`
-(`api/src/utils/admin-auth.ts`) — same constant-time pattern as
-`isValidInternalSecret`.
+Every `/api/admin/*` route (`DELETE /api/admin/users/:id[?immediate=true]`, `/api/admin/queue/*`,
+`DELETE /api/admin/videos/:youtubeId`) is guarded by `fastify.requireAdmin(permission)`
+(`api/src/plugins/admin-auth.ts`), which needs the shared key **and** resolves who is acting:
+
+1. `x-admin-key` is compared against `ADMIN_API_KEY` with `crypto.timingSafeEqual`
+   (`api/src/utils/admin-auth.ts`), the same constant-time pattern as `isValidInternalSecret`. No key, `401`.
+2. **A signed `x-admin-actor` header** (`<userId>.<unixTs>.<hex hmac>`, sent by vie-admin for every call it
+   makes for a named admin) makes the request that user's. The HMAC-SHA256 is keyed on `ADMIN_SESSION_SECRET`
+   and covers `actor|METHOD|request-target|userId|unixTs|sha256(exact request body)`, where the request-target
+   is the raw path plus query string exactly as it is sent (vie-admin signs the bytes it puts on the wire;
+   vie-api checks `req.method` and `req.raw.url`). The header is therefore good for one request only: not
+   for another method, route, query string or body, and not for the same request spelled differently
+   (`/api/%61dmin/...`, an absolute-form target, a doubled slash all change the target and fail). The body is
+   hashed whenever a valid key and an actor header arrive, whatever the URL looks like, and a request that
+   carries a body that was not hashed is refused. It is compared in constant time and accepted for five
+   minutes either way of now. Anything malformed, tampered, stale or signed with another secret is `401`
+   (the signature is checked before the age). A valid header is still re-checked against the database
+   (`UserRepository.hasPermission`): an admin demoted after vie-admin signed it gets `403`.
+   `request.adminActor` is `{ kind: 'user', userId }`; the audit rows and deletion origins name that user.
+3. **No actor header** is the shared machine key acting alone: it passes only `READ_PERMISSIONS` and gets
+   `403` on every mutation. A client-supplied `x-admin-id` is no longer read anywhere.
+
+**Single use for mutations.** The signature of every non-GET request is recorded in Redis with
+`SET vie:api:admin-actor-sig:<signature> 1 NX EX <ttl>` (`AdminReplayGuard`); a second request carrying it is
+`401`. The key lives as long as the header could still pass the age check (`unixTs + 300 - now`, at most about
+ten minutes for a header stamped in the future), not a flat 300 s, so no window is left in which a recorded
+signature is forgotten but still accepted. When Redis is down the guard fails closed: the mutation is
+refused with `503` rather than let through, since admin mutations are rare and a replayed credit grant is
+money. Reads are not recorded; repeating a read changes nothing. Before this, a header signed over an empty
+body (a read) could be replayed onto `DELETE /api/admin/users/:id?immediate=true`; that is what the
+method and target binding closes.
+
+The admin network path is loopback or the SSH tunnel (Caddy `404`s `/api/admin/*` publicly). The format is
+pinned by shared test vectors (`packages/types/test-vectors/admin-auth.json`: a GET, a GET with an encoded
+query string, POSTs and a DELETE with bodies) that both vie-admin's signer (Python) and vie-api's verifier
+(TypeScript) are tested against. Session tokens and actor headers share a secret, so both are
+domain-separated: the session HMAC covers `session|<payload>`, the actor HMAC `actor|...`, and neither can
+stand in for the other.
 
 ### Admin Panel Login (vie-admin :8002)
 
 `POST /auth/login` (`services/admin/src/routes/auth.py`) verifies email +
 bcrypt password against the `users` collection and returns a stateless
-HMAC-signed session token (keyed on `ADMIN_SESSION_SECRET`, 12 h TTL, accepted by
+HMAC-signed session token naming the user (`userId|email|expiry`, HMAC over
+`session|<payload>` keyed on `ADMIN_SESSION_SECRET`, 12 h TTL, accepted by
 `ApiKeyMiddleware`). Hardening:
 
 - **Session secret separate from the machine key** — `ADMIN_API_KEY` stays the
   machine credential (raw bearer on vie-admin, `X-Admin-Key` to vie-api) and is
   never an HMAC key: whoever holds it cannot mint a session for an arbitrary
-  email. A token HMAC-keyed on `ADMIN_API_KEY` is rejected.
+  user. A token HMAC-keyed on `ADMIN_API_KEY` is rejected. The machine key may
+  only `GET`; any other method is `403`.
+- **Sessions are re-validated** — the middleware checks on every request that
+  the token's user is still an active admin (roles rule below, `deletedAt`
+  unset), caching the verdict for 60 s per user. A demoted or soft-deleted
+  admin is `401` within a minute, not at token expiry; if the users collection
+  cannot be read the check fails closed (`503`). Logs name the user id, never
+  the email.
 
 - **Per-IP login throttle** — in-process sliding window, 5 attempts / 60 s,
   counted BEFORE the bcrypt verify (caps CPU-burn DoS as well as brute
@@ -430,17 +499,123 @@ HMAC-signed session token (keyed on `ADMIN_SESSION_SECRET`, 12 h TTL, accepted b
   unauthenticatable; they still burn a bcrypt verify against a dummy hash so
   timing parity is preserved.
 
-Trade-offs, by design for the direct-port deployment: session tokens are
-stateless and non-revocable within their 12 h TTL (only rotating
-`ADMIN_SESSION_SECRET` kills live sessions — it logs every admin out), and the
-throttle keys on the direct client IP (not proxy-header-aware).
+Trade-offs, by design for the direct-port deployment: a demotion takes up to 60 s
+to reach a live session (rotating `ADMIN_SESSION_SECRET` kills every session at
+once and logs every admin out; recreate vie-api too, it verifies the actor
+header with the same value), and the throttle keys on the direct client IP (not
+proxy-header-aware).
+
+### Roles and Permissions
+
+`users.roles` is an array of roles (`'admin'` today; the shape leaves room for a
+read-only `'support'` role) and `users.roleSource` says where it came from
+(`env` = reconciled from `ADMIN_EMAILS` at boot, `granted` = set by an admin or a
+migration). Routes name a **permission**, never a role; the role-to-permission map
+is `ROLE_PERMISSIONS` in `packages/types/src/roles.ts`, and
+`UserRepository.hasPermission(userId, permission)` answers it. A malformed id, an
+unknown user and a soft-deleted account all answer `false`. `roles` is
+authoritative whenever it is an array (even empty); only a user with **no**
+`roles` array and a legacy `role: 'admin'` reads as an admin (`effectiveRoles`),
+until the billing migration unsets the legacy field. Demoting writes
+`roles: []` and unsets `role`, so a leftover legacy value never revives access.
+
+| Permission | Allows | `admin` | Machine key (`ADMIN_API_KEY`, no actor) |
+| --- | --- | :---: | :---: |
+| `billing:read` | read an account, its lots, holds and ledger | yes | yes |
+| `audit:read` | read the `adminAudit` log | yes | yes |
+| `queue:read` | `GET /api/admin/queue/stats`, `/dlq` | yes | yes |
+| `billing:grant` | grant credit minutes, adjust balances, recurring grants | yes | no |
+| `plan:set` | set a manual plan | yes | no |
+| `caps:set` | per-account caps and block | yes | no |
+| `users:delete` | `DELETE /api/admin/users/:id` | yes | no |
+| `videos:purge` | `DELETE /api/admin/videos/:youtubeId` | yes | no |
+| `queue:replay` | `POST /api/admin/queue/replay` | yes | no |
+| `alerts:write` | change alert thresholds | yes | no |
+| `roles:manage` | grant or revoke roles | yes | no |
+| `cold:run` | `cold` benchmark runs on `POST /api/videos` (`UserRepository.mayRunCold`, with the eval account) | yes | no |
+
+The machine key passes only `READ_PERMISSIONS` (`billing:read`, `audit:read`,
+`queue:read`); every mutation needs a named human actor. `fastify.requireAdmin(permission)`
+enforces this matrix on every `/api/admin/*` route (see "Admin API Key" above), and
+`cold:run` is enforced through `mayRunCold`. vie-admin applies the same admin rule
+(`src/roles.py`) at login and on every session request; the two implementations are
+tested against shared cases (`packages/types/test-vectors/admin-auth.json`).
+
+**Authorization matrices.** Both services test every admin route, enumerated from the
+running app rather than listed by hand, so a route added without a guard fails the day it
+lands. vie-api (`api/src/routes/admin/__tests__/authz.matrix.test.ts`) collects routes as
+Fastify registers them and checks that each declares `requireAdmin(<permission>)`, that GET
+routes use read permissions and mutations never do, and then: no credentials, a wrong key
+or an actor header without the key is `401`; the shared key on a mutation is `403`; a signed
+admin passes; a demoted admin is `403`; a stale header is `401`. It also pins the request
+binding on every route: a header signed for a GET, for another route, with a query string
+added or with a different body is `401`; a used signature is `401`; an unavailable replay
+guard is `503` on every mutation; and `/api/%61dmin/...`, `/api//admin/...` and a raw
+absolute-form request target (sent over a real socket, since `inject` would normalise it)
+never get past the guard with a signature that covers an empty body. vie-admin
+(`services/admin/tests/test_authz_matrix.py`) enumerates the app's OpenAPI paths: no token,
+a wrong key, a non-admin session and a soft-deleted admin's session are `401` everywhere,
+the machine key is `403` on every non-GET, every non-GET route depends on
+`current_user_actor` (so none can forget to name the admin), and the open paths are pinned to
+`/health`, `/auth/login` and the SPA shell.
+
+**Boot seeding (`ADMIN_EMAILS`).** vie-api reconciles the comma-separated
+`ADMIN_EMAILS` list with the `users` collection on every boot
+(`services/admin-seed.service.ts`): listed **existing** accounts are promoted
+(`roleSource: 'env'`), `env` admins whose email left the list are demoted,
+`granted` admins and legacy `role: 'admin'` users (read as `granted`) are never
+touched, and users are never created from the list. The reconcile refuses, changing
+nothing, if it would leave no active admin, and an empty list is a no-op, so a
+missing env row cannot lock anyone out. The shared demo account and soft-deleted
+accounts are never promoted. Emails are matched ignoring case and never logged in
+full. Every change writes an audit row with actor `system:boot`. Known limits, accepted
+while the stack is one host: with two vie-api replicas booting together each writes its own
+audit rows for the same change, and an `env` admin who leaves the list is demoted with
+`roles: []`, which would also drop any other role (a future `support`) they hold; revisit
+both before running a second replica or adding a second role.
+
+**Admin audit trail.** Every admin mutation writes one append-only `adminAudit`
+row (`AuditService.record`): actor, action, target, a before/after snapshot,
+reason, request id and client ip. Today that covers admin user deletion (an audit
+row at request time for the 30-day soft delete too), the global video purge, DLQ
+replay, the billing mutations, alert threshold changes (`alerts.config.set`), a user
+undoing a deletion an admin scheduled (`users.delete.cancel`, actor the user) and the
+boot role changes above. `users.delete` and `videos.purge` rows carry a `before`
+snapshot (the account's roles, tier and deletion state without its email; the video's
+summary ids and whether it was shared). The actor is the admin the signed
+`x-admin-actor` header names (`system:boot` for boot seeding); `system:admin-key` is
+the shared key acting alone, which can only read and so writes no audit rows. The mutation has already happened when the row is
+written, so a failed audit insert is logged at `error` and never turns the request
+into a failure. Rows hold no secrets and no target email.
+
+The row's `requestId` is the id vie-admin generated for the call and forwards as
+`X-Request-ID`, so one id follows a click from vie-admin's log to vie-api's and the
+audit row. The row's `ip` is the address vie-api sees, which is vie-admin's container
+or the tunnel, not the operator's browser: the operator is the `actorId`, and no
+client-ip header is trusted because it would be unsigned.
+
+**Guard rails on the admin account itself.** Deleting an account that holds the admin
+role is refused with `409 LAST_ADMIN` when it is the last active admin (soft-deleted
+accounts do not count); an admin may delete their own account only while another
+active admin remains. The same rule guards a user deleting their own account through
+`DELETE /api/users/me`, so the last admin cannot lock the panel out by self-service
+erasure either.
+
+**Reusing an `Idempotency-Key`.** The key makes a retry of the same request a no-op,
+and the same key with a different request (another body, plan or user) is refused
+with `422 IDEMPOTENCY_KEY_REUSED` instead of silently returning the first outcome.
+The request is compared by a hash stored on the audit row (never exposed in the
+audit view).
 
 ### Dev-Default Secret Refusal
 
 `api/src/config.ts` refuses to start in production when `JWT_SECRET`,
 `JWT_REFRESH_SECRET`, `INTERNAL_SECRET`, or `ADMIN_API_KEY` still equal any
 well-known dev placeholder (config defaults, `.env.example` values, or
-docker-compose fallbacks).
+docker-compose fallbacks). `ADMIN_SESSION_SECRET` (which vie-api uses to verify the
+actor header) also has to be at least 32 characters and differ from
+`ADMIN_API_KEY` in production, the same rules as vie-admin's; the refusal names the
+variable, never its value.
 
 vie-admin does the same from its lifespan (`validate_secrets()` in
 `services/admin/src/config.py`): outside a dev `ENVIRONMENT` (`""`,
@@ -541,11 +716,9 @@ The summarizer logs a warning at startup if `INTERNAL_SECRET` is using the defau
 | `JWT_REFRESH_SECRET`   | vie-api               | `openssl rand -base64 32` |
 | `ANTHROPIC_API_KEY`    | summarizer, assistant | Anthropic Console         |
 | `OPENAI_API_KEY`       | summarizer, assistant | OpenAI Platform           |
-| `PADDLE_WEBHOOK_SECRET`| vie-api               | Paddle Dashboard          |
-| `PADDLE_API_KEY`       | vie-api (future)      | Paddle Dashboard          |
 | `INTERNAL_SECRET`      | service-to-service    | `openssl rand -base64 32` |
 | `ADMIN_API_KEY`        | vie-api, vie-admin    | `openssl rand -hex 32`    |
-| `ADMIN_SESSION_SECRET` | vie-admin only        | `openssl rand -hex 32` (≠ `ADMIN_API_KEY`) |
+| `ADMIN_SESSION_SECRET` | vie-admin, vie-api (same value) | `openssl rand -hex 32` (≠ `ADMIN_API_KEY`) |
 
 ### Production Setup
 
@@ -570,7 +743,7 @@ Before deploying:
 
 - [ ] All secrets in environment variables (not hardcoded)
 - [ ] JWT_SECRET and JWT_REFRESH_SECRET are different
-- [ ] ADMIN_SESSION_SECRET and ADMIN_API_KEY are different (vie-admin refuses to start otherwise)
+- [ ] ADMIN_SESSION_SECRET and ADMIN_API_KEY are different (vie-admin and vie-api refuse to start otherwise), and vie-api and vie-admin hold the same ADMIN_SESSION_SECRET
 - [ ] Rate limiting enabled on all routes
 - [ ] CORS configured for specific origins (not `*`)
 - [ ] Password hashing uses bcrypt with cost ≥ 10

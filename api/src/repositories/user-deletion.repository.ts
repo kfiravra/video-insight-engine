@@ -19,6 +19,17 @@ export interface DeletionCounts {
 export type DeletionInitiator = 'self' | 'admin' | 'scheduler';
 
 /**
+ * Who asked for a soft delete. Stored on the user until the scheduler runs the
+ * cascade, so the `userDeletions` row can name the admin instead of the
+ * scheduler. Holds no PII: `adminId` is an operator id, never an email.
+ */
+export interface DeletionOrigin {
+  initiatedBy: DeletionInitiator;
+  adminId: string | null;
+  reason: string | null;
+}
+
+/**
  * Audit row for a completed account deletion. Retained indefinitely with
  * **no PII**:
  *  - `emailHash` proves the cascade ran for a given email without storing it.
@@ -49,6 +60,8 @@ export interface CreateDeletionAuditData {
   counts: DeletionCounts;
   startedAt: Date;
   completedAt: Date;
+  /** Measured on a monotonic clock; falls back to the wall-clock difference, floored at 0. */
+  durationMs?: number;
   warnings?: string[];
 }
 
@@ -69,7 +82,7 @@ export class UserDeletionRepository {
       counts: data.counts,
       startedAt: data.startedAt,
       completedAt: data.completedAt,
-      durationMs: data.completedAt.getTime() - data.startedAt.getTime(),
+      durationMs: data.durationMs ?? Math.max(0, data.completedAt.getTime() - data.startedAt.getTime()),
       warnings: data.warnings && data.warnings.length > 0 ? data.warnings : undefined,
     };
     const result = await this.collection.insertOne(doc as UserDeletionDocument);

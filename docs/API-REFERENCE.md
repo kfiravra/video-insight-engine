@@ -371,13 +371,17 @@ Get video with summary.
 
 The same `sourceLanguage` block is included on the public share endpoint (`GET /share/:slug`) and is consumed by `apps/web/src/api/share.ts` + `apps/web/src/api/videos.ts`.
 
+`updateAvailable: true` is present when the summary is `completed` and stamped with an older `pipelineVersion` than the current one: the copy is served as it is, and the UI offers "update to latest version" (`POST /videos` with `updateToLatest: true`). Absent otherwise (never `false` or `null`), including for an unstamped (pre-stamping) summary, a summary still running, and always for the shared demo account, which may not pay for an update.
+
 ---
 
 ### POST /videos
 
 Submit YouTube URL for summarization.
 
-**Demo account:** `403 DEMO_RESTRICTED` when the shared demo account sets `bypassCache: true`, `cold: true`, or `providers`. A plain submit is allowed.
+**Demo account:** `403 DEMO_RESTRICTED` when the shared demo account sets `bypassCache: true`, `updateToLatest: true`, `cold: true`, or `providers`. A plain submit is allowed.
+
+**Blocked account:** `403 ACCOUNT_BLOCKED` on every submit, a video already in the library and an idempotency replay included. The library stays readable (`GET /videos`, `GET /videos/:id`, `GET /folders`, a completed video's stream).
 
 **Request:**
 
@@ -386,11 +390,24 @@ Submit YouTube URL for summarization.
   "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
   "folderId": "507f1f77bcf86cd799439013",
   "bypassCache": false,
+  "updateToLatest": false,
   "cold": false
 }
 ```
 
 `bypassCache` (optional) starts a fresh run as a new version row (see below).
+`updateToLatest` (optional, default `false`) moves the user's copy, when an older
+pipeline wrote it, to the current version exactly as a new video would get it: the
+normal flow at the current `dedupKey`, with the user's existing entry re-pointed at the
+resulting row (same `video.id`, no second entry). A completed current version answers
+`cached: true` (free), a running one `attached: true` (free), none starts a run that is
+held and settled like any new video; a refused account gets the ledger's 402 / 422 /
+429 only when a run would happen. The old row is never touched, and if the run fails
+the entry goes back to the copy it left (`updateAvailable: true` again). On a current copy it is
+a plain free serve. It skips the idempotency gate, so a plain submit moments earlier
+does not answer it as a `duplicate`. Without it a copy the user already has is never
+regenerated: it is served free with `updateAvailable: true` (see
+[IDEMPOTENCY.md](./IDEMPOTENCY.md#when-to-bump-pipeline_version)).
 `cold` (optional, benchmark-only) also marks the row `coldMedia: true` so the
 summarizer skips its S3 transcript + scene-frame caches; it implies
 `bypassCache` and is allowed only for admin and eval accounts (others get
@@ -405,9 +422,42 @@ summarizer skips its S3 transcript + scene-frame caches; it implies
    the user's library entry at it, publish the job, return `status: pending` with
    `newVersion: true`. A user row is promoted to `isLatest` only when it completes; an
    eval row never is.
-3. Otherwise check `videoSummaryCache` for the served (`isLatest`) summary
-4. If **HIT**: create `userVideo` reference, return immediately
-5. If **MISS**: create cache entry, publish job, return with `status: pending`
+3. Otherwise, the user already has the video (in this folder, or anywhere when no
+   `folderId` is sent): serve it free with `alreadyExists: true`, adding
+   `updateAvailable: true` when an older pipeline wrote it. With `updateToLatest`
+   such a copy goes through steps 5–7 instead, re-pointing that entry.
+4. A `folderId` where the user does not have the video, but they have a completed
+   copy elsewhere: when the current version's row is not completed or running, the
+   new entry points at that copy's row instead (free, `cached: true`,
+   `updateAvailable` when stale), so filing it never forces a run.
+5. Otherwise check `videoSummaryCache` for the shared summary of this version
+6. If **HIT**: create (or, for an update, re-point) the `userVideo`, return
+   immediately. A shared row an older pipeline wrote under this version's key is
+   regenerated for a user who never had the video or is updating (a new video to
+   them, charged) and served as is, with `updateAvailable: true`, to one who
+   already has it.
+7. If **MISS**: create cache entry, publish job, return with `status: pending`
+
+**Response (201) - Already in the library:**
+
+```json
+{
+  "video": {
+    "id": "507f1f77bcf86cd799439014",
+    "videoSummaryId": "507f1f77bcf86cd799439020",
+    "youtubeId": "dQw4w9WgXcQ",
+    "status": "completed",
+    "title": "React Hooks Tutorial"
+  },
+  "cached": true,
+  "alreadyExists": true,
+  "updateAvailable": true
+}
+```
+
+`updateAvailable` is present only as `true`, only for a copy an older pipeline wrote,
+and never for the shared demo account. An idempotency replay
+(`200`, `{ video, cached: true, duplicate: true }`) carries it on the same terms.
 
 **Response (201) - Cache Hit:**
 
@@ -438,24 +488,30 @@ summarizer skips its S3 transcript + scene-frame caches; it implies
 }
 ```
 
-**Response (429) - Daily Cost Limit Reached:**
+**Response (402) - Not Enough Minutes:**
 
-The handler atomically reserves an estimated cost against the user's daily cap
-(`COST_LIMITS_PER_TIER`) before publishing the job. If the reservation pushes
-the user past the cap, the increment is refunded and the request fails:
+Before publishing the job the handler quotes the video against the account's
+minutes (free video, plan minutes, credit lots) and holds them. If they cannot
+cover it and nothing is cached or in flight to serve for free, the request
+fails with the numbers the UI shows:
 
 ```json
 {
-  "error": "DAILY_LIMIT_REACHED",
-  "message": "You've reached your daily cost limit ($2.00). Resets at midnight UTC.",
-  "resetAt": "2026-05-15T00:00:00.000Z",
-  "limitUsd": 2
+  "error": "INSUFFICIENT_MINUTES",
+  "message": "This video needs 45 minutes; 20 available",
+  "statusCode": 402,
+  "needed": 45,
+  "available": 20
 }
 ```
 
-Cache hits refund the reservation immediately. Real spend is reconciled from
-`llm_usage` when the pipeline reaches a terminal status (see
-[Per-User Cost Model](./llm-cost-model.md)).
+The other refusals are `422 VIDEO_TOO_LONG_FOR_PLAN` (`maxMinutes`),
+`403 ACCOUNT_BLOCKED`, `429 TOO_MANY_RUNS` (`maxConcurrent`) and
+`METADATA_UNAVAILABLE` when the video's length cannot be read; full table in
+[ERROR-HANDLING.md](./ERROR-HANDLING.md#minutes-gate). A cached or attached
+video gives its hold back at once; a completed run is debited from the hold
+when the pipeline reaches a terminal status, a failed one released. There is
+no per-user dollar cap.
 
 ---
 
@@ -572,9 +628,25 @@ Import a playlist, creating a folder and adding all videos.
   "totalVideos": 15,
   "cachedCount": 5,
   "processingCount": 10,
-  "failedCount": 0
+  "failedCount": 1,
+  "failedVideos": [
+    { "youtubeId": "abcdefghijk", "title": "Part 2", "position": 2, "error": "INSUFFICIENT_MINUTES" }
+  ],
+  "billing": { "neededMinutes": 340, "availableMinutes": 120, "freeVideoAvailable": false }
 }
 ```
+
+- `failedVideos[].error` is always an error code (`INSUFFICIENT_MINUTES`,
+  `VIDEO_TOO_LONG_FOR_PLAN`, `METADATA_UNAVAILABLE`, …; `INTERNAL_ERROR` for
+  anything unexpected, which the API logs), never a raw message.
+- `folder` is `null` when the import created a folder and no item landed in it
+  (every item refused or failed): the empty folder is removed again. A folder
+  the caller passed as `folderId` is never removed.
+- Items are admitted in order and the import stops at the first one the
+  minutes cannot cover — except a video only paid minutes could pay for while
+  the free video is still open: a later short item can still take the free
+  video, so that refusal does not stop the import. Details in
+  [ERROR-HANDLING.md](./ERROR-HANDLING.md#minutes-gate).
 
 ---
 
@@ -763,65 +835,7 @@ Override the detected classification for a video. Triggers re-classification thr
 
 ## Payments
 
-### POST /payments/webhook
-
-Paddle webhook handler. Verifies signature in production.
-
-**Headers:** `Paddle-Signature` or `X-Paddle-Signature`
-
-**Response (200):**
-
-```json
-{
-  "received": true
-}
-```
-
-**Handled events:**
-- `subscription.created` — set tier to `pro` (the webhook only ever sets `pro`; `team` is not granted by any payment path)
-- `subscription.updated` — update tier
-- `subscription.cancelled` — schedule downgrade
-- `subscription.past_due` — grace period
-
----
-
-### GET /payments/checkout
-
-Generate Paddle checkout URL. Auth required.
-
-**Rate Limit:** 10 per hour
-
-**Query:** `?tier=pro|team`
-
-**Response (200):**
-
-```json
-{
-  "checkoutUrl": "https://checkout.paddle.com/..."
-}
-```
-
----
-
-### GET /payments/tier
-
-Get current user tier and limits. Auth required.
-
-**Rate Limit:** 60 per minute
-
-**Response (200):**
-
-```json
-{
-  "tier": "free",
-  "limits": {
-    "videosPerDay": 3,
-    "chatPerOutput": 5,
-    "shareEnabled": true,
-    "exportEnabled": false
-  }
-}
-```
+**Planned: Paddle Billing adapter.** No payment endpoint exists today. The Paddle Classic stub (`POST /api/payments/webhook`, `GET /api/payments/checkout`, `GET /api/payments/tier`) was removed: its webhook could never match a user, so it could not change anyone's plan, and nothing in the web app called it. The code now stops at an adapter interface, `PaymentProviderAdapter` in `api/src/services/billing/payment-provider.ts` (`createCheckout`, `createPortal`, `verifyWebhook`, `parseEvent`), whose only implementation is `NoopPaymentProvider`; every method throws `PROVIDER_NOT_CONFIGURED` (HTTP 501). Nothing calls it yet. The checkout, portal and webhook routes arrive with the provider adapter in P4 of the billing-roles task, and this section is then rewritten.
 
 ---
 
@@ -829,34 +843,53 @@ Get current user tier and limits. Auth required.
 
 ### GET /users/me/usage
 
-Today's LLM cost spend, remaining headroom, and the next UTC midnight reset.
-Used by the in-app usage tile and `DailyLimitCallout`.
+The signed-in user's **minutes**: plan, the free video, plan minutes, credit
+lots and runs in flight. It never carries a dollar amount. The web usage tile
+and the minutes callout read it. Auth required. Serves `BillingService.summary`,
+so a user who has no billing account yet gets an empty free account (the row is
+created on this first read).
 
-Auth required (resolves the caller's tier).
-
-**Response (200):**
+**Response (200):** the `UsageSummary` type in `packages/types/src/billing.ts`.
 
 ```json
 {
-  "tier": "free",
-  "today": {
-    "date": "2026-05-14",
-    "rawUsd": 0.42,
-    "creditAdjustmentUsd": 0,
-    "effectiveUsd": 0.42,
-    "videoCount": 3
+  "plan": { "id": "pro", "periodEnd": "2027-10-28T10:00:00.000Z" },
+  "free": { "available": true, "nextFreeAt": null, "maxVideoMinutes": 30, "perWindow": 1 },
+  "planMinutes": { "granted": 600, "used": 90, "remaining": 510, "cycleEnd": "2026-11-28T10:00:00.000Z" },
+  "credits": {
+    "available": 150,
+    "lots": [
+      { "minutes": 120, "expiresAt": "2026-12-01T10:00:00.000Z" },
+      { "minutes": 30, "expiresAt": null }
+    ]
   },
-  "limitUsd": 2,
-  "remainingUsd": 1.58,
-  "resetAt": "2026-05-15T00:00:00.000Z"
+  "holds": [{ "youtubeId": "dQw4w9WgXcQ", "minutes": 12 }],
+  "maxVideoMinutes": 180,
+  "blocked": false
 }
 ```
 
-- `effectiveUsd = rawUsd + creditAdjustmentUsd`. Admin credits are stored as
-  negative `creditAdjustmentUsd`, so a grant lowers `effectiveUsd`.
-- `limitUsd: -1` (or `0`) means the tier is unlimited; `remainingUsd` will be
-  `null` in that case so the wire format stays JSON-honest (no `Infinity`).
-- `resetAt` is always the next UTC midnight ISO timestamp.
+- `plan.id` is `free` or `pro`. `periodEnd` (the end of the Pro term) is null for `free`.
+- `free` is the free video (one per rolling 24 hours, at most `maxVideoMinutes`
+  long). While `available` is false, `nextFreeAt` is when the next one opens.
+  `perWindow` is how many free videos the account gets per rolling 24 hours
+  after admin caps: 1 by default, 0 when an admin turned the free video off
+  (then `available` is false and `nextFreeAt` null for good).
+- `planMinutes` is the current monthly cycle: `remaining = granted - used`. All
+  zeros on `free`.
+- `credits.lots` lists only spendable lots (not expired, minutes left); `available`
+  is their sum. `expiresAt` is null for a lot that never expires.
+- `holds` are the runs in flight: their minutes are already taken out of the
+  buckets above and come back if the run fails or is served from cache.
+- `maxVideoMinutes` is the longest video the account can submit now: 180 with
+  any plan or credit minutes, else the free limit. `blocked` is the admin's
+  per-account kill switch.
+- Every number is a whole count of minutes or runs, every date an ISO string.
+  A test walks the payload and fails on any key matching `usd|cost|price|limit$`.
+
+The legacy dollar summary (`?view=usd`) was removed with the dollar gate
+(billing-roles P3.2): query parameters are ignored and the minutes summary
+above is always returned.
 
 ---
 
@@ -896,13 +929,16 @@ All errors follow this format:
 
 Common error codes:
 
-- `400` - Bad Request (validation), `INVALID_CATEGORY`, `INVALID_WEBHOOK`
+- `400` - Bad Request (validation), `INVALID_CATEGORY`
 - `401` - Unauthorized
-- `403` - Forbidden: `REGISTRATION_CLOSED`, `DEMO_DISABLED`, `DEMO_RESTRICTED` (the shared demo account may not mutate the library or force paid runs; see SECURITY.md), `COLD_RUN_FORBIDDEN`, `ACCOUNT_DELETION_PENDING`
+- `402` - Payment Required: `INSUFFICIENT_MINUTES` (the minutes cannot cover the video; also returns `needed`, `available`, `nextFreeAt?`)
+- `403` - Forbidden: `REGISTRATION_CLOSED`, `DEMO_DISABLED`, `DEMO_RESTRICTED` (the shared demo account may not mutate the library or force paid runs; see SECURITY.md), `COLD_RUN_FORBIDDEN`, `ACCOUNT_DELETION_PENDING`, `ACCOUNT_BLOCKED` (an admin blocked the account's submits)
 - `404` - Not Found: `SHARE_NOT_FOUND`
 - `409` - Conflict: `ALREADY_SHARED`
-- `429` - Rate Limited: `RATE_LIMITED`, `DAILY_LIMIT_REACHED` (per-user daily cost cap; also returns `resetAt` + `limitUsd`)
-- `500` - Internal Server Error, `PAYMENT_ERROR`
+- `422` - Unprocessable: `VIDEO_TOO_LONG_FOR_PLAN` (also returns `maxMinutes`)
+- `429` - Rate Limited: `RATE_LIMITED` (carries `retryAfterSec`, the whole seconds until the window reopens; also the shared submit burst limit: 20 submissions per user per hour across `POST /videos`, the assistant's generate route and playlist import), `TOO_MANY_RUNS` (an admin's cap on runs in flight; also returns `maxConcurrent`)
+- `500` - Internal Server Error
+- `501` - Not Implemented: `PROVIDER_NOT_CONFIGURED` (no payment provider; nothing returns it yet)
 - `503` - Service Unavailable: `SERVICE_UNAVAILABLE`, `QUEUE_PUBLISH_FAILED`
 
 ---
@@ -1150,15 +1186,15 @@ export async function websocketPlugin(fastify: FastifyInstance) {
 
 ---
 
-## Admin (x-admin-key)
+## Admin (x-admin-key + x-admin-actor)
 
-Static-key endpoints for operators; the admin panel proxies to them. `x-admin-id` is optional operator metadata written to the audit row (not auth).
+Operator endpoints; the admin panel proxies to them. Every call needs the shared `x-admin-key`. Mutations (`DELETE /api/admin/videos/:youtubeId`, `DELETE /api/admin/users/:id`, `POST /api/admin/queue/replay`) additionally need a signed `x-admin-actor` header naming the admin who acts: `<userId>.<unixTs>.<hex hmac-sha256(ADMIN_SESSION_SECRET, "actor|METHOD|request-target|userId|unixTs|sha256(body)")>`, valid for five minutes and for exactly one request: the signature covers the HTTP method, the raw request-target (path plus query string, as sent) and the exact body bytes, so it cannot be moved to another route, query or payload, and the signature of a non-GET request can be used once (a second use is `401`; with Redis down the mutation is refused `503 SERVICE_UNAVAILABLE`). vie-api re-checks the admin still holds the route's permission (`users:delete`, `videos:purge`, `queue:replay`). The shared key alone may only read (`GET /api/admin/queue/stats`, `/dlq`); on a mutation it is `403 ADMIN_PERMISSION_DENIED`. A missing/bad/stale/tampered/reused actor header is `401 UNAUTHORIZED`; a demoted admin is `403 ADMIN_PERMISSION_DENIED`. Details: [SECURITY.md](./SECURITY.md#admin-api-key). Each mutation also writes an `adminAudit` row naming that admin; see [DATA-MODELS.md](./DATA-MODELS.md#adminaudit). `x-admin-id` is no longer read.
 
 ### DELETE /api/admin/videos/:youtubeId
 
-Removes a video from every store for every user, in this order: summarizer purge (Qdrant `transcript_chunks` by `video_id`, S3 `videos/<id>/` prefix, Redis response + pipeline keys) → Mongo `userVideos`, `shareLikes`, `shareViews`, `agentNotes`, `idempotencyKeys`, then `videoSummaryCache` (all versions) → dispatch-guard keys → `videoDeletions` audit row. A failed purge aborts before any Mongo row is touched (idempotent; retry).
+Removes a video from every store for every user, in this order: summarizer purge (Qdrant `transcript_chunks` by `video_id`, S3 `videos/<id>/` prefix, Redis response + pipeline keys) → Mongo `userVideos`, `shareLikes`, `shareViews`, `agentNotes`, `idempotencyKeys`, then `videoSummaryCache` (all versions) → dispatch-guard keys → `videoDeletions` and `adminAudit` (`videos.purge`) audit rows. A failed purge aborts before any Mongo row is touched (idempotent; retry).
 
-Headers: `x-admin-key` (required), `x-admin-id` (optional, `[A-Za-z0-9._-]{1,64}`). Body (optional): `{ "reason": "..." }`.
+Headers: `x-admin-key` and `x-admin-actor` (both required; permission `videos:purge`). Body (optional, strict): `{ "reason": "..." }`, the reason trimmed and 1–500 characters; an unknown field or a blank reason is `400`. The audit row's `before` lists the summary ids the purge is about to delete and whether the video was shared.
 
 Response `200`:
 
@@ -1172,9 +1208,46 @@ Response `200`:
 }
 ```
 
-Errors: `401 UNAUTHORIZED`, `400 VALIDATION_ERROR` (bad id or `x-admin-id`), `429 RATE_LIMITED` (300/hour with a valid key, 30/hour otherwise, plus the global per-IP limit), `502 SUMMARIZER_PURGE_FAILED`. A `200` with `partial: true` means a Mongo step failed after the purge; `warnings` names it.
+Errors: `401 UNAUTHORIZED`, `403 ADMIN_PERMISSION_DENIED`, `400 VALIDATION_ERROR` (bad id), `429 RATE_LIMITED` (300/hour with a valid key, 30/hour otherwise, plus the global per-IP limit), `502 SUMMARIZER_PURGE_FAILED`. A `200` with `partial: true` means a Mongo step failed after the purge; `warnings` names it.
+
+### DELETE /api/admin/users/:id
+
+Deletes a user's account and every row that is theirs (cascade in [GDPR.md](./GDPR.md)): soft delete with a 30-day grace window by default, or at once with `?immediate=true`. Permission `users:delete`. Body (optional, strict): `{ "reason": "..." }` (trimmed, 1–500 characters). `202` for the scheduled delete, `200` for the immediate one. The audit row (`users.delete`) carries the admin, the reason and a `before` snapshot of the account (roles, role source, tier, deletion state; never the email).
+
+Errors: `401 UNAUTHORIZED`, `403 ADMIN_PERMISSION_DENIED`, `400 VALIDATION_ERROR` (malformed id, unknown field, blank reason), `404 NOT_FOUND`, `409 LAST_ADMIN` (the account holds the admin role and no other active admin would remain; an admin may delete their own account only while another active admin remains), `409 ACCOUNT_ALREADY_DELETED`.
 
 User-scope deletion (`DELETE /api/videos/:id`, JWT) is different: it removes only the caller's library row, their idempotency key and their own assistant notes for the video; the shared summary stays. User-account deletion is documented in [GDPR.md](./GDPR.md).
+
+### Minutes accounts: `/api/admin/billing/accounts/:userId`
+
+Admin view and controls over a user's minutes ledger (`BillingService`). Mutations take JSON bodies that are **strict** (an unknown field such as `adminId` is `400`) and need a `reason` of 1–500 characters (trimmed, required). Who acted is the admin in the signed `x-admin-actor`; ledger entries and the `adminAudit` row both carry that admin, the `reason`, and the same `auditId`, which every mutation returns. The ranges (minutes `1…100000`, caps, expiry in the future, `periodEnd` in the future) are enforced by the service and answer `400`.
+
+| Method | Path | Permission | Body / query |
+| --- | --- | --- | --- |
+| GET | `/accounts/:userId` | `billing:read` | query `ledgerLimit` (1–200, default 50), `ledgerBefore` (ISO) |
+| POST | `/accounts/:userId/plan` | `plan:set` | `{ planId: 'free' \| 'pro', periodEnd?, reason }` |
+| POST | `/accounts/:userId/credits` | `billing:grant` | `{ minutes, expiresAt?: ISO \| null, reason }` |
+| POST | `/accounts/:userId/caps` | `caps:set` | `{ maxVideoMinutes?, freeVideosPerDay?, maxConcurrent?, blocked?, reason }`, `null` clears a cap, at least one cap |
+| POST | `/accounts/:userId/adjust` | `billing:grant` | `{ bucket: 'plan' \| 'credit', minutes (signed, not 0), reason }` |
+| POST | `/accounts/:userId/recurring-grants` | `billing:grant` | `{ minutes, every: 'month', active, reason }` |
+| DELETE | `/accounts/:userId/recurring-grants/:grantId` | `billing:grant` | `{ reason }` |
+
+- `GET` returns `AccountDetail`: `{ account, lots, holds, ledger (newest first), recurringGrants }`. The shared machine key may read it; a user with no account yet gets a fresh free one.
+- A manual **Pro** plan grants the 600-minute allowance for the first monthly cycle of a 12-month term (or until `periodEnd`); **free** stops plan minutes now. Credit lots never expire unless `expiresAt` is given. A negative `adjust` is refused when it would take a bucket below zero.
+- Every mutation answers `{ before, after, auditId, … }` with `before`/`after` the account snapshot (`credits` adds `lotId`, `recurring-grants` adds `grantId`). A recurring grant is a row with a `nextRunAt` in the past; the repair job (P1.6) turns it into lots each month.
+- **Retrying safely:** send an `Idempotency-Key` header (8–128 characters of `A-Za-z0-9_-`, one per user action, e.g. per open dialog). The `auditId` is then derived from the key, the admin, the action and the target, so a repeated request replays the same ledger keys and changes nothing, answering the current state. Without the header every request is new.
+- **Reusing a key:** the same `Idempotency-Key` for a different request (another body, plan, scope or user) is `422 IDEMPOTENCY_KEY_REUSED`, not a silent replay of the first outcome. Use a new key per distinct action.
+- Errors: `401 UNAUTHORIZED` (no key, or a bad/stale/reused actor header), `403 ADMIN_PERMISSION_DENIED` (the shared key on a mutation, or an admin without the permission), `400 VALIDATION_ERROR` (shape, reason, ranges, malformed ids), `404 NOT_FOUND` (unknown user or grant), `409 ACCOUNT_BUSY` (the account stayed contended through every transaction retry; retry with the same key), `422 IDEMPOTENCY_KEY_REUSED`, `503` (replay protection unavailable).
+- The admin panel does not call these directly: vie-admin proxies them with the session admin's signed `x-admin-actor` (`POST /users/:id/grant-credit` → `…/credits`, `POST /billing/accounts/:id/{plan,caps,adjust,recurring-grants}`, `GET /audit`); see [SERVICE-ADMIN.md](./SERVICE-ADMIN.md#billing-actions-and-audit-billing-audit).
+- If the audit insert fails after the ledger committed, the request still succeeds and vie-api logs `admin_audit_write_failed` at error with the `auditId`; the ledger entries keep the actor and reason.
+
+### GET /api/admin/audit
+
+The admin action log, newest first. Needs `audit:read` (the shared key may read it). Query: `targetId` (a user's history is `?targetId=<userId>`), `actorId`, `limit` (1–200, default 50), `before` (cursor). Response `{ entries: AdminAuditView[], nextBefore: string | null }`; pass `nextBefore` as `before` for the next page, `null` means the last page. Treat the cursor as opaque: it is `<createdAt ISO>_<row id>` (rows are ordered by time then id, so rows written in the same millisecond are neither skipped nor repeated across pages); a bare ISO timestamp is still accepted. Each entry is `{ id, actorId, actorEmail?, action, targetType, targetId, before?, after?, reason?, requestId?, ip?, createdAt }`. Actions so far: `users.delete`, `videos.purge`, `queue.replay`, `roles.seed.promote`, `roles.seed.demote`, `billing.plan.set`, `billing.credits.grant`, `billing.caps.set`, `billing.adjust`, `billing.recurring.create`, `billing.recurring.delete`, `alerts.config.set`, `users.delete.cancel`.
+
+### POST /api/admin/alerts/config
+
+Replace the operator alert thresholds that vie-admin's evaluator reads (`llm_alert_config`, document `default`). Permission `alerts:write` (a named admin; the shared key is `403`). Body (strict): `{ "cost_threshold_usd": number >= 0, "daily_spike_multiplier": number >= 1, "failure_rate_threshold": 0..1, "reason": "1-500 characters" }`. Response `200`: `{ before, after, auditId }` with the three thresholds as they were and are now. The change writes an `alerts.config.set` audit row. The admin panel reaches it through vie-admin's `POST /alerts/config`, which signs the call with the session admin.
 
 ## HTTP Callback Integration
 
@@ -1355,6 +1428,12 @@ Progressive summarization via Server-Sent Events.
 The summarization pipeline uses SSE to stream results progressively, allowing the frontend to display content as it becomes available.
 
 **Endpoint:** `GET /api/videos/:videoSummaryId/stream`
+
+Opening the stream never starts a run of a **failed** video: the API answers
+one `{ "event": "error", "code": "VIDEO_FAILED", "message": … }` event (the
+row's stored error message, or "This video failed to process. Retry it to run
+it again.") and ends, and the summarizer only consumes for a failed row. A
+re-run costs minutes, so it goes through `POST /videos` (quoted and held).
 
 ---
 
@@ -1861,7 +1940,7 @@ older rows send the four fields only).
 - Validation (web `validateSynthesisComplete`, API `synthesisCompleteEventSchema`): the
   four optional hero fields and `final` are dropped individually when invalid
   (`.catch(undefined)`) — the event and the tldr / takeaways beside them are kept.
-- Every (re-)dispatch of a row (new version, retry, stale-version regen, stall)
+- Every (re-)dispatch of a row (new version, retry, stale-shared-row regen, stall)
   first `$unset`s its `synthesis`, so a previous run's `masterSummary` can't block
   this run's partial.
 

@@ -127,7 +127,7 @@ class WorkerRunner:
                     "worker.process_message",
                     videoSummaryId=payload.video_summary_id,
                     youtubeId=payload.youtube_id,
-                    tier=payload.tier,
+                    plan=payload.plan,
                 ):
                     await self._run_pipeline(payload)
             except Exception as exc:

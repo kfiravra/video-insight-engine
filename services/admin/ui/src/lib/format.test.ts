@@ -1,5 +1,19 @@
 import { describe, it, expect } from 'vitest';
-import { formatDateTime, formatDuration, timeAgo, formatCost, formatNumber } from './format';
+import { formatDateTime, formatDateTimeUtc, formatDuration, timeAgo, formatCost, formatNumber } from './format';
+
+describe('formatDateTimeUtc', () => {
+  it('should show the instant in UTC whatever the viewer\'s timezone is', () => {
+    expect(formatDateTimeUtc('2026-06-03T23:59:59.000Z')).toMatch(/^Jun 3, 2026, 11:59\sPM UTC$/);
+  });
+
+  it('should keep the UTC day for an end-of-day instant a UTC-minus zone would roll back', () => {
+    expect(formatDateTimeUtc('2026-12-31T23:59:59.000Z')).toContain('Dec 31, 2026');
+  });
+
+  it.each([null, undefined, '', 'not-a-date'])('should return "—" for %s', (value) => {
+    expect(formatDateTimeUtc(value)).toBe('—');
+  });
+});
 
 describe('formatDateTime', () => {
   it('should return "—" for null input', () => {
@@ -122,5 +136,19 @@ describe('formatUsageVolume', () => {
     const { formatUsageVolume } = await import('./format');
     expect(formatUsageVolume({ unit: 'tokens', tokens_in: 1200, tokens_out: 300 })).toBe('1,500');
     expect(formatUsageVolume({ tokens_in: 5, tokens_out: null })).toBe('5');
+  });
+});
+
+describe('shortId', () => {
+  it('should shorten a long id to its first six and last four characters', async () => {
+    const { shortId } = await import('./format');
+
+    expect(shortId('64f1a2b3c4d5e6f708192a3b')).toBe('64f1a2…2a3b');
+  });
+
+  it('should leave a short id as it is', async () => {
+    const { shortId } = await import('./format');
+
+    expect(shortId('abc123')).toBe('abc123');
   });
 });

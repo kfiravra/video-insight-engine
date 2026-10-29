@@ -6,7 +6,7 @@ const REQUEST_TIMEOUT_MS = 30000;
 class ApiError extends Error {
   status: number;
   code?: string;
-  /** Free-form details from the server (e.g. resetAt, limitUsd for 429). */
+  /** The error body: extra fields such as needed / available / nextFreeAt on a 402. */
   details?: Record<string, unknown>;
 
   constructor(

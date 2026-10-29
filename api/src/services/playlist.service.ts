@@ -1,4 +1,3 @@
-import { FastifyBaseLogger } from 'fastify';
 import { ObjectId } from 'mongodb';
 import { config } from '../config.js';
 import { extractPlaylistId } from '../utils/youtube.js';
@@ -11,9 +10,12 @@ import {
 import { VideoService } from './video.service.js';
 import { FolderService } from './folder.service.js';
 import { SummarizerClient, type ProviderConfig } from './summarizer-client.js';
-import { CostMonitorService } from './cost-monitor.service.js';
-import { DailyLimitReachedError } from '../utils/errors.js';
-import type { UserTier } from '@vie/types';
+import { LedgerItemImporter } from './playlist-items.js';
+import type { FastifyBaseLogger } from 'fastify';
+import type { LedgerEnforcement } from './billing/ledger-enforcement.js';
+import type { FailedVideoImport, ImportedVideo, ItemImporter, ItemOutcome } from './playlist-items.js';
+
+export type { FailedVideoImport } from './playlist-items.js';
 
 // Types for summarizer response
 interface SummarizerPlaylistVideo {
@@ -60,28 +62,17 @@ export interface PlaylistInfo {
   totalVideos: number;
 }
 
-export interface FailedVideoImport {
-  youtubeId: string;
-  title: string;
-  position: number;
-  error: string;
-}
-
 export interface PlaylistImportResult {
-  folder: { id: string; name: string };
-  videos: Array<{
-    id: string;
-    videoSummaryId: string;
-    youtubeId: string;
-    title: string | null;
-    status: string;
-    position: number;
-  }>;
+  /** The folder the videos went into; null when the import created one and nothing landed in it (I7). */
+  folder: { id: string; name: string } | null;
+  videos: ImportedVideo[];
   totalVideos: number;
   cachedCount: number;
   processingCount: number;
   failedCount: number;
   failedVideos: FailedVideoImport[];
+  /** The up-front quote ("needs 340 min, you have 120"). */
+  billing: { neededMinutes: number; availableMinutes: number; freeVideoAvailable: boolean };
 }
 
 const EXTRACT_TIMEOUT_MS = 30000; // 30 seconds for extraction
@@ -91,8 +82,9 @@ export class PlaylistService {
     private readonly videoService: VideoService,
     private readonly folderService: FolderService,
     private readonly summarizerClient: SummarizerClient,
+    // The minutes ledger decides every item (P3.1; the only gate since P3.2).
+    private readonly billingEnforcement: LedgerEnforcement,
     private readonly logger: FastifyBaseLogger,
-    private readonly costMonitorService?: CostMonitorService,
   ) {}
 
   /**
@@ -144,7 +136,6 @@ export class PlaylistService {
     folderId?: string,
     maxVideos = 100,
     providers?: ProviderConfig,
-    tier: UserTier = 'free'
   ): Promise<PlaylistImportResult> {
     const playlistId = extractPlaylistId(url);
     if (!playlistId) {
@@ -153,137 +144,90 @@ export class PlaylistService {
 
     // Extract playlist data
     const playlistData = await this.extractFromSummarizer(playlistId, maxVideos);
+    // Quote the whole playlist before anything is created; nothing affordable → refused here.
+    const plan = await this.billingEnforcement.planPlaylist(
+      userId,
+      playlistData.videos.map((v) => ({ youtubeId: v.video_id, durationSec: v.duration })),
+    );
+    const folder = await this.resolveFolder(userId, folderId, playlistData.title);
+    const importer = new LedgerItemImporter(
+      this.videoService,
+      this.billingEnforcement,
+      { userId, folderId: folder.id, providers, freeVideoAvailable: plan.quote.freeVideoAvailable },
+      plan.durationsSec,
+      this.logger,
+    );
+    const result = await this.importItems(importer, playlistData.videos);
+    const keptFolder = folderId || result.videos.length > 0 ? folder : await this.dropEmptyFolder(userId, folder);
+    return {
+      folder: keptFolder,
+      ...result,
+      totalVideos: playlistData.total_videos,
+      billing: {
+        neededMinutes: plan.quote.neededMinutes,
+        availableMinutes: plan.quote.availableMinutes,
+        freeVideoAvailable: plan.quote.freeVideoAvailable,
+      },
+    };
+  }
 
-    // Create folder if not provided
-    let folder: { id: string; name: string };
+  /**
+   * The import made a folder and no item landed in it (every item refused or
+   * failed): remove it again instead of leaving an empty folder behind (I7).
+   * Returns null when it is gone; a failed delete keeps (and returns) it.
+   */
+  private async dropEmptyFolder(userId: string, folder: { id: string; name: string }): Promise<{ id: string; name: string } | null> {
+    try {
+      await this.folderService.delete(userId, folder.id);
+      return null;
+    } catch (err) {
+      this.logger.warn({ err, userId, folderId: folder.id }, 'playlist_empty_folder_delete_failed');
+      return folder;
+    }
+  }
+
+  private async resolveFolder(userId: string, folderId: string | undefined, playlistTitle: string): Promise<{ id: string; name: string }> {
     if (folderId) {
       // Use existing folder - verify it exists
       try {
         const existingFolder = await this.folderService.getById(userId, folderId);
-        folder = { id: existingFolder.id, name: existingFolder.name };
+        return { id: existingFolder.id, name: existingFolder.name };
       } catch {
         throw new FolderNotFoundError();
       }
-    } else {
-      // Create new folder with playlist name
-      const folderName = this.sanitizeFolderName(playlistData.title);
-      const newFolder = await this.folderService.create({
-        userId,
-        name: folderName,
-      });
-      folder = { id: newFolder.id, name: newFolder.name };
     }
+    // Create new folder with playlist name
+    const newFolder = await this.folderService.create({ userId, name: this.sanitizeFolderName(playlistTitle) });
+    return { id: newFolder.id, name: newFolder.name };
+  }
 
-    // Process each video
-    const results: PlaylistImportResult['videos'] = [];
+  /**
+   * Items in playlist order. A refusal that later items cannot do better on
+   * (out of minutes, too many runs, blocked) stops the import there and
+   * records every later item with the same error, so the UI can say "stopped
+   * at video N" — the import admits a prefix. A later item already cached or
+   * running is still served (Q6).
+   */
+  private async importItems(
+    importer: ItemImporter,
+    items: SummarizerPlaylistVideo[],
+  ): Promise<Omit<PlaylistImportResult, 'folder' | 'totalVideos' | 'billing'>> {
+    const videos: ImportedVideo[] = [];
     const failedVideos: FailedVideoImport[] = [];
     let cachedCount = 0;
-    let processingCount = 0;
-
-    // Track whether the per-user cost cap stopped the import mid-loop. Subsequent
-    // videos are recorded as failed with a stable error so the UI can show a
-    // "stopped at video N because you hit your daily limit" message.
-    let limitReached = false;
-
-    for (const video of playlistData.videos) {
-      if (limitReached) {
-        failedVideos.push({
-          youtubeId: video.video_id,
-          title: video.title,
-          position: video.position,
-          error: 'DAILY_LIMIT_REACHED',
-        });
+    let stoppedWith: string | null = null;
+    for (const [index, item] of items.entries()) {
+      const outcome: ItemOutcome = stoppedWith ? await importer.skip(item, stoppedWith) : await importer.import(item, index);
+      if (outcome.kind === 'failed') {
+        failedVideos.push(outcome.failure);
+        if (outcome.stopsImport) stoppedWith = outcome.failure.error;
         continue;
       }
-
-      let reservation = null;
-      try {
-        const videoUrl = `https://www.youtube.com/watch?v=${video.video_id}`;
-
-        if (this.costMonitorService) {
-          reservation = await this.costMonitorService.reserveUserCost(userId, tier);
-        }
-
-        const result = await this.videoService.createVideo(
-          userId,
-          videoUrl,
-          { folderId: folder.id, bypassCache: false, providers, tier }
-        );
-
-        // Cached videos run no pipeline, so no llm_usage will land — refund.
-        // Attached videos (cross-user single-flight) are the same: this caller
-        // didn't trigger work. A failed refund must not fail the import — the
-        // video exists, and the catch below would refund a second time.
-        if ((result.cached || result.attached) && this.costMonitorService) {
-          await this.costMonitorService.refundReservation(reservation).catch((refundErr) => {
-            this.logger.warn(
-              { err: refundErr, userId, youtubeId: video.video_id },
-              'cached/attached-video refund failed during playlist import',
-            );
-          });
-        }
-
-        results.push({
-          id: result.video.id,
-          videoSummaryId: result.video.videoSummaryId,
-          youtubeId: video.video_id,
-          title: result.video.title ?? video.title,
-          status: result.video.status,
-          position: video.position,
-        });
-
-        if (result.cached) {
-          cachedCount++;
-        } else {
-          processingCount++;
-        }
-      } catch (err) {
-        if (this.costMonitorService && reservation) {
-          // A failed refund must not abort the loop — the remaining videos
-          // would never be processed and the whole import would 500.
-          await this.costMonitorService.refundReservation(reservation).catch((refundErr) => {
-            this.logger.warn(
-              { err: refundErr, userId, youtubeId: video.video_id },
-              'failed-video refund failed during playlist import',
-            );
-          });
-        }
-        const errorMessage = err instanceof Error ? err.message : String(err);
-
-        if (err instanceof DailyLimitReachedError) {
-          limitReached = true;
-          this.logger.info(
-            { userId, importedSoFar: results.length },
-            'Playlist import stopped at per-user cost cap',
-          );
-          failedVideos.push({
-            youtubeId: video.video_id,
-            title: video.title,
-            position: video.position,
-            error: 'DAILY_LIMIT_REACHED',
-          });
-          continue;
-        }
-
-        this.logger.warn({ youtubeId: video.video_id, error: errorMessage }, 'Failed to import video');
-        failedVideos.push({
-          youtubeId: video.video_id,
-          title: video.title,
-          position: video.position,
-          error: errorMessage,
-        });
-      }
+      videos.push(outcome.video);
+      if (outcome.cached) cachedCount++;
+      if (outcome.stopsImport) stoppedWith = outcome.stopsImport;
     }
-
-    return {
-      folder,
-      videos: results,
-      totalVideos: playlistData.total_videos,
-      cachedCount,
-      processingCount,
-      failedCount: failedVideos.length,
-      failedVideos,
-    };
+    return { videos, cachedCount, processingCount: videos.length - cachedCount, failedCount: failedVideos.length, failedVideos };
   }
 
   /**

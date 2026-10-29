@@ -8,7 +8,7 @@ const STRONG_ENV: Record<string, string> = {
   JWT_REFRESH_SECRET: 'unit-test-strong-refresh-secret-0123456789abcdef',
   INTERNAL_SECRET: 'unit-test-strong-internal-secret',
   ADMIN_API_KEY: 'unit-test-strong-admin-key',
-  PADDLE_WEBHOOK_SECRET: 'unit-test-paddle-webhook-secret',
+  ADMIN_SESSION_SECRET: 'unit-test-strong-admin-session-secret-0123456789abcdef',
 };
 
 // config.ts parses process.env at import time, so each scenario needs a fresh
@@ -69,27 +69,57 @@ describe('config env validation', () => {
       ).rejects.toThrow(/ADMIN_API_KEY/);
     });
 
+    it('should throw in production when ADMIN_SESSION_SECRET is the dev default', async () => {
+      await expect(
+        loadConfig({
+          NODE_ENV: 'production',
+          ADMIN_SESSION_SECRET: 'dev-admin-session-secret-change-me',
+        })
+      ).rejects.toThrow(/ADMIN_SESSION_SECRET/);
+    });
+
+    it('should throw in production when ADMIN_SESSION_SECRET is empty', async () => {
+      await expect(
+        loadConfig({ NODE_ENV: 'production', ADMIN_SESSION_SECRET: '' })
+      ).rejects.toThrow(/ADMIN_SESSION_SECRET/);
+    });
+
+    it('should throw in production when ADMIN_SESSION_SECRET is shorter than 32 characters', async () => {
+      await expect(
+        loadConfig({ NODE_ENV: 'production', ADMIN_SESSION_SECRET: 'x'.repeat(31) })
+      ).rejects.toThrow(/at least 32 characters/);
+    });
+
+    it('should throw in production when ADMIN_SESSION_SECRET equals ADMIN_API_KEY', async () => {
+      const shared = 'unit-test-one-value-used-for-both-0123456789abcdef';
+      await expect(
+        loadConfig({ NODE_ENV: 'production', ADMIN_API_KEY: shared, ADMIN_SESSION_SECRET: shared })
+      ).rejects.toThrow(/must differ from ADMIN_API_KEY/);
+    });
+
+    it('should not echo the ADMIN_SESSION_SECRET value in the refusal', async () => {
+      const weak = 'weak-secret-value';
+      const failure = await loadConfig({ NODE_ENV: 'production', ADMIN_SESSION_SECRET: weak }).catch(
+        (error: Error) => error,
+      );
+      expect(String(failure)).not.toContain(weak);
+    });
+
     it('should accept dev-default secrets outside production', async () => {
       const { config } = await loadConfig({
         NODE_ENV: 'development',
         INTERNAL_SECRET: 'dev-internal-secret-change-me',
         ADMIN_API_KEY: 'dev-admin-key-change-me',
-        PADDLE_WEBHOOK_SECRET: '',
+        ADMIN_SESSION_SECRET: 'dev-admin-session-secret-change-me',
       });
       expect(config.NODE_ENV).toBe('development');
     });
   });
 
-  describe('PADDLE_WEBHOOK_SECRET production requirement', () => {
-    it('should throw in production when PADDLE_WEBHOOK_SECRET is empty', async () => {
-      await expect(
-        loadConfig({ NODE_ENV: 'production', PADDLE_WEBHOOK_SECRET: '' })
-      ).rejects.toThrow(/PADDLE_WEBHOOK_SECRET/);
-    });
-
-    it('should allow an empty PADDLE_WEBHOOK_SECRET outside production', async () => {
-      const { config } = await loadConfig({ NODE_ENV: 'test', PADDLE_WEBHOOK_SECRET: '' });
-      expect(config.PADDLE_WEBHOOK_SECRET).toBe('');
+  describe('payment provider settings', () => {
+    it('should boot in production with strong secrets and no payment variable', async () => {
+      const { config } = await loadConfig({ NODE_ENV: 'production' });
+      expect(config.NODE_ENV).toBe('production');
     });
   });
 
@@ -150,6 +180,39 @@ describe('config env validation', () => {
     it('should ignore a PIPELINE_VERSION env var (not env-overridable)', async () => {
       const { config } = await loadConfig({ PIPELINE_VERSION: 'v999-env-injected' });
       expect(config.PIPELINE_VERSION).not.toBe('v999-env-injected');
+    });
+  });
+
+  describe('billing repair settings', () => {
+    it('should default the repair job off under NODE_ENV=test and on elsewhere', async () => {
+      expect((await loadConfig({})).config.BILLING_REPAIR_ENABLED).toBe(false);
+      expect((await loadConfig({ NODE_ENV: 'development' })).config.BILLING_REPAIR_ENABLED).toBe(true);
+    });
+
+    it('should default to a 5-minute interval and a 3-hour hold age', async () => {
+      const { config } = await loadConfig({});
+      expect([config.BILLING_REPAIR_INTERVAL_SECONDS, config.BILLING_HOLD_MAX_AGE_HOURS]).toEqual([300, 3]);
+    });
+
+    it('should refuse an interval under 30 seconds', async () => {
+      await expect(loadConfig({ BILLING_REPAIR_INTERVAL_SECONDS: '5' })).rejects.toThrow(/BILLING_REPAIR_INTERVAL_SECONDS/);
+    });
+
+    it('should refuse a hold age that does not outlast the queue message TTL (I4)', async () => {
+      await expect(loadConfig({ BILLING_HOLD_MAX_AGE_HOURS: '1' })).rejects.toThrow(/BILLING_HOLD_MAX_AGE_HOURS/);
+      expect((await loadConfig({ BILLING_HOLD_MAX_AGE_HOURS: '1.5' })).config.BILLING_HOLD_MAX_AGE_HOURS).toBe(1.5);
+    });
+
+    it('should refuse a non-positive hold age', async () => {
+      await expect(loadConfig({ BILLING_HOLD_MAX_AGE_HOURS: '0' })).rejects.toThrow(/BILLING_HOLD_MAX_AGE_HOURS/);
+    });
+  });
+
+  describe('removed gates (P3.2)', () => {
+    it('should expose no ledger switch, shadow flag, daily video limit or per-tier dollar caps', async () => {
+      const { config } = await loadConfig({ NODE_ENV: 'production', BILLING_LEDGER_ENFORCE: 'false', BILLING_SHADOW_ENABLED: 'true' });
+      const removed = ['BILLING_LEDGER_ENFORCE', 'BILLING_SHADOW_ENABLED', 'VIDEO_DAILY_LIMIT', 'COST_LIMITS_PER_TIER'];
+      expect(removed.filter((key) => key in config)).toEqual([]);
     });
   });
 });

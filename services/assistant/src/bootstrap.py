@@ -9,9 +9,10 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
-from motor.motor_asyncio import AsyncIOMotorClient
+from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 
 from llm_common.sentry_init import init_sentry_from_settings
 
@@ -34,6 +35,9 @@ from src.tools.note_taker import NoteTakerTool
 from src.tools.quiz_generator import QuizGeneratorTool
 from src.tools.video_generator import VideoGeneratorTool
 
+if TYPE_CHECKING:
+    from llm_common import MongoDBUsageCallback
+
 logger = get_logger(__name__)
 
 
@@ -44,6 +48,31 @@ def _init_sentry_from_settings() -> bool:
     kept so tests can patch this single entry point. Empty DSN no-ops.
     """
     return init_sentry_from_settings(settings, service="vie-assistant")
+
+
+async def _register_usage_callback(db: AsyncIOMotorDatabase) -> MongoDBUsageCallback | None:
+    """Register the LLM usage callback; ``None`` when tracking is unavailable."""
+    try:
+        import litellm
+        from llm_common import MongoDBUsageCallback
+
+        # Async mode: this service uses Motor (async). Sync mode would hand the
+        # SyncBuffer's background thread a Motor collection, whose insert_many
+        # needs the event loop -> "no current event loop in thread" on flush.
+        # Every assistant call is user chat (rag_chat, library_chat, actions,
+        # tools), so the prompt preview is never stored (docs/PRIVACY.md).
+        callback = MongoDBUsageCallback(
+            db, service="assistant", mode="async", store_prompt_preview=False
+        )
+        await callback.start_async()
+        litellm.callbacks = [callback]
+        logger.info("llm_usage_callback_registered", mode="async")
+        return callback
+    except ImportError:
+        logger.warning("llm_common_not_installed_usage_tracking_disabled")
+    except Exception as exc:
+        logger.warning("llm_usage_callback_failed", error=str(exc))
+    return None
 
 
 @asynccontextmanager
@@ -86,23 +115,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as exc:
         logger.warning("sentence_transformer_preload_failed", error=str(exc))
 
-    # LLM usage callback
-    usage_callback = None
-    try:
-        import litellm
-        from llm_common import MongoDBUsageCallback
-
-        # Async mode: this service uses Motor (async). Sync mode would hand the
-        # SyncBuffer's background thread a Motor collection, whose insert_many
-        # needs the event loop -> "no current event loop in thread" on flush.
-        usage_callback = MongoDBUsageCallback(db, service="assistant", mode="async")
-        await usage_callback.start_async()
-        litellm.callbacks = [usage_callback]
-        logger.info("llm_usage_callback_registered", mode="async")
-    except ImportError:
-        logger.warning("llm_common_not_installed_usage_tracking_disabled")
-    except Exception as exc:
-        logger.warning("llm_usage_callback_failed", error=str(exc))
+    usage_callback = await _register_usage_callback(db)
 
     # Outbound vie-api client for folder/library actions (reuses INTERNAL_SECRET).
     api_client = ApiClient(settings.VIE_API_URL, settings.INTERNAL_SECRET)

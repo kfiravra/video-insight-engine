@@ -21,6 +21,16 @@ MongoDB collections and schemas.
 | `folders` | Organization hierarchy |
 | `userVideos` | User's video library |
 
+### Billing (minutes ledger)
+
+| Collection | Purpose |
+|------------|---------|
+| `billingAccounts` | One per user: plan, buckets (free / plan / credit), open holds, caps — a projection of the ledger |
+| `ledgerEntries` | Append-only minutes ledger — the source of truth |
+| `creditLots` | Granted / purchased minutes, spent FIFO |
+| `recurringGrants` | Monthly lot grants (demo / eval accounts) |
+| `billingShadow` | Old gate vs ledger decision per request — P1 shadow mode, read-only since P3.2 |
+
 ---
 
 ## Legacy: ContentBlock Types (Removed)
@@ -569,15 +579,21 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
                                     // field the new dispatch lacks is $unset; no updatedAt bump. Read by
                                     // pipeline_runner to attribute llm_usage on SSE-driven runs
                                     // (llm-cost-model.md). $unset by the GDPR cascade (GDPR.md).
+  billingRunId: string | absent,    // the minutes ledger's run id for that dispatch (server UUID per
+                                    // submission, P3.1): the terminal status settles / releases the
+                                    // hold keyed by it; same $unset rules as requestId (vie-api only)
   degraded: true | absent,          // admin run badge: meta.degraded (a failed extraction group, a
                                     // dropped chunked batch, or critical coverage), OR a failed frame
                                     // download (set at the run's end; no user-facing banner)
   degradedReasons: string[] | absent, // why, written at the run's end: "partial_extraction",
                                     // "media_download_failed"; [] = clean
   pipelineVersion: string | absent, // PIPELINE_VERSION stamp of the run that saved the row; a stale
-                                    // stamp re-runs on the user's next submission (and the worker
-                                    // skips a queued job only when the row is completed by the
-                                    // CURRENT version)
+                                    // stamp is served as is to users who have the copy, with
+                                    // `updateAvailable: true`; their `updateToLatest` moves them to
+                                    // the current version's row and leaves this one as it is. Only a
+                                    // first-time submitter meeting it at the current dedupKey re-runs
+                                    // it (D-LIB); the worker skips a queued job only when the row is
+                                    // completed by the CURRENT version
 
   // Cache metadata
   processedAt: Date | null,
@@ -699,6 +715,17 @@ One entry per chapter/concept expansion. Shared across all users.
   // submit `cold` benchmark runs.
   isEvalUser: true | absent,
 
+  // RBAC. `roles` is authoritative when it is an array (even empty). Written only
+  // by UserRepository.setRoles (ADMIN_EMAILS boot seeding, later an admin route),
+  // never from request input. See docs/SECURITY.md "Roles and Permissions".
+  roles: ["admin"] | [] | absent,
+  roleSource: "env" | "granted" | absent,   // env = reconciled from ADMIN_EMAILS at boot
+  role: "admin" | absent,         // LEGACY: read as roles:["admin"] only while `roles` is absent; unset on demotion
+
+  // GDPR soft delete (set together with deletedAt/hardDeleteAt on every request: the user's own
+  // is `self`, an admin's is `admin`; a row with none is recorded by the scheduler. Cleared on cancel)
+  deletionOrigin: { initiatedBy: "self" | "admin" | "scheduler", adminId: string | null, reason: string | null } | absent,
+
   // Activity tracking
   lastLoginAt: Date | null,
 
@@ -772,6 +799,9 @@ User's video library. References shared cache.
   
   // Reference to cache
   videoSummaryId: ObjectId,
+  previousVideoSummaryId: ObjectId | absent, // D-LIB: the completed copy an update to the latest
+                                  // version left, set only while the row it moved to can still
+                                  // fail; FAILED hands the entry back to it, COMPLETED unsets it
   
   // Denormalized for display (copied from cache)
   youtubeId: string,
@@ -813,8 +843,12 @@ User's video library. References shared cache.
 
 ## userCosts
 
-Per-user daily LLM cost aggregate. Powers the per-user reservation gate
-(`POST /videos`) and the in-app usage tile.
+**Read-only history.** Per-user daily LLM cost aggregate of the retired dollar
+gate. Nothing writes it since billing-roles P3.2: there is no per-user dollar
+cap, the minutes ledger decides every submit and the usage tile reads minutes.
+vie-admin's per-user cost views read it as history only: the credit adjustment
+and days with no attributed `llm_usage` rows (spend now comes from `llm_usage` by
+`user_id`, see SERVICE-ADMIN). The GDPR cascade deletes a user's rows.
 
 ```javascript
 {
@@ -834,18 +868,16 @@ Per-user daily LLM cost aggregate. Powers the per-user reservation gate
 { date: 1 }             // supports admin aggregates over a trailing window
 ```
 
-**Reconciliation:** `totalCostUsd` is rewritten from `llm_usage` (Python
-schema: `user_id` + `cost_usd` + `timestamp`) on every terminal video status
-for today's UTC day only. `POST /internal/reconcile-costs` can rebuild any day
-(`?date=`, `?userId=`) but nothing schedules or calls it — it is a manual/operator
-endpoint. `videoCount` is preserved across reconciles because it tracks
-reservations, not real spend.
+**History:** until P3.2, `totalCostUsd` was rewritten from `llm_usage` on every
+terminal video status for that UTC day and `videoCount` counted reservations.
+The reconcile and `POST /internal/reconcile-costs` are gone; per-run LLM $ now
+lands on the run's ledger `debit` / `release` (`costUsd`, margin only).
 
 ---
 
 ## userCostAdjustments
 
-Audit log for admin grant-credit and manual-charge actions.
+**Read-only history.** Audit log of the retired dollar grant-credit and manual-charge actions. Nothing writes it any more: credit is granted in minutes through vie-api's ledger (see [Billing Collections](#billing-collections-minutes-ledger) and `adminAudit`).
 
 ```javascript
 {
@@ -854,7 +886,7 @@ Audit log for admin grant-credit and manual-charge actions.
   date: string,                   // UTC `YYYY-MM-DD` — adjustments are day-scoped
   amountUsd: number,              // Signed. Negative = credit (lowers spend), positive = manual charge
   reason: string,                 // 1–500 chars
-  adminId: ObjectId,              // Self-attested from request body (admin service is shared-key auth)
+  adminId: ObjectId,              // Self-attested from the request body (historical rows only)
   createdAt: Date
 }
 ```
@@ -869,6 +901,197 @@ Audit log for admin grant-credit and manual-charge actions.
 `amountUsd < 0 → credit`. The admin HTTP boundary accepts a user-friendly
 "positive = grant" input and inverts the sign before storage — see
 `services/admin/src/routes/users.py:230-291`.
+
+---
+
+# Billing Collections (minutes ledger)
+
+Users are billed in **video-minutes**, never dollars. vie-api's
+`BillingService` (`api/src/services/billing/`) is the only writer; vie-admin
+reads. Types: `packages/types/src/billing.ts` (wire shapes, ids as hex, dates
+as ISO strings); stored shapes: `api/src/repositories/billing.repository.ts`.
+Every change is one multi-document transaction (single-node replica set) over
+the account, its lots and new ledger entries, conditional on
+`billingAccounts.version`.
+
+**Constants** (`PLANS`, no env overrides): free — one video ≤ 30 min per
+rolling 24 h (`FREE_VIDEO`); Pro — 600 min per monthly cycle, reset each cycle
+with no rollover; any paid minutes pay for videos ≤ 180 min
+(`PAID_MAX_VIDEO_MINUTES`); charge = `max(ceil(sec / 60), 3)`; pack `pack_5` =
+$5 / 150 min, 12-month expiry (`CREDIT_PACKS`, data only).
+
+**Spend order:** the whole video from the free bucket when it fits and a free
+slot is open; otherwise the whole video from plan minutes, then credit lots
+FIFO (soonest `expiresAt` first, never-expiring last, then oldest). Plan and
+credit minutes have no daily cap. Cached / attached videos are released in
+full and give the free video back.
+
+**Invariant:** the ledger is the truth. Per bucket, Σ `minutes` of every entry
+**except `debit`** equals the projection — `buckets.credit.minutesAvailable`
+= Σ `creditLots.minutesRemaining` = Σ credit entries; `minutesGranted −
+minutesUsed` = Σ plan entries; `recentFreeVideoAt` = unreleased free holds in
+the window; `holds` = runs with a `hold` and neither `debit` nor `release`.
+`BillingService.verifyAccount` rebuilds and diffs them.
+
+## billingAccounts
+
+```javascript
+{
+  _id: ObjectId,
+  ownerType: 'user' | 'team',          // team reserved (P5)
+  ownerId: ObjectId,                   // users._id
+  plan: {
+    id: 'free' | 'pro',
+    status: 'active' | 'past_due' | 'canceled',
+    source: 'manual' | 'provider' | null,
+    periodStart: Date | null,          // plan term (manual Pro: 12 months)
+    periodEnd: Date | null
+  },
+  buckets: {
+    free:   { recentFreeVideoAt: Date[] },               // free videos in the rolling window
+    plan:   { cycleStart: Date | null, cycleEnd: Date | null,
+              minutesGranted: number, minutesUsed: number },  // current monthly cycle
+    credit: { minutesAvailable: number }                  // Σ lots (expired-unswept included)
+  },
+  holds: [{                            // runs in flight
+    requestId: string,                 // the run id (server UUID per submission, P3.1 — not the
+                                       // client X-Request-ID; holds from before P3.1 used it)
+    userId: ObjectId, youtubeId: string | null,
+    durationSec: number, minutes: number,
+    split: { free, plan, credit: number, lots: [{ lotId: ObjectId, minutes }] },
+    freeVideoAt: Date | null,          // the timestamp it added to recentFreeVideoAt
+    planCycleStart: Date | null,       // the cycle its plan slice came from
+    createdAt: Date
+  }],
+  caps: { maxVideoMinutes?, freeVideosPerDay?, maxConcurrent?, blocked? },  // admin overrides; only tighten
+  capsAuditIds: string[] | absent,     // the last 20 auditIds setCaps applied — a retried call is a no-op
+  version: number,                     // bumped by every write (optimistic concurrency)
+  createdAt: Date, updatedAt: Date
+}
+```
+
+**Indexes:** `{ ownerType: 1, ownerId: 1 }` unique (race-safe find-or-create);
+`{ 'holds.requestId': 1 }` (settle / release find the account by run).
+
+## ledgerEntries
+
+Append-only: never updated, never deleted. The one exception is GDPR erasure
+(Q12, C1): `BillingErasureRepository` moves `userId` (and the account's
+`ownerId`, `holds[].userId`) to a fresh tombstone ObjectId, gives the erased
+account's `auditId`, `source.ref` and `idempotencyKey` fresh random values
+(the migration derives audit ids from the user id), and sets an erased
+admin's `actorId` to `system:erased-user`; amounts, lots and `accountId` stay
+([GDPR.md](./GDPR.md#the-cascade-saga)).
+
+```javascript
+{
+  _id: ObjectId,
+  accountId: ObjectId,
+  userId: ObjectId,                    // who consumed / was acted on
+  type: 'grant' | 'hold' | 'debit' | 'release' | 'expire' | 'refund' | 'adjust',
+  bucket: 'free' | 'plan' | 'credit',
+  minutes: number,                     // signed: + adds headroom, − consumes it
+  lotId?: ObjectId,                    // credit entries
+  source: { kind: 'run' | 'payment' | 'admin' | 'migration' | 'recurring' | 'system', ref: string },
+  idempotencyKey: string,              // unique — see keys below
+  youtubeId?: string, durationSec?: number,
+  costUsd?: number,                    // internal margin only (debit / release), never shown to users
+  actorId?: string,                    // admin users._id hex or 'system:<name>'
+  auditId?: ObjectId, reason?: string,
+  createdAt: Date
+}
+```
+
+A `debit` posts a hold: it repeats the hold's (negative) minutes for reporting
+but does not move the balance again.
+
+**Idempotency keys:** `hold:<requestId>:free|plan|lot:<lotId>`,
+`debit:<requestId>:…` (same suffixes — a second "completed" is a no-op),
+`release:<requestId>:…`, `release-expire:<requestId>:…` (minutes returned to a
+plan cycle or lot that has since ended expire again at once),
+`admin:<auditId>[:grant|:expire|:lot:<lotId>]`,
+`roll:<accountId>:grant|expire:<cycleStart ISO>` (monthly plan roll).
+`source.ref` is the requestId for runs and the auditId for admin changes.
+
+**Indexes:** `{ idempotencyKey: 1 }` unique; `{ accountId: 1, createdAt: -1 }`;
+`{ 'source.ref': 1 }`.
+
+## creditLots
+
+```javascript
+{
+  _id: ObjectId,
+  accountId: ObjectId,
+  minutesGranted: number,
+  minutesRemaining: number,
+  source: { kind, ref },               // admin auditId, payment ref, recurring grant id, migration
+  priceUsdCents?: number,              // what the customer paid (refund math)
+  expiresAt: Date | null,              // null = never; spendable while expiresAt > now
+  createdAt: Date
+}
+```
+
+**Indexes:** `{ accountId: 1, expiresAt: 1, createdAt: 1 }` partial
+`{ minutesRemaining: { $gt: 0 } }`.
+
+## recurringGrants
+
+A lot of `minutes` granted every month (demo 300, eval 3,000 — data, not code).
+Each lot expires at the grant's next run plus 2 × `BILLING_REPAIR_INTERVAL_SECONDS`,
+so the outgoing lot is still spendable until the next tick has granted the new
+one (no rollover beyond that grace). A grant of an erased user is retired; one
+of a soft-deleted user is paused.
+Applied by the billing repair job on `nextRunAt`; deletion is soft.
+
+```javascript
+{
+  _id: ObjectId, accountId: ObjectId,
+  minutes: number, every: 'month', active: boolean,
+  nextRunAt: Date,                     // first run = creation time
+  lastRunAt: Date | null,
+  actorId: string, auditId: ObjectId, reason: string,
+  createdAt: Date, updatedAt: Date, deletedAt: Date | null
+}
+```
+
+**Indexes:** `{ accountId: 1 }`; `{ nextRunAt: 1 }`.
+
+## billingShadow
+
+**Read-only since P3.2.** One row per request from the P1 shadow mode, when
+the old dollar gate still decided: the old decision next to the ledger's,
+written off the request path and rewritten on every transition (`requestId`
+is the ledger's run id). The shadow writer and the old gate are gone; the
+same transitions now happen on the request path through `LedgerEnforcement`.
+The rows stay for the P1.11 replay harness, which re-judges every one, and the
+GDPR cascade deletes a user's. No index is created for it any more (the old
+unique `{ requestId: 1 }` stays where it exists). `classification` comes from
+`api/src/services/billing/shadow-policy.ts`: `agree` when admitted/charged
+match, `policy_delta` when a row of its `POLICY_DELTAS` table (each with the
+decision behind it) explains the difference, else `disagree` (logged at warn).
+Never explained: a cached / attached video the ledger refused instead of
+serving free is `disagree` (a Q6 break; a blocked account getting nothing is
+the one policy exception), and a ledger that could not get the video's length
+is its own class `metadata_unavailable`, which the replay gate counts and
+reports.
+
+```javascript
+{
+  _id: ObjectId,
+  requestId: string,
+  userId: ObjectId, youtubeId: string,
+  path: 'created' | 'cached' | 'attached' | 'failed' | 'completed'
+      | 'retry'      // a repeated submit or terminal event for the same requestId
+      | 'refused',   // the old gate refused; the ledger only quoted
+  oldDecision: { admitted: boolean, charged: boolean },
+  newDecision: { admitted: boolean, charged: boolean, split?, reason? },
+  classification: 'agree' | 'policy_delta' | 'disagree' | 'metadata_unavailable',
+  policyRef?: string,                  // the decision behind a policy_delta
+  createdAt: Date, updatedAt: Date
+}
+```
+
+**Indexes:** `{ requestId: 1 }` unique.
 
 ---
 
@@ -920,7 +1143,7 @@ Audit row written by `VideoCascadeService` for every **global** video delete (`D
   summaryIds: string[],            // every videoSummaryCache version that existed
   scope: 'global',
   initiatedBy: 'admin' | 'script',
-  adminId: string | null,          // x-admin-id header, self-attested
+  adminId: string | null,          // users._id of the admin, from the signed x-admin-actor header
   reason: string | null,
   counts: {                        // rows/objects removed per store
     videoSummaryCache, userVideos, shareLikes, shareViews, agentNotes,
@@ -932,6 +1155,31 @@ Audit row written by `VideoCascadeService` for every **global** video delete (`D
 ```
 
 Indexes: `{ youtubeId: 1 }`, `{ completedAt: -1 }`.
+
+### adminAudit
+
+Append-only log of admin mutations, written by `AuditService.record` (`api/src/services/audit.service.ts`). Retained indefinitely; rows are never updated or deleted, except by GDPR erasure: a row about an erased user is re-inserted under a fresh `_id` with `targetId` (and any copy of the id in `before` / `after`) set to the tombstone id, and a row the erased user wrote as an admin gets `actorId: 'system:erased-user'` without `actorEmail` / `ip` ([GDPR.md](./GDPR.md#the-cascade-saga), C1). Type: `AdminAudit` / `AdminAuditView` in `packages/types/src/roles.ts`.
+
+```typescript
+{
+  _id: ObjectId,                   // pre-generated by callers whose ledger rows reference it
+  actorId: string,                 // users._id hex of the acting admin, or `system:<name>` (system:boot)
+  actorEmail?: string,             // stored in the row only, never logged
+  action: string,                  // users.delete | users.delete.cancel | videos.purge | queue.replay | alerts.config.set | roles.seed.promote | roles.seed.demote | billing.* …
+  targetType: 'user' | 'video' | 'queue' | 'alert' | 'role',
+  targetId: string,                // user id (also for `role` rows), youtube id, queue name
+  before?: unknown, after?: unknown,   // small plain-JSON snapshots, no secrets or emails
+  reason?: string, requestId?: string, ip?: string,
+  requestHash?: string,            // sha256 of the canonical request (action, user, scope, body) behind an Idempotency-Key; lets a reused key with a different request be refused. Stored, never returned in AdminAuditView
+  createdAt: Date,
+}
+```
+
+`requestId` is the id vie-admin forwards as `X-Request-ID`; `ip` is the address vie-api saw (vie-admin's container or the tunnel), not the operator's browser: the operator is `actorId`. Paging uses the `(createdAt, _id)` pair, so rows written in the same millisecond are neither skipped nor repeated.
+
+Actions written outside the billing ledger: `users.delete` (`before` = the account's roles, role source, tier and deletion state, no email), `users.delete.cancel` (a user undoing a deletion an admin scheduled; actor = that user), `videos.purge` (`before` = the summary ids and whether the video was shared), `queue.replay`, `alerts.config.set` (`before`/`after` = the three thresholds of `llm_alert_config`), `roles.seed.*`.
+
+Indexes: `{ targetId: 1, createdAt: -1 }`, `{ actorId: 1, createdAt: -1 }`, `{ createdAt: -1 }`.
 
 Note on `agentNotes.videoId` (assistant collection): video chat stores the **summary ObjectId string**, library tools store the **youtube id**; both cascades filter on both forms.
 

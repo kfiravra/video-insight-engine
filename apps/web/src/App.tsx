@@ -33,6 +33,9 @@ const GeneratePage = lazy(() =>
 const SharePage = lazy(() =>
   import("@/pages/SharePage").then((m) => ({ default: m.SharePage }))
 );
+const BillingPage = lazy(() =>
+  import("@/pages/BillingPage").then((m) => ({ default: m.BillingPage }))
+);
 const VideoDetailPage = lazy(() =>
   import("@/pages/VideoDetailPage").then((m) => ({
     default: m.VideoDetailPage,
@@ -170,6 +173,15 @@ function AppRoutes() {
             element={
               <ProtectedRoute>
                 <VideoDetailPage />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/settings/billing"
+            element={
+              <ProtectedRoute>
+                <BillingPage />
               </ProtectedRoute>
             }
           />

@@ -24,6 +24,7 @@ from src.routes.frames import router as frames_router
 from src.routes.override import router as override_router
 from src.routes.purge import router as purge_router
 from src.routes.stream import router as stream_router
+from src.routes.video_metadata import router as video_metadata_router
 from src.services.cache.response_cache import response_cache
 from src.utils.worker_pool import shutdown_pool
 
@@ -184,6 +185,7 @@ app.include_router(stream_router)
 app.include_router(override_router)
 app.include_router(purge_router)
 app.include_router(frames_router)
+app.include_router(video_metadata_router)
 
 
 @app.get("/health")
