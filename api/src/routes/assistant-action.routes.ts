@@ -20,19 +20,19 @@ const actionBodySchema = z.object({
 const VIDEO_SUMMARY_ID = /^[a-f0-9]{24}$/i;
 
 /**
- * Actions whose tool plans rewrite the user's library through
- * `/internal/assistant/*`. Every demo visitor shares one library, so the demo
- * account is refused up front — the internal routes enforce the same rule as
- * the backstop, and this spares the planning LLM call for an action that
- * cannot succeed. Read-only and additive actions (create_folder,
- * generate_video, save_note, quiz_me, find_moment, explain) stay allowed.
+ * Actions whose tool plans rename, move or delete the user's folders through
+ * `/internal/assistant/*`. Every demo visitor shares one folder tree, so the
+ * demo account is refused up front — the internal routes enforce the same rule
+ * as the backstop, and this spares the planning LLM call for an action that
+ * cannot succeed. Moving videos (move_video, and organize_library, which only
+ * creates folders and moves videos into them) is allowed like any user, as are
+ * the read-only and additive actions (create_folder, generate_video,
+ * save_note, quiz_me, find_moment, explain).
  */
-const LIBRARY_MUTATING_ACTIONS: ReadonlySet<AssistantAction> = new Set<AssistantAction>([
-  'organize_library',
+const FOLDER_MUTATING_ACTIONS: ReadonlySet<AssistantAction> = new Set<AssistantAction>([
   'rename_folder',
   'move_folder',
   'delete_folder',
-  'move_video',
 ]);
 
 /**
@@ -63,7 +63,7 @@ export async function assistantActionRoutes(fastify: FastifyInstance): Promise<v
       });
     }
 
-    if (LIBRARY_MUTATING_ACTIONS.has(parsed.data.action)) {
+    if (FOLDER_MUTATING_ACTIONS.has(parsed.data.action)) {
       await fastify.requireNotDemo(req);
     }
 

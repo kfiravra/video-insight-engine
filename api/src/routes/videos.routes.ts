@@ -163,11 +163,12 @@ export async function videosRoutes(fastify: FastifyInstance) {
   fastify.delete<{
     Params: z.infer<typeof idParamSchema>;
   }>('/:id', {
-    preHandler: [fastify.authenticate, fastify.requireNotDemo],
+    preHandler: [fastify.authenticate],
   }, async (req, reply) => {
     const { id } = idParamSchema.parse(req.params);
     // User scope: only this user's row, idempotency key and notes go; the
-    // shared summary stays for everyone else.
+    // shared summary stays for everyone else. That is why the shared demo
+    // account may delete like any user.
     await videoCascadeService.deleteVideo({ scope: 'user', userId: req.user.userId, userVideoId: id });
     return reply.code(204).send();
   });
@@ -177,7 +178,7 @@ export async function videosRoutes(fastify: FastifyInstance) {
     Params: z.infer<typeof idParamSchema>;
     Body: z.infer<typeof moveVideoSchema>;
   }>('/:id/move', {
-    preHandler: [fastify.authenticate, fastify.requireNotDemo],
+    preHandler: [fastify.authenticate],
   }, async (req) => {
     const { id } = idParamSchema.parse(req.params);
     const { folderId } = moveVideoSchema.parse(req.body);

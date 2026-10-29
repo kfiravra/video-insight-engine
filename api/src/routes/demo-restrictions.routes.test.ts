@@ -3,9 +3,11 @@ import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
 import { config } from '../config.js';
 import { buildTestApp, createMockContainer, getAuthHeader, type MockContainer } from '../test/helpers.js';
 
-// Every demo visitor shares ONE account, so mutations of its library and
-// anything that spends its budget are refused (403 DEMO_RESTRICTED). The guard
-// keys on the user id, so a normal user must be unaffected on every route.
+// Every demo visitor shares ONE account, so changes to its folders, its
+// profile, and anything that forces a paid re-run are refused (403
+// DEMO_RESTRICTED). Deleting and moving its own videos is allowed like any
+// user: a delete is user scope, so the shared summary stays. The guard keys on
+// the user id, so a normal user must be unaffected on every route.
 
 const DEMO_EMAIL = 'demo@example.com';
 const DEMO_ID = 'dddddddddddddddddddddddd';
@@ -72,14 +74,20 @@ describe('demo account restrictions', () => {
   });
 
   describe('library mutations', () => {
-    it('should refuse DELETE /api/videos/:id for the demo account', async () => {
+    it('should let the demo account delete its own video in user scope', async () => {
       const response = await app.inject({ method: 'DELETE', url: `/api/videos/${OBJECT_ID}`, headers: asDemo() });
 
-      expectRestricted(response);
-      expect(mockContainer.videoCascadeService.deleteVideo).not.toHaveBeenCalled();
+      expect(response.statusCode).toBe(204);
+      expect(mockContainer.videoCascadeService.deleteVideo).toHaveBeenCalledWith({
+        scope: 'user',
+        userId: DEMO_ID,
+        userVideoId: OBJECT_ID,
+      });
     });
 
-    it('should refuse PATCH /api/videos/:id/move for the demo account', async () => {
+    it('should let the demo account move its own video', async () => {
+      mockContainer.videoService.moveToFolder.mockResolvedValue({ id: OBJECT_ID, folderId: null });
+
       const response = await app.inject({
         method: 'PATCH',
         url: `/api/videos/${OBJECT_ID}/move`,
@@ -87,8 +95,8 @@ describe('demo account restrictions', () => {
         payload: { folderId: null },
       });
 
-      expectRestricted(response);
-      expect(mockContainer.videoService.moveToFolder).not.toHaveBeenCalled();
+      expect(response.statusCode).toBe(200);
+      expect(mockContainer.videoService.moveToFolder).toHaveBeenCalledWith(DEMO_ID, OBJECT_ID, null);
     });
 
     it('should refuse PATCH /api/folders/:id for the demo account', async () => {
@@ -245,7 +253,7 @@ describe('demo account restrictions', () => {
       mockContainer.assistantClient.action.mockResolvedValue({ status: 200, body: { success: true } });
     });
 
-    it.each(['organize_library', 'rename_folder', 'move_folder', 'delete_folder', 'move_video'])(
+    it.each(['rename_folder', 'move_folder', 'delete_folder'])(
       'should refuse %s for the demo account without calling the assistant',
       async (action) => {
         const response = await app.inject({
@@ -260,8 +268,8 @@ describe('demo account restrictions', () => {
       },
     );
 
-    it.each(['create_folder', 'generate_video', 'explain'])(
-      'should let the demo account run the non-destructive %s action',
+    it.each(['move_video', 'organize_library', 'create_folder', 'generate_video', 'explain'])(
+      'should let the demo account run the %s action',
       async (action) => {
         const response = await app.inject({
           method: 'POST',
@@ -275,12 +283,12 @@ describe('demo account restrictions', () => {
       },
     );
 
-    it('should let a normal user run organize_library', async () => {
+    it('should let a normal user run delete_folder', async () => {
       const response = await app.inject({
         method: 'POST',
         url: '/api/assistant/action',
         headers: asUser(),
-        payload: { action: 'organize_library' },
+        payload: { action: 'delete_folder' },
       });
 
       expect(response.statusCode).toBe(200);
@@ -312,7 +320,9 @@ describe('demo account restrictions', () => {
       expect(mockContainer.folderService.delete).not.toHaveBeenCalled();
     });
 
-    it('should refuse PATCH /internal/assistant/videos/:id/move for the demo user id', async () => {
+    it('should let the demo user id move a video through PATCH /internal/assistant/videos/:id/move', async () => {
+      mockContainer.videoService.moveToFolder.mockResolvedValue({ id: OBJECT_ID, folderId: null });
+
       const response = await app.inject({
         method: 'PATCH',
         url: `/internal/assistant/videos/${OBJECT_ID}/move`,
@@ -320,8 +330,8 @@ describe('demo account restrictions', () => {
         payload: { folderId: null },
       });
 
-      expectRestricted(response);
-      expect(mockContainer.videoService.moveToFolder).not.toHaveBeenCalled();
+      expect(response.statusCode).toBe(200);
+      expect(mockContainer.videoService.moveToFolder).toHaveBeenCalledWith(DEMO_ID, OBJECT_ID, null);
     });
 
     it('should let a normal user id mutate through the internal routes', async () => {
@@ -430,8 +440,9 @@ describe('demo account restrictions', () => {
     it('should not restrict the former demo id when DEMO_USER_EMAIL is blank', async () => {
       config.DEMO_USER_EMAIL = '';
       mockContainer.userRepository.findByEmail.mockClear();
+      mockContainer.folderService.delete.mockResolvedValue(undefined);
 
-      const response = await app.inject({ method: 'DELETE', url: `/api/videos/${OBJECT_ID}`, headers: asDemo() });
+      const response = await app.inject({ method: 'DELETE', url: `/api/folders/${OBJECT_ID}`, headers: asDemo() });
 
       expect(response.statusCode).toBe(204);
       expect(mockContainer.userRepository.findByEmail).not.toHaveBeenCalled();
