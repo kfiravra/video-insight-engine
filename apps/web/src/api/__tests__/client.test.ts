@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { http, HttpResponse } from "msw";
 import { server } from "../../test/mocks/server";
 import {
@@ -144,19 +144,42 @@ describe("API Client", () => {
         expect(capturedHeaders?.get("Authorization")).toBeNull();
       });
 
-      it("should include Content-Type header", async () => {
+      it("should send the JSON Content-Type with a body", async () => {
         let capturedHeaders: Headers | null = null;
 
         server.use(
-          http.get(`${API_URL}/test`, ({ request }) => {
+          http.post(`${API_URL}/test`, ({ request }) => {
             capturedHeaders = request.headers;
             return HttpResponse.json({ success: true });
           })
         );
 
-        await request("/test");
+        await request("/test", { method: "POST", body: JSON.stringify({ a: 1 }) });
 
         expect(capturedHeaders?.get("Content-Type")).toBe("application/json");
+      });
+
+      it("should not claim a JSON body on a bodiless request", async () => {
+        // A proxy that adds Content-Length: 0 turns a bodiless DELETE with a
+        // JSON content-type into an "empty JSON body" the api rejects (400).
+        const captured: Record<string, string | null> = {};
+
+        server.use(
+          http.get(`${API_URL}/test`, ({ request }) => {
+            captured.get = request.headers.get("Content-Type");
+            return HttpResponse.json({ success: true });
+          }),
+          http.delete(`${API_URL}/test`, ({ request }) => {
+            captured.delete = request.headers.get("Content-Type");
+            return HttpResponse.json({ success: true });
+          })
+        );
+
+        await request("/test");
+        await request("/test", { method: "DELETE" });
+
+        expect(captured.get).toBeNull();
+        expect(captured.delete).toBeNull();
       });
 
       it("should allow custom headers", async () => {

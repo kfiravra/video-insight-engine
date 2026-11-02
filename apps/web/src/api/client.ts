@@ -72,7 +72,10 @@ export async function request<T>(
       ...options,
       signal,
       headers: {
-        "Content-Type": "application/json",
+        // Only a request that carries a body claims a JSON body: a bodiless
+        // DELETE/POST sent with this header is rejected by the api as an
+        // empty JSON body once a proxy in between adds `Content-Length: 0`.
+        ...(options?.body != null && { "Content-Type": "application/json" }),
         ...(token && { Authorization: `Bearer ${token}` }),
         ...options?.headers,
       },

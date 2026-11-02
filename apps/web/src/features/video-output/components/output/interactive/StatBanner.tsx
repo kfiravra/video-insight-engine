@@ -54,16 +54,24 @@ export const StatBanner = memo(function StatBanner({ stats, className, onSeek }:
         <div
           key={`${stat.label}-${i}`}
           role="listitem"
-          className="flex min-w-0 items-center gap-2 rounded-lg bg-muted/20 px-3 py-2"
+          className="flex min-w-0 items-start gap-2 rounded-lg bg-muted/20 px-3 py-2"
         >
           {stat.emoji ? (
-            <span aria-hidden="true" className="shrink-0 text-base leading-none">
+            <span aria-hidden="true" className="mt-0.5 shrink-0 text-base leading-none">
               {stat.emoji}
             </span>
           ) : null}
           <span className="flex min-w-0 flex-1 flex-col leading-tight break-words hyphens-none">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/80">
-              {stat.label}
+            {/* The seek chip shares the label row, so the figure and its meaning
+                keep the tile's full width instead of wrapping word by word
+                beside the chip. */}
+            <span className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/80">
+                {stat.label}
+              </span>
+              {typeof stat.timestamp === 'number' && stat.timestamp >= 0 ? (
+                <SeekChip seconds={stat.timestamp} onSeek={onSeek} className="-my-1 shrink-0" />
+              ) : null}
             </span>
             <span className="text-sm font-semibold tabular-nums text-foreground">
               {statValue(stat)}
@@ -74,9 +82,6 @@ export const StatBanner = memo(function StatBanner({ stats, className, onSeek }:
               </span>
             ) : null}
           </span>
-          {typeof stat.timestamp === 'number' && stat.timestamp >= 0 ? (
-            <SeekChip seconds={stat.timestamp} onSeek={onSeek} className="shrink-0" />
-          ) : null}
         </div>
       ))}
     </div>
