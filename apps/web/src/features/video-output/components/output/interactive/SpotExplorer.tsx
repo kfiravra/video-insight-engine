@@ -1,5 +1,5 @@
 import { memo, useState } from 'react';
-import { Star, Clock, MapPin } from 'lucide-react';
+import { Star, Clock, Lightbulb, MapPin } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useLabels } from '@/lib/i18n';
 import type { SpotItem } from '@vie/types';
@@ -102,7 +102,20 @@ export const SpotExplorer = memo(function SpotExplorer({
           {/* Everything is visible at rest — no accordion, no "Show more".
               Clicking is reserved for actions (map, booking). */}
           <div className="px-4 py-3 flex items-start gap-3">
-            <span className="text-base shrink-0 mt-0.5" aria-hidden="true">{spot.emoji}</span>
+            {/* Leading icon: the spot's emoji on an accent tile. Key-idea spots arrive
+                without one (the schema does not require it) — a lightbulb keeps the
+                slot filled so the row never leads with an empty gap. */}
+            <span
+              data-slot="spot-icon"
+              aria-hidden="true"
+              className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg bg-[var(--vie-accent)]/10 text-base leading-none"
+            >
+              {spot.emoji?.trim() ? (
+                spot.emoji
+              ) : (
+                <Lightbulb className="size-4 shrink-0 text-[var(--vie-accent)]" aria-hidden="true" />
+              )}
+            </span>
             <div className="flex-1 min-w-0 space-y-1.5">
               <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <span className="font-semibold text-[0.9375rem]">{spot.name}</span>

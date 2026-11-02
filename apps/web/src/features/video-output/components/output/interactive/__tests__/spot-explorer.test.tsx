@@ -20,6 +20,25 @@ describe('SpotExplorer', () => {
     expect(screen.getByText('Notre Dame')).toBeInTheDocument();
   });
 
+  it('should lead each card with its emoji on an icon tile, before the name', () => {
+    render(<SpotExplorer spots={spots} />);
+    const tiles = document.querySelectorAll('[data-slot="spot-icon"]');
+    expect(tiles).toHaveLength(spots.length);
+    expect(tiles[0].textContent).toBe('🗼');
+    expect(tiles[1].textContent).toBe('🎨');
+    // The tile precedes the name in DOM order — a leading icon, not a trailing one.
+    const name = screen.getByText('Louvre');
+    expect(tiles[1].compareDocumentPosition(name) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('should fall back to a lightbulb icon when a spot has no emoji, never an empty tile', () => {
+    render(<SpotExplorer spots={[{ name: 'Thesis idea', description: 'The core claim.' } as never]} />);
+    const tile = document.querySelector('[data-slot="spot-icon"]') as HTMLElement;
+    expect(tile).not.toBeNull();
+    expect(tile.textContent).toBe('');
+    expect(tile.querySelector('svg')).not.toBeNull();
+  });
+
   it('renders an empty state for empty spots', () => {
     const { container } = render(<SpotExplorer spots={[]} />);
     expect(container.textContent).toContain('No highlights were extracted');
