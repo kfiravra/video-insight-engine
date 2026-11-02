@@ -1,499 +1,135 @@
-# Claude Code Infrastructure
+# `.claude2/` — replacement Claude Code infrastructure (built 2026-10-29)
 
-This directory contains Claude Code's configuration, commands, skills, rules, and hooks for the Video Insight Engine project.
+A second Claude Code setup for this repo, built from the 2026-10-29 audit
+(`dev/research/claude-infra-audit-2026-10-29.md`) so it can be compared with the current `.claude/`
+and swapped in or out. It is inert until activated: Claude Code only reads `.claude/`.
 
----
+Design in one line: instructions carry only what the code cannot tell you; every rule that cannot
+bend is a hook, an `ask`/`deny` rule or a setting; skills trigger natively; verification is silent
+on success and loud on failure; no dependencies.
 
-## Quick Reference
+## Inventory
 
-| I want to...                    | Use this                      |
-| ------------------------------- | ----------------------------- |
-| Start a new task                | `/task-plan {task-name}`      |
-| See active tasks                | `/list-tasks`                 |
-| Resume after chat clear         | `/resume {task-name}`         |
-| Complete a task (full workflow) | `/complete-task {task-name}`  |
-| Update docs for changes         | `/update-docs {what changed}` |
-| Save context before clearing    | `/task-plan-update`           |
-| Review code                     | `/review`                     |
-| Generate tests                  | `/test {file}`                |
-| Security audit                  | `/security-check`             |
-| Pre-deploy checklist            | `/ship`                       |
+| Path | Purpose | Loaded when |
+|---|---|---|
+| `CLAUDE.md` | verify commands, dev-loop gotchas, git policy, doc pointers (≤ 100 lines) | every session, as [.claude/CLAUDE.md](CLAUDE.md) |
+| `settings.json` | hooks, `deny`/`ask` rules, `attribution: false`, subagent model default | every session |
+| `mcp.json` | context7, playwright, mongodb (read-only, `directConnection=true`) | copied to `.mcp.json` by `activate.sh` |
+| `rules/typescript.md`, `rules/python.md` | judgment conventions, path-scoped | when a matching file is read or edited |
+| `skills/vie-api`, `vie-web`, `vie-python` | repo facts per area, `paths:` triggered | when a matching file is touched, or on demand |
+| `skills/task-plan`, `resume`, `handoff` | task lifecycle on `dev/active/<task>/plan.md` + `notes.md` | user-invoked |
+| `skills/check` | repo typecheck/lint/test runner for touched packages | model or user |
+| `skills/phase-review`, `ship` | by-area review on two axes; pre-PR gate | user-invoked |
+| `skills/diagnose`, `tdd` | feedback-loop debugging; red/green loop | model or user |
+| `skills/guard` | `/guard off` stands the git guard down (writes `state/guard-off`), `/guard on` restores it; SessionStart prints `git guard: OFF` while it is off | user-invoked |
+| `agents/reviewer.md`, `security-auditor.md` | read-only reviewers on opus | spawned by skills or on demand |
+| `hooks/git-guard.sh` | PreToolUse Bash, checked per command segment: blocks stash, reset --hard/--merge/--keep, checkout --/./<path>/-f, switch --discard-changes, clean, restore, force-push, deleting main, worktree remove -f, update-ref -d; asks for push, rebase, PRs, container recreates; blocks `git add -A` during a swap; scans `bash -c "..."`; ignores heredoc prose; fails closed without jq | every Bash call |
+| `hooks/guard-ctl.sh` | backs `/guard`: writes or removes `state/guard-off` | on demand |
+| `hooks/post-edit.sh` | records touched files (Edit/Write path, or files a Bash command wrote via `sed -i`, `>`/`>>`, `tee`); `eslint --fix` / `ruff format` | every Edit/Write and every Bash call |
+| `hooks/stop-check.sh` | tsc / eslint / ruff on touched packages (falls back to the dirty tree, once per tree state, when nothing was recorded); keeps file:line for every tool; blocks the stop once on real errors | every Stop |
+| `hooks/session-start.sh` | branch, dirty count, active tasks, state GC | startup, resume, clear, compact |
+| `hooks/lib/pkgmap.sh` | the one map from paths to check commands (hook and `/check` share it) | called by the above |
+| `hooks/tests/*.test.mjs` | 195 tests, `node --test`, zero dependencies, temp state root; incident-named suites (2026-05-28 stash, 2026-05-31 TS6133, 2026-09-02 heredoc, 2026-10-29 Fable agents, 2026-11-01 guard gaps) | `node --test .claude/hooks/tests/*.test.mjs` |
+| `standards/CODING-STANDARDS.md` | judgment rules for reviewers | read by `/phase-review` and `/ship` only |
+| `standards/linter-followups.md` | eslint/ruff snippets to adopt later | never loaded |
+| `activate.sh` | swap in / swap back | by you, from a plain shell |
+| `state/` (gitignored) | per-session touched lists, error and tree hashes, `red` marker, `git-override`, `guard-off` | runtime |
 
----
-
-## Complete Task Workflow
-
-### Starting a New Feature
-
-```
-1. /task-plan add-user-preferences
-   → Creates dev/active/add-user-preferences/
-   → Generates plan.md, context.md, tasks.md
-
-2. [Implement the feature]
-   → Skills auto-activate based on your prompts
-   → MUST read suggested skills before writing code
-
-3. /complete-task add-user-preferences
-   → Runs: Plan verification → Tests → Security → Review → Docs
-   → Reports any issues to fix
-
-4. /ship
-   → Final checklist before deploy
-```
-
-### Resuming After Chat Clear
+## Activate, compare, revert
 
 ```
-1. /list-tasks
-   → Shows all active tasks with progress
-
-2. /resume add-user-preferences
-   → Loads context, tasks, and plan
-   → Shows current state and next steps
-
-3. [Continue working]
+.claude2/activate.sh --dry-run     # prints the plan, changes nothing
+.claude2/activate.sh               # .claude -> .claude1, .claude2 -> .claude, mcp.json -> .mcp.json
+# restart Claude Code; check /status, /context, /mcp, /doctor, /skill-doctor
+.claude/activate.sh --revert       # back to the old setup, byte for byte
 ```
 
-### Before Clearing Chat
+The script refuses to run inside a Claude Code session (`$CLAUDECODE` set) unless `--force`,
+because settings and hooks hot-reload mid-swap. It also refuses while `.claude/worktrees/` is
+non-empty.
 
-```
-1. /task-plan-update
-   → Saves current context to dev/active/{task}/
-   → Updates progress in tasks.md
-   → Documents blockers and next steps
-```
+What a swap changes besides the two folders:
 
----
+- The root `CLAUDE.md` is gone (deleted 2026-11-02 with the adoption commit), so only [.claude/CLAUDE.md](CLAUDE.md)
+  loads. `/context` should list only it under Memory files.
+- `.mcp.json` (gitignored) is backed up to `.claude1/mcp.root.json` and replaced by `mcp.json`.
+- `.claude1/` is added to `.git/info/exclude` inside a marked block, removed on revert.
+- `git status` shows the 126 tracked `.claude/**` files as deleted/modified while swapped. That is
+  expected. The git guard refuses `git add -A`, `git add .`, `git add -u` and `git commit -a` while
+  `.claude1/` exists so the swap is never committed by accident; add explicit paths.
+- Sibling worktrees (`../vie-*`) keep the old tracked `.claude/`.
 
-## Directory Structure
+Adopted 2026-11-02 on `chore/claude-infra`: root `CLAUDE.md` and the `claudeMdExcludes` line are gone and
+`.claude/` is committed. Still local: `.claude1/` and its exclude block, kept until the PR merges.
 
-```
-.claude/
-├── README.md              ← You are here
-├── settings.json          # Global config + hooks
-├── settings.local.json    # Local permissions (gitignored)
-│
-├── commands/              # Slash commands
-│   ├── task-plan.md       # Create task documentation
-│   ├── task-plan-update.md# Save context before chat clear
-│   ├── list-tasks.md      # List all active tasks
-│   ├── resume.md          # Resume an active task
-│   ├── complete-task.md   # Full completion workflow
-│   ├── update-docs.md     # Update project documentation
-│   ├── review.md          # Code review
-│   ├── test.md            # Generate tests
-│   ├── security-check.md  # Security audit
-│   └── ship.md            # Pre-deploy checklist
-│
-├── skills/                # Domain expertise (auto-activated)
-│   ├── skill-rules.json   # Activation rules
-│   ├── backend-node/      # Node.js/Fastify patterns
-│   ├── backend-python/    # Python/FastAPI patterns
-│   ├── design-system/     # Icons, tokens, components
-│   └── react-vite/        # React/Vite patterns
-│
-├── rules/                 # Enforced guidelines
-│   ├── README.md          # Rules overview
-│   ├── skill-enforcement.md # MANDATORY: read skills
-│   ├── code-quality.md    # Code standards
-│   ├── security.md        # Security requirements
-│   ├── testing.md         # Testing standards
-│   ├── git-workflow.md    # Git conventions
-│   ├── syntax-typescript.md # Path-scoped: TS/TSX files
-│   └── syntax-python.md  # Path-scoped: Python files
-│
-├── agents/                # Specialized assistants (all have YAML frontmatter → registered)
-│   ├── api-tester.md          # Endpoint testing with curl evidence
-│   ├── debug-investigator.md  # Evidence-first debugging, 3-Fix Rule, gotchas.md
-│   ├── frontend-error-fixer.md # React/TS error diagnosis
-│   ├── plan-auditor.md        # Infra/docs consistency audit (read-only + report)
-│   ├── refactor-planner.md    # Incremental refactor plans (read-only)
-│   └── security-auditor.md    # OWASP/auth review
-│   # (code-reviewer, test-writer, doc-generator were removed — their content
-│   #  lives in commands/review.md, commands/test.md, commands/update-docs.md)
-│
-└── hooks/                 # Automatic triggers (see hooks/README.md)
-    ├── __tests__/                  # Hook unit tests (vitest)
-    ├── skill-activation-prompt.ts  # Word-boundary skill matching (UserPromptSubmit)
-    ├── git-safety-guard.sh         # Deny destructive git, ask commit/push (PreToolUse/Bash)
-    ├── pre-edit-guard.ts           # Path-scoped skill block + TDD warn (PreToolUse/Edit)
-    ├── post-tool-use-tracker.sh    # Tracks file changes (PostToolUse)
-    ├── auto-format.sh              # ESLint/ruff auto-fix (PostToolUse)
-    ├── continuous-learning.ts      # Session insights (PostToolUse)
-    ├── skill-read-tracker.ts       # Tracks skill file reads (PostToolUse/Read)
-    ├── tsc-check-stop.sh           # tsc on affected repos + cache GC (Stop)
-    └── auto-save-context.sh        # Task-scoped session snapshot (Stop)
+## Tests and maintenance
+
+- `node --test .claude/hooks/tests/*.test.mjs` (or `.claude2/...` before the swap). Also run by the
+  Stop hook whenever a hook file was edited, and by `/ship`.
+- `/doctor prompt-audit` for stale or conflicting instructions, `/skill-doctor` for unused skills,
+  `/checkup` for the setup as a whole, `claude plugin validate .claude/skills` for frontmatter.
+- `VIE_STOP_PYRIGHT=1` adds pyright to the Stop check; `VIE_STOP_DEADLINE` (seconds, default 240)
+  caps it.
+
+## What was dropped from the old setup, and why
+
+| Old piece | Usage in 60 days / 69 sessions | Replaced by |
+|---|---|---|
+| keyword skill-activation hook, `skill-rules.json`, pre-edit guard, read tracker | fired on 47 sessions, 794 hook errors on edits | native `paths:` + descriptions |
+| per-prompt CONTEXT WARNING and ACTIVE TASKS reminders | ~50 lines per session | 4 to 8 lines at SessionStart |
+| continuous-learning, post-tool-use tracker, auto-save-context hooks | [dev/gotchas.md](../dev/gotchas.md) never written | auto-memory, `/handoff`, `post-edit.sh` touched list |
+| tsc banner on every Stop | real errors in 3 sessions | silent `stop-check.sh`, blocks once |
+| 5 always-on ALWAYS/NEVER rules + `rules/README.md` | loaded every prompt | `standards/CODING-STANDARDS.md` for reviewers, 2 path-scoped rules |
+| backend-node, backend-python, react-vite, design-system (32k words) | read 88 times by the hook | 3 skills under 100 lines with the repo-specific paragraphs salvaged |
+| impeccable, impeccable2, 17 design passes (69k words) | 0 reads, 0 invocations | [.impeccable/DESIGN.md](../.impeccable/DESIGN.md) pointer + global `frontend-design` plugin |
+| `/complete-task`, `/test`, `/security-check`, `/list-tasks`, `/task-plan-update`, `/update-docs`, `/audit-infra`, `/review` | never typed (`/review` 5 times) | `/ship`, `/check`, `/handoff`, `/resume` listing, `/phase-review`, built-ins |
+| api-tester, frontend-error-fixer, plan-auditor, refactor-planner, debug-investigator agents | 0, 0, 0, 0, 2 calls | `diagnose` skill; `reviewer` + `security-auditor` on opus |
+| `MultiEdit` references, bare `Bash`/`Edit`/`Write` allows, duplicate local allows | dead or ignored in bypass/auto mode | `deny` + `ask` rules only |
+| `Figma MCP`, `github`, `octocode` servers | 0, 3, 0 calls; github token invalid, `gh` works | removed (re-add below) |
+| 131 MB `hooks/node_modules`, vitest, `npx tsx` hooks (0.45 s each) | per-call latency | bash + jq, `node --test` |
+
+Removed MCP entries, verbatim, for `mcp.json` if you want them back:
+
+```json
+"Figma MCP": { "command": "npx", "args": ["-y", "figma-developer-mcp", "--stdio"], "env": { "FIGMA_API_KEY": "${FIGMA_API_KEY}" } },
+"github": { "type": "stdio", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"], "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}" } },
+"octocode": { "type": "stdio", "command": "npx", "args": ["octocode-mcp@latest"] }
 ```
 
----
-
-## Skills System
-
-### How Skills Work
-
-1. **Auto-Activation**: When you submit a prompt, the hook checks for keyword matches
-2. **Skill Suggestion**: Matching skills appear in the output
-3. **MANDATORY Reading**: You MUST read the suggested SKILL.md and resources
-4. **Apply Patterns**: Use the patterns from skills in your code
-
-### Example Flow
-
-```
-User: "Create a new API endpoint for user preferences"
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🎯 SKILL ACTIVATION
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-📚 backend-node
-   ↳ Matched: "api" (keyword)
-   📄 Resources:
-      • resources/fastify.md
-      • resources/services.md
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📖 Read skill + resources BEFORE responding
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Claude MUST:
-1. Read .claude/skills/backend-node/SKILL.md
-2. Read .claude/skills/backend-node/resources/fastify.md
-3. Read .claude/skills/backend-node/resources/services.md
-4. THEN write code following those patterns
-```
-
-### Available Skills
-
-**Enforced domain skills** (block-on-unread, triggered via `skill-rules.json`
-word-boundary keyword/intent matching, path-scoped to their own file domains):
-
-| Skill                                              | Example triggers                        | Covers                                             |
-| -------------------------------------------------- | --------------------------------------- | -------------------------------------------------- |
-| [backend-node](./skills/backend-node/SKILL.md)     | api, route, fastify, endpoint, jwt      | `api/**`, `packages/{types,shared}/**`              |
-| [backend-python](./skills/backend-python/SKILL.md) | python, fastapi, summarizer, qdrant     | `services/**/*.py`, `packages/llm-common/**`        |
-| [react-vite](./skills/react-vite/SKILL.md)         | component, react, tailwind, form        | `apps/web/**`, `services/admin/ui/**`               |
-| [design-system](./skills/design-system/SKILL.md)   | design token, oklch, which icon, cva    | `apps/web/src/{index.css,styles,components/{ui,vie}}` |
-
-**Design-workflow skills** (suggest-only, invoked by name or design prompts):
-`impeccable2` (umbrella) plus the focused passes — `shape`, `critique`, `audit`,
-`polish`, `distill`, `harden`, `bolder`, `quieter`, `colorize`, `typeset`,
-`layout`, `animate`, `delight`, `overdrive`, `optimize`, `adapt`, `clarify`.
-(The older `impeccable` skill was removed — `impeccable2` supersedes it.)
-
----
-
-## Rules System
-
-### Enforcement Levels
-
-| Level           | Meaning                                    |
-| --------------- | ------------------------------------------ |
-| **MANDATORY**   | Must follow without exception              |
-| **Required**    | Follow unless user explicitly overrides    |
-| **Recommended** | Best practice, may skip with justification |
-
-### Active Rules
-
-| Rule          | File                                                 | Level         |
-| ------------- | ---------------------------------------------------- | ------------- |
-| Skill Reading | [skill-enforcement.md](./rules/skill-enforcement.md) | **MANDATORY** |
-| Code Quality  | [code-quality.md](./rules/code-quality.md)           | Required      |
-| Security      | [security.md](./rules/security.md)                   | Required      |
-| Testing       | [testing.md](./rules/testing.md)                     | Required      |
-| Git Workflow  | [git-workflow.md](./rules/git-workflow.md)           | Required      |
-
-### Path-Scoped Rules (load only when editing matching files)
-
-| Rule              | File                                                 | Applies To                                              |
-| ----------------- | ---------------------------------------------------- | ------------------------------------------------------- |
-| TypeScript Syntax | [syntax-typescript.md](./rules/syntax-typescript.md) | `api/**/*.ts`, `apps/**/*.{ts,tsx}`, `packages/**/*.ts` |
-| Python Syntax     | [syntax-python.md](./rules/syntax-python.md)         | `services/**/*.py`                                      |
-
----
-
-## Commands in Detail
-
-### `/task-plan {name}`
-
-Creates structured task documentation for complex features.
-
-**When to use:**
-
-- Starting a new feature
-- Planning a refactoring effort
-- Breaking down a complex bug fix
-
-**Creates:**
-
-```
-dev/active/{name}/
-├── {name}-plan.md      # Comprehensive plan
-├── {name}-context.md   # Key decisions, dependencies
-└── {name}-tasks.md     # Progress checklist
-```
-
-**Example:**
-
-```
-/task-plan add-caching-layer
-
-→ Creates dev/active/add-caching-layer/
-→ Generates plan with phases, tasks, risks
-→ Tracks progress through implementation
-```
-
----
-
-### `/list-tasks`
-
-Shows all active tasks with progress.
-
-**When to use:**
-
-- Starting a new session
-- Checking overall progress
-- Deciding which task to work on
-
-**Output:**
-
-```
-## 📋 Active Tasks
-
-| Task | Progress | Last Updated |
-|------|----------|--------------|
-| add-caching | 3/5 (60%) | 2025-01-20 |
-| auth-refactor | 1/8 (12%) | 2025-01-18 |
-```
-
----
-
-### `/resume {task-name}`
-
-Loads context and continues an active task.
-
-**When to use:**
-
-- After clearing chat
-- Switching between tasks
-- Starting a new session
-
-**Example:**
-
-```
-/resume add-caching
-
-→ Loads context from dev/active/add-caching/
-→ Shows completed tasks, current state
-→ Lists next steps and blockers
-→ Ready to continue working
-```
-
----
-
-### `/complete-task {task-name}`
-
-Runs the full completion workflow.
-
-**When to use:**
-
-- Task implementation is done
-- Ready to finalize and verify
-- Before merging to main
-
-**Workflow:**
-
-```
-1. ✅ Plan Verification - Implementation matches plan?
-2. ✅ Tests - Generate/run tests, check coverage
-3. ✅ Security - Audit for vulnerabilities
-4. ✅ Code Review - Quality, patterns, cleanup
-5. ✅ Documentation - Update docs/, CLAUDE.md, README
-```
-
-**Example:**
-
-```
-/complete-task add-caching
-
-## ✅ Task Completion Report: add-caching
-
-### 1. Plan Verification
-✅ Implementation matches plan
-
-### 2. Tests
-✅ Tests passing (85% coverage)
-
-### 3. Security
-✅ No issues found
-
-### 4. Code Review
-✅ Code quality good
-
-### 5. Documentation
-✅ Updated docs/INFRASTRUCTURE.md (caching section)
-
----
-**Task complete! Run /ship when ready to deploy.**
-```
-
----
-
-### `/update-docs {changes}`
-
-Updates project documentation for recent changes.
-
-**When to use:**
-
-- After completing a feature
-- After architecture changes
-- When APIs change
-
-**Example:**
-
-```
-/update-docs added Redis caching layer
-
-→ Checks docs/ARCHITECTURE.md
-→ Updates docs/INFRASTRUCTURE.md (caching section)
-→ Updates CLAUDE.md tech stack
-→ Reports what was changed
-```
-
----
-
-### `/task-plan-update`
-
-Saves current context before clearing chat.
-
-**When to use:**
-
-- Context getting long
-- Before clearing chat
-- Switching to different work
-
-**Saves:**
-
-- Current implementation state
-- Key decisions made
-- Files modified
-- Next immediate steps
-
----
-
-## Hooks
-
-All hooks are configured in `settings.json` and run automatically at specific lifecycle points.
-
-### UserPromptSubmit
-
-| Hook                           | Purpose                                                                                    |
-| ------------------------------ | ------------------------------------------------------------------------------------------ |
-| **skill-activation-prompt.ts** | Matches prompt keywords against `skill-rules.json`, suggests relevant skills and resources |
-
-### PreToolUse
-
-| Hook                    | Matcher                | Purpose                                                                                                                       |
-| ----------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| **git-safety-guard.sh** | Bash                   | Denies destructive git (stash/reset --hard/checkout --/clean/force-push/branch -D); asks on commit/push                        |
-| **pre-edit-guard.ts**   | Edit\|Write\|MultiEdit | Merged guard: blocks edits only for files in an unconsumed skill's `pathPatterns` (md/dev/docs exempt) + warn-only TDD reminder |
-
-### PostToolUse (Edit\|Write\|MultiEdit)
-
-| Hook                         | Purpose                                                          |
-| ---------------------------- | ---------------------------------------------------------------- |
-| **post-tool-use-tracker.sh** | Tracks which files were modified, auto-detects project structure |
-| **auto-format.sh**           | Runs ESLint `--fix` (TS/JS) or ruff (Python) on saved files      |
-| **continuous-learning.ts**   | Learns patterns from edits for future suggestions                |
-
-### PostToolUse (Read)
-
-| Hook                      | Purpose                                                        |
-| ------------------------- | -------------------------------------------------------------- |
-| **skill-read-tracker.ts** | Tracks when skill files are read, unblocks `skill-block-guard` |
-
-### Stop
-
-| Hook                     | Purpose                                                         |
-| ------------------------ | --------------------------------------------------------------- |
-| **tsc-check-stop.sh**    | Runs TypeScript compilation check across services when stopping |
-| **auto-save-context.sh** | Saves current task context to `dev/active/` on stop             |
-
----
-
-## Best Practices
-
-### 1. Always Read Activated Skills
-
-When you see the skill activation banner, STOP and read the suggested files before writing any code.
-
-### 2. Use Task Planning for Complex Work
-
-If a task involves more than 3-4 files or will take multiple sessions, create task docs with `/task-plan`.
-
-### 3. Save Context Before Clearing
-
-Always run `/task-plan-update` before clearing chat. Your future self will thank you.
-
-### 4. Run Complete Workflow Before Merging
-
-Use `/complete-task` to ensure tests pass, security is checked, and docs are updated.
-
-### 5. Keep Tasks Focused
-
-One task = one feature or fix. Don't combine unrelated work in a single task.
-
----
-
-## Troubleshooting
-
-### Skills Not Activating
-
-Check that [skill-rules.json](./skills/skill-rules.json) exists and has valid configuration.
-
-### Task Not Found
-
-Verify the task exists in [dev/active/](../dev/active/). Use `/list-tasks` to see available tasks.
-
-### Hook Not Running
-
-Check [settings.json](./settings.json) for hook configuration (settings.local.json holds only personal permission grants). Shell hooks must be executable.
-
----
-
-## Adding New Commands
-
-1. Create `.claude/commands/{command-name}.md`
-2. Add frontmatter with description and argument-hint
-3. Write instructions for Claude to follow
-4. Update this README and CLAUDE.md
-
-### Command Template
-
-```markdown
----
-description: Brief description of what this command does
-argument-hint: What arguments it accepts (e.g., "file path", "task name")
----
-
-Instructions for Claude to follow when this command is invoked.
-
-## Instructions
-
-1. Step one
-2. Step two
-
-## Output Format
-
-What the output should look like.
-```
-
----
-
-## Adding New Rules
-
-1. Create `.claude/rules/{rule-name}.md`
-2. Define the rule with clear requirements
-3. Set enforcement level (MANDATORY/Required/Recommended)
-4. Add to `.claude/rules/README.md` table
-5. Reference in CLAUDE.md if critical
+## Scorecard
+
+| Area | Old `.claude/` | mattpocock/skills | `.claude2/` |
+|---|---|---|---|
+| Instructions | 97-line CLAUDE.md + 5 always-on rules | 6-word CLAUDE.md | ≤ 100-line CLAUDE.md, 0 unscoped rules, 2 path-scoped |
+| Skills | 4 × 8k-word tutorials, keyword hook, 19 unused design skills | 27 process skills, no repo layer | 3 repo skills with `paths:` + 8 process skills |
+| Hard rules | prose + 1 good hook + 8 obsolete hooks | pre-commit, dependency-cruiser | 4 hooks (5 registrations) + 28 deny/ask rules + 3 settings |
+| Verification | tsc banner every stop | pull-based TDD skill | silent scoped stop-check that blocks once, `/check` |
+| Agents | 6 on Fable, 4 never used | none | 2 on opus, opus default for unset calls |
+| Task state | 3 files + snapshot JSON, 19k-token resume | GitHub issues | 2 files, resume ≤ 6k tokens, legacy readable |
+| Noise per session | ~90 reminder lines | 0 | ≤ 8 lines at SessionStart |
+| Dependencies | 131 MB node_modules | none | none |
+| Tests | 104, 2 red | none visible | 195 green |
+
+## Changelog
+
+- 2026-11-02: comparison fix list §6 items 1–5 (`dev/research/claude-infra-comparison-2026-11-01.md`).
+  git-guard checks each `;`/`&&`/`||`/`|` segment on its own, scans quoted text when an interpreter runs it,
+  ignores heredoc prose, knows `checkout <path>`, `switch --discard-changes`, `reset --merge|--keep`,
+  `branch -d main`, `push +ref`, `worktree remove -f`, `update-ref -d`, and fails closed without jq.
+  post-edit records files written through Bash; stop-check falls back to the dirty tree, keeps eslint and
+  ruff file paths, drops deleted files and stops re-checking a red session. activate.sh decides the
+  `settings.local.json` copy before the renames and reverts the first `mv` if the second fails. Tests use a
+  temp state root. New: `/guard off|on`, `hooks/guard-ctl.sh`, `guard-off` state, pkgmap refuses a web
+  typecheck without `tsconfig.app.json`. CLAUDE.md: dev/active never staged, no docs-only commits,
+  push/PR/rebase on Kfir's word, spend stated before any run, Fable/Opus/Sonnet roles. 99 → 195 tests. Argument hints use the autocomplete convention (`[task-name]`, never `<task-name>`); `/guard` allowed-tools dropped the `.claude2` path.
+- 2026-10-29: built from the audit (`dev/research/claude-infra-audit-2026-10-29.md`).
+
+## Known limits
+
+- `CLAUDE_CODE_SUBAGENT_MODEL=opus` is a default: it covers Agent calls that set no model. Explicit
+  `sonnet` still works; built-in Explore runs on opus anyway; Plan and `fork` inherit the main
+  model, so `/task-plan` passes `model: opus` explicitly.
+- Skill names avoid the bundled `/debug`, `/verify` and `/review`; `resume` deliberately shadows the
+  built-in session picker, as the old command did (`claude -r` still works).
+- `dev/active/observability-fix` is a stale legacy task folder; `/resume` lists it until archived.
+- The mongodb MCP assumes the dev compose (no auth). Set `MDB_MCP_CONNECTION_STRING` for anything else.

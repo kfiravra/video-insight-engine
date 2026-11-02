@@ -1,43 +1,52 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "enableAllProjectMcpServers": true,
+  "attribution": false,
+  "env": {
+    "CLAUDE_CODE_SUBAGENT_MODEL": "opus"
+  },
   "permissions": {
-    "allow": [
-      "Edit",
-      "Write",
-      "MultiEdit",
-      "Bash",
-      "Bash(npm:*)",
-      "Bash(npx:*)",
-      "Bash(node:*)",
-      "Bash(python:*)",
-      "Bash(pip:*)",
-      "Bash(docker:*)",
-      "Bash(docker-compose:*)",
-      "Bash(git:*)",
-      "Bash(cat:*)",
-      "Bash(ls:*)",
-      "Bash(find:*)",
-      "Bash(grep:*)",
-      "Bash(curl:*)",
-      "Bash(jq:*)",
-      "Bash(pnpm:*)",
-      "Bash(mkdir:*)",
-      "Bash(printf:*)",
-      "Bash(pkill:*)"
-    ],
     "deny": [
-      "Bash(rm -rf /)*",
-      "Bash(sudo:*)"
+      "Bash(sudo *)",
+      "Read(./.env.production)",
+      "Edit(./.env.production)"
+    ],
+    "ask": [
+      "Bash(git push *)",
+      "Bash(git rebase *)",
+      "Bash(gh pr create *)",
+      "Bash(gh pr merge *)",
+      "Bash(env -u GITHUB_TOKEN gh pr *)",
+      "Bash(git stash *)",
+      "Bash(git reset --hard *)",
+      "Bash(git clean *)",
+      "Bash(git checkout -- *)",
+      "Bash(docker compose restart *)",
+      "Bash(docker compose down *)",
+      "Bash(docker compose stop *)",
+      "Bash(docker compose rm *)",
+      "Bash(docker compose kill *)",
+      "Bash(docker compose up *--force-recreate*)",
+      "Bash(docker compose up *--build*)",
+      "Bash(docker-compose restart *)",
+      "Bash(docker-compose down *)",
+      "Bash(docker-compose stop *)",
+      "Bash(docker-compose up *--force-recreate*)",
+      "Bash(docker-compose up *--build*)",
+      "Bash(docker restart *)",
+      "Bash(docker stop *)",
+      "Bash(docker rm *)",
+      "Bash(docker kill *)"
     ]
   },
-  "enableAllProjectMcpServers": true,
   "hooks": {
-    "UserPromptSubmit": [
+    "SessionStart": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/skill-activation-prompt.sh"
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/session-start.sh",
+            "timeout": 10
           }
         ]
       }
@@ -48,47 +57,30 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/git-safety-guard.sh"
-          }
-        ]
-      },
-      {
-        "matcher": "Edit|Write|MultiEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "cd $CLAUDE_PROJECT_DIR/.claude/hooks && npx tsx pre-edit-guard.ts"
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/git-guard.sh",
+            "timeout": 10
           }
         ]
       }
     ],
     "PostToolUse": [
       {
-        "matcher": "Edit|MultiEdit|Write",
+        "matcher": "Edit|Write",
         "hooks": [
           {
             "type": "command",
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/post-tool-use-tracker.sh"
-          },
-          {
-            "type": "command",
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/auto-format.sh",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/post-edit.sh",
             "timeout": 30
-          },
-          {
-            "type": "command",
-            "command": "cd $CLAUDE_PROJECT_DIR/.claude/hooks && npx tsx continuous-learning.ts",
-            "timeout": 5
           }
         ]
       },
       {
-        "matcher": "Read",
+        "matcher": "Bash",
         "hooks": [
           {
             "type": "command",
-            "command": "cd $CLAUDE_PROJECT_DIR/.claude/hooks && npx tsx skill-read-tracker.ts",
-            "timeout": 5
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/post-edit.sh",
+            "timeout": 30
           }
         ]
       }
@@ -98,13 +90,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/tsc-check-stop.sh",
-            "timeout": 60
-          },
-          {
-            "type": "command",
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/auto-save-context.sh",
-            "timeout": 10
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/stop-check.sh",
+            "timeout": 300
           }
         ]
       }
