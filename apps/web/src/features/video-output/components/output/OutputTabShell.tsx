@@ -104,6 +104,8 @@ interface TabPanelProps {
   /** Planned tabs not streamed yet — the provisional notice counts them. */
   pendingTabCount: number;
   onCancel?: () => void;
+  /** The job's server start time (epoch ms) for the progress strip's clock. */
+  processingStartedAtMs?: number;
 }
 
 export function TabPanel({
@@ -116,6 +118,7 @@ export function TabPanel({
   videoSummaryId,
   pendingTabCount,
   onCancel,
+  processingStartedAtMs,
 }: TabPanelProps) {
   const tabLayoutRef = useRef<TabLayoutHandle>(null);
   const provisionalIds = new Set(tabDefs.filter((t) => t.provisional).map((t) => t.id));
@@ -128,6 +131,7 @@ export function TabPanel({
       totalCount={tabCount}
       streamPhase={streamPhase}
       onCancel={onCancel}
+      processingStartedAtMs={processingStartedAtMs}
     >
       {(activeTabId, onNavigateTab) => (
         <ErrorBoundary

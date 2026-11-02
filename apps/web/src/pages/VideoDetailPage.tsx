@@ -45,6 +45,16 @@ export function VideoDetailPage() {
   const isProcessing = shouldOpenStreamForStatus(video?.status);
   const videoSummaryId = video?.videoSummaryId || "";
 
+  // The elapsed clock's origin: the job's server start time, so a refresh
+  // mid-run shows the real wait. A run with no stamp (rows mid-run at deploy)
+  // counts from this page's mount — captured once, so the clock reads the same
+  // before and after the first tab lands.
+  const [mountedAtMs] = useState(() => Date.now());
+  const processingStartedAtMs = useMemo(() => {
+    const parsed = video?.processingStartedAt ? Date.parse(video.processingStartedAt) : NaN;
+    return Number.isFinite(parsed) ? parsed : mountedAtMs;
+  }, [video?.processingStartedAt, mountedAtMs]);
+
   // Tell the processing manager to yield streaming to the page-level hook
   // (the manager aborts its stream when viewingVideoSummaryId is set)
   const setViewingVideo = useProcessingStore((s) => s.setViewingVideo);
@@ -509,6 +519,7 @@ export function VideoDetailPage() {
             onRetryStream={handleStreamRetry}
             retryingStream={checkingStream || retryVideo.isPending}
             onCancelStream={isStreaming ? handleCancelStream : undefined}
+            processingStartedAtMs={processingStartedAtMs}
             languageToggle={
               canToggleLanguage && sourceLanguage ? (
                 <LanguageToggle
