@@ -221,7 +221,7 @@ export const LyricsKaraoke = memo(function LyricsKaraoke({
       <GlassCard>
         <div
           ref={containerRef}
-          className="max-h-[440px] overflow-y-auto px-1 scrollbar-none"
+          className="max-h-[440px] overflow-y-auto px-1 scrollbar-hide"
           data-testid="lyrics-karaoke-scroller"
         >
           <ul className="space-y-2" role="list">
