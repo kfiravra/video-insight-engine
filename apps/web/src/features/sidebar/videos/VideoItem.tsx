@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useRef, memo } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useDraggable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
 import { Film, Star } from "lucide-react";
@@ -44,6 +44,7 @@ export const VideoItem = memo(function VideoItem({ video, level, folders = [] }:
   // Router-aware active check — component is memoized, so only items whose
   // pathname match flips actually re-render.
   const { pathname } = useLocation();
+  const navigate = useNavigate();
   const isActiveVideo = pathname === `/video/${video.id}`;
 
   // Selection mode state
@@ -114,6 +115,9 @@ export const VideoItem = memo(function VideoItem({ video, level, folders = [] }:
     deleteVideo.mutate(video.id, {
       onSuccess: () => {
         setShowDeleteDialog(false);
+        // The page behind the dialog was this video: it no longer exists, so
+        // land on the library root instead of a "may have been deleted" error.
+        if (isActiveVideo) navigate("/board");
       },
     });
   };
