@@ -347,18 +347,18 @@ describe('SectionNav', () => {
     for (const chip of screen.getAllByRole('button')) expect(chip.className).toContain('snap-center');
   });
 
-  it('should scroll the active chip into view when the active section changes', () => {
+  it('should scroll the active chip into view when the active section changes, not on first paint', () => {
     const scrollIntoView = Element.prototype.scrollIntoView as ReturnType<typeof vi.fn>;
     scrollIntoView.mockClear();
     const { rerender } = render(<SectionNav sections={sections} activeId="a" onSelect={vi.fn()} />);
-    expect(scrollIntoView).toHaveBeenCalledTimes(1);
-    expect(scrollIntoView.mock.instances[0]).toBe(screen.getByRole('button', { name: 'Day 1' }));
+    // Mount must not scroll: a nav below the fold would otherwise pull the page down.
+    expect(scrollIntoView).not.toHaveBeenCalled();
 
     rerender(<SectionNav sections={sections} activeId="c" onSelect={vi.fn()} />);
 
-    expect(scrollIntoView).toHaveBeenCalledTimes(2);
-    expect(scrollIntoView.mock.instances[1]).toBe(screen.getByRole('button', { name: 'Day 3' }));
-    expect(scrollIntoView.mock.calls[1][0]).toMatchObject({ inline: 'center', block: 'nearest' });
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(scrollIntoView.mock.instances[0]).toBe(screen.getByRole('button', { name: 'Day 3' }));
+    expect(scrollIntoView.mock.calls[0][0]).toMatchObject({ inline: 'center', block: 'nearest' });
   });
 });
 

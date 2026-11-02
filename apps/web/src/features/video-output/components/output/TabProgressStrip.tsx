@@ -1,4 +1,4 @@
-import { memo, useState } from 'react';
+import { memo } from 'react';
 import { Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -116,8 +116,7 @@ export const TabProgressStrip = memo(function TabProgressStrip({
   onCancel,
   processingStartedAtMs,
 }: TabProgressStripProps) {
-  const [mountedAtMs] = useState(() => Date.now());
-  const elapsed = useElapsedSeconds(processingStartedAtMs ?? mountedAtMs);
+  const elapsed = useElapsedSeconds(processingStartedAtMs);
   return (
     <div className="flex flex-col gap-1.5 px-1 pt-1 animate-[fadeUp_0.35s_var(--ease-out-expo)_both]">
       {streamPhase && (

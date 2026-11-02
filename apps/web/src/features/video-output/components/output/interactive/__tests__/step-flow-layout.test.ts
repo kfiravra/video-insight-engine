@@ -43,9 +43,10 @@ describe('openingViewport', () => {
     expect(viewport.zoom).toBe(MIN_ZOOM);
   });
 
-  it('should fall back to the zoom floor when the canvas has no measured width yet', () => {
+  it('should open at 100 % against the start edge when the canvas has no measured width yet', () => {
     const viewport = openingViewport({ canvasWidth: 0, nodeWidth: NODE_WIDTH, minZoom: MIN_ZOOM });
-    expect(viewport.zoom).toBe(MIN_ZOOM);
+    expect(viewport.zoom).toBe(1);
     expect(viewport.y).toBe(OPENING_PAD);
+    expect(toScreenX(SPAN_LEFT, viewport)).toBe(OPENING_PAD);
   });
 });

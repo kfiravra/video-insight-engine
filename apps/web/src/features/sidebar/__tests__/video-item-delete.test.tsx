@@ -24,13 +24,12 @@ vi.mock("@dnd-kit/core", async () => ({
   useDraggable: () => ({ attributes: {}, listeners: {}, setNodeRef: () => {}, transform: null, isDragging: false }),
 }));
 // The real menu is a Radix dropdown; a plain button reaches the same onDelete.
-vi.mock("@/features/sidebar/videos/VideoContextMenu", () => ({
-  VideoContextMenu: ({ onDelete }: { onDelete: () => void }) => (
-    <button type="button" onClick={onDelete}>
-      Open delete
-    </button>
-  ),
-}));
+vi.mock("@/features/sidebar/videos/VideoContextMenu", async () => {
+  const { Button } = await import("@/components/ui/button");
+  return {
+    VideoContextMenu: ({ onDelete }: { onDelete: () => void }) => <Button onClick={onDelete}>Open delete</Button>,
+  };
+});
 
 const video = createMockVideo({ id: "v1", title: "Open video", status: "completed" }) as unknown as Video;
 

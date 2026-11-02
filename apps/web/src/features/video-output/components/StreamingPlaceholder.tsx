@@ -82,9 +82,7 @@ export function StreamingPlaceholder({
   onCancel,
   processingStartedAtMs,
 }: StreamingPlaceholderProps) {
-  // Mount-time fallback origin, captured once: only for runs with no server start time.
-  const [mountedAtMs] = useState(() => Date.now());
-  const elapsed = useElapsedSeconds(processingStartedAtMs ?? mountedAtMs);
+  const elapsed = useElapsedSeconds(processingStartedAtMs);
 
   const [showCancel, setShowCancel] = useState(false);
   useEffect(() => {

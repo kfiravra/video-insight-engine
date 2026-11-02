@@ -357,6 +357,7 @@ export class VideoRepository {
   }
 
   async incrementRetryCount(id: string): Promise<void> {
+    const now = new Date();
     await this.cacheCollection.updateOne(
       { _id: new ObjectId(id) },
       {
@@ -364,7 +365,7 @@ export class VideoRepository {
         // reset the release marker — a future FAILED for THIS run should be
         // free to claim release. The `$unset` is harmless on rows that have
         // never set the field.
-        $set: { status: 'pending', updatedAt: new Date(), processingStartedAt: new Date() },
+        $set: { status: 'pending', updatedAt: now, processingStartedAt: now },
         $unset: { dispatchGuardReleasedAt: '' },
         $inc: { retryCount: 1 },
       }
@@ -379,9 +380,10 @@ export class VideoRepository {
    * guard-release marker so a FAILED for THIS run can still release.
    */
   async markRedispatched(id: string): Promise<void> {
+    const now = new Date();
     await this.cacheCollection.updateOne(
       { _id: new ObjectId(id) },
-      { $set: { status: 'pending', updatedAt: new Date(), processingStartedAt: new Date() }, $unset: { dispatchGuardReleasedAt: '' } },
+      { $set: { status: 'pending', updatedAt: now, processingStartedAt: now }, $unset: { dispatchGuardReleasedAt: '' } },
     );
   }
 

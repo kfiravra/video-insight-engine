@@ -37,6 +37,12 @@ export function openingViewport({ canvasWidth, nodeWidth, minZoom }: OpeningView
   // Flow-space extent of both columns: the left card's left edge to the right card's right edge.
   const spanLeft = -COLUMN_OFFSET;
   const spanWidth = 2 * COLUMN_OFFSET + nodeWidth;
+  // No measured width yet (a container that has not laid out): there is no
+  // centre to aim for, so open at 100 % with the span against the start edge —
+  // still step 1 at the top, still readable.
+  if (!(canvasWidth > 0)) {
+    return { x: OPENING_PAD - spanLeft, y: OPENING_PAD, zoom: 1 };
+  }
   const usable = Math.max(0, canvasWidth - 2 * OPENING_PAD);
   const zoom = Math.min(1, Math.max(minZoom, usable / spanWidth));
   const spanCenter = spanLeft + spanWidth / 2;

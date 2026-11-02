@@ -34,6 +34,15 @@ describe('useElapsedSeconds', () => {
     expect(result.current).toBe(0);
   });
 
+  it('should count from mount when no origin is given', () => {
+    const { result } = renderHook(() => useElapsedSeconds());
+    expect(result.current).toBe(0);
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+    expect(result.current).toBe(3);
+  });
+
   it('should stop ticking on unmount', () => {
     const { unmount } = renderHook(() => useElapsedSeconds(Date.now()));
     unmount();

@@ -15,8 +15,8 @@ interface SectionNavProps {
 /**
  * A single scrollable row of section chips: the scrollbar is hidden and the
  * edges fade (`scrollbar-hide` + `scroll-fade-x`), chips snap into place, and
- * the row scrolls to keep the active chip in view — so a section chosen from
- * elsewhere (or on first paint) never sits off-screen.
+ * the row scrolls to keep the active chip in view whenever the active section
+ * changes — so a chosen section never sits off-screen.
  */
 export const SectionNav = memo(function SectionNav({
   sections,
@@ -28,7 +28,13 @@ export const SectionNav = memo(function SectionNav({
   const chipRefs = useRef(new Map<string, HTMLButtonElement>());
   const reducedMotion = usePrefersReducedMotion();
 
+  // Follow the active chip on change only, never on first paint: the row
+  // opens on its first chip anyway, and a scrollIntoView on mount could pull
+  // the page down to a nav that sits below the fold.
+  const lastActiveId = useRef(activeId);
   useEffect(() => {
+    if (lastActiveId.current === activeId) return;
+    lastActiveId.current = activeId;
     const chip = chipRefs.current.get(activeId);
     chip?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: reducedMotion ? 'auto' : 'smooth' });
   }, [activeId, reducedMotion]);
