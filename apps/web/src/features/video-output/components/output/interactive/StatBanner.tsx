@@ -19,21 +19,32 @@ interface StatBannerProps {
   onSeek?: (seconds: number) => void;
 }
 
+/** The schema admits a numeric `value`; render it as text and never call
+ *  string methods on it. */
+function statValue(stat: StatBannerStat): string {
+  const raw: unknown = stat.value;
+  return raw == null ? '' : String(raw).trim();
+}
+
 /**
- * StatBanner — a row of equal-weight compact stats. Secondary-tier
+ * StatBanner — a responsive grid of equal-weight compact stats. Secondary-tier
  * (attachment-only). Deliberately NOT a hero-metric template: no oversized
  * number, no gradient, no single dominant figure. Every stat carries the same
  * visual weight so the banner reads as a quick reference strip, not a dashboard
- * KPI hero.
+ * KPI hero. Two columns on phones; from `sm` up the grid auto-fits tiles of
+ * at least 140 px, so a row holds every stat only when each one gets that
+ * width and wraps otherwise. Text wraps between words; a word breaks only
+ * when it alone overflows its tile.
  */
 export const StatBanner = memo(function StatBanner({ stats, className, onSeek }: StatBannerProps) {
-  const clean = stats.filter((s) => s && s.label?.trim() && s.value?.trim());
+  const clean = stats.filter((s) => s && s.label?.trim() && statValue(s));
   if (clean.length === 0) return null;
 
   return (
     <div
       className={cn(
-        'flex flex-wrap items-stretch gap-2 rounded-xl border border-border bg-card p-2',
+        'grid grid-cols-2 gap-2 rounded-xl border border-border bg-card p-2',
+        'sm:[grid-template-columns:repeat(auto-fit,minmax(140px,1fr))]',
         className,
       )}
       role="list"
@@ -43,19 +54,19 @@ export const StatBanner = memo(function StatBanner({ stats, className, onSeek }:
         <div
           key={`${stat.label}-${i}`}
           role="listitem"
-          className="flex min-w-[6rem] flex-1 items-center gap-2 rounded-lg bg-muted/20 px-3 py-2"
+          className="flex min-w-0 items-center gap-2 rounded-lg bg-muted/20 px-3 py-2"
         >
           {stat.emoji ? (
             <span aria-hidden="true" className="shrink-0 text-base leading-none">
               {stat.emoji}
             </span>
           ) : null}
-          <span className="flex min-w-0 flex-1 flex-col leading-tight">
+          <span className="flex min-w-0 flex-1 flex-col leading-tight break-words hyphens-none">
             <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/80">
               {stat.label}
             </span>
             <span className="text-sm font-semibold tabular-nums text-foreground">
-              {stat.value}
+              {statValue(stat)}
             </span>
             {stat.meaning?.trim() ? (
               <span className="mt-0.5 text-xs font-normal leading-snug text-muted-foreground">
