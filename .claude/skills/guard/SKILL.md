@@ -6,8 +6,7 @@ disable-model-invocation: true
 allowed-tools: Bash(bash .claude/hooks/guard-ctl.sh *)
 ---
 
-Run `bash .claude/hooks/guard-ctl.sh $ARGUMENTS` (before the swap: `.claude2/hooks/guard-ctl.sh`)
-and repeat its one line of output. Nothing else.
+Run `bash .claude/hooks/guard-ctl.sh $ARGUMENTS` and repeat its one line of output. Nothing else.
 
 What it changes: `off` writes `state/guard-off`; while that file exists `git-guard.sh` neither
 blocks nor asks, SessionStart prints `git guard: OFF`, and after a day the file is removed on the

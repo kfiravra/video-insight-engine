@@ -22,9 +22,9 @@ active=$(printf '%s' "$input" | jq -r '.stop_hook_active // false' 2>/dev/null)
 state="$(vie_state_dir "$sid")"
 touched="$state/touched"
 
-# Dirty working-tree files (added, modified, renamed, untracked), excluding the swap folder.
+# Dirty working-tree files (added, modified, renamed, untracked).
 tree_files() {
-  git -C "$VIE_ROOT" status --porcelain --untracked-files=all -- . ':!.claude1' 2>/dev/null \
+  git -C "$VIE_ROOT" status --porcelain --untracked-files=all 2>/dev/null \
     | grep -vE '^.?D' | sed 's/^...//; s/.* -> //'
 }
 tree_hash() {

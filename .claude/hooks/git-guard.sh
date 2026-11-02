@@ -6,7 +6,6 @@
 #          checkout <path> / checkout -f, switch --discard-changes|-f, clean, restore (except a
 #          pure --staged), force push (-f, --force*, +ref, deleting main), branch -D/-d main,
 #          worktree remove --force, update-ref -d.
-#          While .claude1/ exists (infra swap in progress): git add -A/./-u, git commit -a.
 # Asks:    git push, git rebase, gh pr create/merge, container-recreating docker commands.
 # Override: create <state>/git-override after explicit user approval; consumed once.
 # Off:      /guard off writes <state>/guard-off; blocks and asks stand down until /guard on.
@@ -154,17 +153,6 @@ checkout_targets_paths() {
   return 1
 }
 
-swap_guard() {
-  local c="$1"
-  [[ -d "$VIE_ROOT/.claude1" ]] || return 1
-  if grep -qE "$G add( [^ ]+)* (-A|--all|-u|--update|\.)( |$)" <<<"$c" ||
-     grep -qE "$G commit( [^ ]+)* (-a|--all|-am)\b" <<<"$c"; then
-    echo "infra swap in progress (.claude1/ present): this would stage the swapped .claude/ tree. Add explicit paths instead."
-    return 0
-  fi
-  return 1
-}
-
 ask_gate() {
   local c="$1"
   if grep -qE "$G push\b" <<<"$c"; then
@@ -200,12 +188,6 @@ EOF
 
 guard_off=0
 [[ -f "$VIE_GUARD_OFF" ]] && guard_off=1
-
-for seg in "${segs[@]}"; do
-  if reason=$(swap_guard "$seg"); then
-    block "$reason"
-  fi
-done
 
 if (( guard_off == 1 )); then
   exit 0

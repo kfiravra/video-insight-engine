@@ -51,7 +51,7 @@ if [[ ${#paths[@]} -gt 0 ]]; then
       services/assistant/*.py) py_files+=("$rel"); add_py_service services/assistant ;;
       services/admin/*.py) py_files+=("$rel"); add_py_service services/admin ;;
       packages/llm-common/*.py) py_files+=("$rel"); add_py_service packages/llm-common ;;
-      .claude/hooks/*|.claude2/hooks/*) want_hooks=1 ;;
+      .claude/hooks/*) want_hooks=1 ;;
     esac
   done
 fi

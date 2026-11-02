@@ -7,7 +7,7 @@ allowed-tools: Bash(bash .claude/hooks/lib/pkgmap.sh *), Bash(pnpm *), Bash(npx 
 
 Changed files in the working tree:
 
-!`git status --porcelain -- . ':!.claude1' 2>/dev/null | awk '{print $NF}' | head -200 || true`
+!`git status --porcelain 2>/dev/null | awk '{print $NF}' | head -200 || true`
 
 Arguments: $ARGUMENTS
 

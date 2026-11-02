@@ -76,4 +76,4 @@ Mongo + Redis + Qdrant + RabbitMQ via docker compose. Full context dump: [PROJEC
 
 ## Skills
 
-`/task-plan [name]` plan a task · `/resume [task]` pick it up · `/handoff` save state before clearing · `/check [all]` verify touched packages · `/phase-review` by-area review · `/ship` pre-PR gate · `/guard off|on` the user's switch for the git guard · `/diagnose` and `/tdd` load on their own when relevant. Maintenance: `/doctor prompt-audit`, `/skill-doctor`, `/checkup`, `node --test .claude/hooks/tests/*.test.mjs`.
+`/task-plan [name]` plan a task · `/resume [task]` pick it up · `/handoff` save state before clearing · `/check [all]` verify touched packages · `/phase-review` by-area review · `/ship` pre-PR gate · `/guard off|on` the user's switch for the git guard · `/impeccable [command]` design passes on UI work (shape, critique, audit, polish) · `/diagnose` and `/tdd` load on their own when relevant. Maintenance: `/doctor prompt-audit`, `/skill-doctor`, `/checkup`, `node --test .claude/hooks/tests/*.test.mjs`.

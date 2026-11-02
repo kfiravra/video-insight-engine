@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Shared helpers for the hooks. Source this file; do not execute it.
-# Every path derives from this file's location, so the hooks work before the
-# folder swap (.claude2/) and after it (.claude/).
+# Every path derives from this file's location, so the hooks work from any checkout.
 
 VIE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VIE_INFRA_DIR="$(cd "$VIE_LIB_DIR/../.." && pwd)"

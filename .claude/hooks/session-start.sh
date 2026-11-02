@@ -21,18 +21,11 @@ fi
 cd "$VIE_ROOT" 2>/dev/null || exit 0
 
 branch=$(git branch --show-current 2>/dev/null || echo "?")
-if [[ -d .claude1 ]]; then
-  dirty=$(git status --porcelain -- . ':!.claude' ':!.claude1' 2>/dev/null | wc -l | tr -d ' ')
-  echo "branch $branch, $dirty dirty files (excluding the infra swap; .claude1/ present, git add -A is blocked)"
-else
-  dirty=$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')
-  echo "branch $branch, $dirty dirty files"
-fi
+dirty=$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+echo "branch $branch, $dirty dirty files"
 
-if [[ "$VIE_INFRA_DIR" == "$VIE_ROOT/.claude" && -f CLAUDE.md && -f .claude/CLAUDE.md ]]; then
-  if ! jq -e '.claudeMdExcludes[]? | select(endswith("/CLAUDE.md"))' .claude/settings.json >/dev/null 2>&1; then
-    echo "warning: both CLAUDE.md and .claude/CLAUDE.md load; add claudeMdExcludes to .claude/settings.json"
-  fi
+if [[ -f CLAUDE.md && -f .claude/CLAUDE.md ]]; then
+  echo "warning: both CLAUDE.md and .claude/CLAUDE.md load; .claude/CLAUDE.md is the memory file, delete the root one"
 fi
 
 shopt -s nullglob

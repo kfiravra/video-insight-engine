@@ -34,8 +34,8 @@ fail and are not your regression. Vitest fake timers need `clearTimeout` and
   live dev server. The e2e smoke project starts its own Vite on 5273, not the nginx build.
 - Design language: read [.impeccable/DESIGN.md](../../../.impeccable/DESIGN.md) (tokens, spacing, motion) and
   [.impeccable/PRODUCT.md](../../../.impeccable/PRODUCT.md) (users, brand: sharp, generous, confident; dark mode is primary;
-  violet-indigo identity, at most 4 accents per screen) before new UI. For net-new screens the
-  global `frontend-design` plugin is enabled; [reference/design-tokens.md](reference/design-tokens.md) in this skill holds the
+  violet-indigo identity, at most 4 accents per screen) before new UI. Design passes go through
+  `/impeccable <command>` (shape, critique, audit, polish); [reference/design-tokens.md](reference/design-tokens.md) in this skill holds the
   category accent and icon tables.
 - Output blocks compose the props-first, domain-free library in `src/components/vie/**` (barrel
   `@/components/vie`; `cards/`, `content/`, `data/`, `interactive/`, `media/`, `navigation/`,

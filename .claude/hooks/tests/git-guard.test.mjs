@@ -4,8 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { STATE_ROOT, parseJson, pathWithoutJq, rmrf, runHook, tmpDir } from './helpers.mjs';
 
-// A project dir without .claude1 so results never depend on the real repo state.
-// It holds one real directory and one real file so the checkout-<path> rule has
+// A project dir that holds one real directory and one real file so the checkout-<path> rule has
 // something to find.
 const project = tmpDir();
 fs.mkdirSync(path.join(project, 'api', 'src'), { recursive: true });
@@ -250,34 +249,6 @@ describe('git-guard edge inputs', () => {
   test('empty stdin is allowed', () => {
     const r = runHook('git-guard.sh', undefined, { env });
     assert.equal(r.status, 0);
-  });
-});
-
-describe('git-guard swap guard while .claude1/ exists', () => {
-  const swapped = tmpDir();
-  fs.mkdirSync(path.join(swapped, '.claude1'));
-  const swapEnv = { CLAUDE_PROJECT_DIR: swapped };
-  after(() => rmrf(swapped));
-
-  for (const cmd of ['git add -A', 'git add .', 'git add --all', 'git add -u', 'git commit -am "x"', 'git commit -a -m "x"']) {
-    test(`blocks during swap: ${cmd}`, () => {
-      const r = run(cmd, swapEnv);
-      assert.equal(r.status, 2);
-      assert.match(r.stderr, /infra swap in progress/);
-    });
-  }
-  for (const cmd of ['git add api/src/x.ts', 'git commit -m "feat: x"', 'git status']) {
-    test(`still allows during swap: ${cmd}`, () => {
-      assert.equal(run(cmd, swapEnv).status, 0);
-    });
-  }
-  test('the swap guard stays on while /guard off is active', () => {
-    fs.writeFileSync(path.join(STATE_ROOT, 'guard-off'), '');
-    try {
-      assert.equal(run('git add -A', swapEnv).status, 2);
-    } finally {
-      fs.rmSync(path.join(STATE_ROOT, 'guard-off'), { force: true });
-    }
   });
 });
 
