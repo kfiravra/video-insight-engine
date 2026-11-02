@@ -7,7 +7,7 @@ import type { VieCanvasProps } from '@/components/vie/canvas/CanvasShell';
 import { Button } from '@/components/ui/button';
 
 import { StepFlowCanvas } from '../StepFlowCanvas';
-import { zigzagLayout } from '../step-flow-layout';
+import { OPENING_PAD, zigzagLayout } from '../step-flow-layout';
 import { TabStateProvider, useTabState } from '@/features/video-output/contexts/TabStateContext';
 
 // Every render of the Flow view's canvas, recorded — the real canvas still renders.
@@ -147,12 +147,27 @@ describe('StepFlowCanvas', () => {
     expect(secondCanvasComplete).not.toBeNull();
   });
 
-  it('should open the Flow view on the first two steps, not the middle of the procedure', async () => {
+  it('should open the Flow view on step 1 at readable zoom, not on the whole graph', async () => {
     const user = userEvent.setup();
     const long = Array.from({ length: 12 }, (_, i) => ({ number: i + 1, instruction: `Step ${i + 1}.` }));
     renderInProvider(<StepFlowCanvas steps={long} />);
     await user.click(screen.getByRole('button', { name: /^flow$/i }));
-    expect(lastCanvasProps().startNodeIds).toEqual(['step-0', 'step-1']);
+    const props = lastCanvasProps();
+    // No whole-graph fit on mount: the opening view is set explicitly on init.
+    expect(props.fitView).toBe(false);
+    expect(props.startNodeIds).toBeUndefined();
+
+    const setViewport = vi.fn();
+    props.onInit?.({ setViewport } as never);
+
+    expect(setViewport).toHaveBeenCalledTimes(1);
+    const [viewport, options] = setViewport.mock.calls[0] as [{ x: number; y: number; zoom: number }, unknown];
+    // Step 1's top sits at the padding line — the flow reads down from it.
+    expect(viewport.y).toBe(OPENING_PAD);
+    // Readable: never blown up past 100 %, never under the 120 px card floor.
+    expect(viewport.zoom).toBeLessThanOrEqual(1);
+    expect(viewport.zoom).toBeGreaterThanOrEqual(120 / 260);
+    expect(options).toEqual({ duration: 0 });
   });
 
   it('should keep the other flow nodes untouched when a step is marked complete (no rebuild, no re-measure)', async () => {

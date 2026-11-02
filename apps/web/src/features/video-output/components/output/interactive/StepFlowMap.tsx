@@ -1,7 +1,8 @@
-import { memo, useCallback, useEffect, useMemo, useState } from 'react';
-import { Handle, Position, useEdgesState, useNodesState, type Edge, type Node, type NodeTypes } from '@xyflow/react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Handle, Position, useEdgesState, useNodesState, type Edge, type Node, type NodeTypes, type ReactFlowInstance } from '@xyflow/react';
 
 import { VieCanvas } from '@/components/vie/canvas/CanvasShell';
+import { clampMinZoom, DEFAULT_MIN_ZOOM } from '@/components/vie/canvas/zoom';
 import { GlassCard, VisualEvidence } from '@/components/vie';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
@@ -9,12 +10,15 @@ import { parseStepDurationSeconds } from '@/features/video-output/lib/step-durat
 import type { StepItem } from '@vie/types';
 
 import { CompleteToggle, DurationChip, StepNumber, type StepData } from './StepFlowChrome';
-import { zigzagLayout } from './step-flow-layout';
+import { openingViewport, zigzagLayout } from './step-flow-layout';
 
 /** Design width of a step node card; the canvas zoom floor keeps it legible. */
 const STEP_NODE_WIDTH = 260;
-/** The flow opens on its first steps — the start of the procedure. */
-const OPENING_STEPS = 2;
+/** The zoom floor the canvas applies for that card width (`VieCanvas nodeWidth`). */
+const STEP_MIN_ZOOM = clampMinZoom(STEP_NODE_WIDTH, DEFAULT_MIN_ZOOM);
+
+/** The slice of the React Flow instance the opening view needs. */
+type OpeningCanvas = Pick<ReactFlowInstance, 'setViewport'>;
 
 function stepNodeId(index: number): string {
   return `step-${index}`;
@@ -165,24 +169,32 @@ function useStepFlowGraph({ steps, completedSteps, onToggle, onSeek }: StepFlowM
 /**
  * The flow view of the step canvas: the xyflow zigzag, one node per step,
  * edges between consecutive steps that animate when both endpoints are
- * complete. Opens on the first steps, not the middle of a long procedure.
- * Mounted only while the flow is the chosen view, so React Flow state never
- * runs for the list.
+ * complete. Opens on step 1 at readable zoom (`openingViewport`), never on
+ * the whole graph zoomed out: the opening view is set explicitly on init
+ * from the layout constants instead of relying on React Flow's queued
+ * `fitView`, which fits whatever is measured when it fires. Mounted only
+ * while the flow is the chosen view, so React Flow state never runs for the
+ * list.
  */
 export const StepFlowMap = memo(function StepFlowMap(props: StepFlowMapProps) {
   const { nodes, edges, onNodesChange, onEdgesChange } = useStepFlowGraph(props);
-  const startNodeIds = useMemo(
-    () => props.steps.slice(0, OPENING_STEPS).map((_, index) => stepNodeId(index)),
-    [props.steps],
-  );
+  const wrapperRef = useRef<HTMLDivElement>(null);
   // Skeleton covers the blank mount window until React Flow reports it has
-  // initialised + measured the viewport (onInit).
+  // initialised the viewport (onInit) — at which point the opening view is
+  // applied, so the first visible frame is already step 1.
   const [canvasReady, setCanvasReady] = useState(false);
-  const handleCanvasInit = useCallback(() => setCanvasReady(true), []);
+  const handleCanvasInit = useCallback((canvas: OpeningCanvas) => {
+    const canvasWidth = wrapperRef.current?.clientWidth ?? 0;
+    void canvas.setViewport(
+      openingViewport({ canvasWidth, nodeWidth: STEP_NODE_WIDTH, minZoom: STEP_MIN_ZOOM }),
+      { duration: 0 },
+    );
+    setCanvasReady(true);
+  }, []);
   const canvasHeight = Math.min(720, 280 + props.steps.length * 160);
 
   return (
-    <div className="relative" style={{ height: canvasHeight }}>
+    <div ref={wrapperRef} className="relative" style={{ height: canvasHeight }}>
       <VieCanvas
         nodes={nodes}
         edges={edges}
@@ -190,9 +202,9 @@ export const StepFlowMap = memo(function StepFlowMap(props: StepFlowMapProps) {
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onInit={handleCanvasInit}
+        fitView={false}
         nodesDraggable={false}
         nodeWidth={STEP_NODE_WIDTH}
-        startNodeIds={startNodeIds}
         height={canvasHeight}
       />
       {!canvasReady && (
