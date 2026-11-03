@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 from llm_common.context import llm_feature_var
 
 from src.config import settings
+from src.services.observability import span
 from src.services.pipeline import faithfulness
 from src.services.pipeline.faithfulness_hero_quiz import (
     EvidenceSource,
@@ -50,7 +51,8 @@ _FAITHFULNESS_DRAIN_TIMEOUT_S = 25.0
 
 def _spawn_judge(check: Callable[[], Awaitable[object]], name: str) -> asyncio.Task[None]:
     """Run ``check`` in the background under the judge's ledger feature, held in
-    ``_FAITHFULNESS_TASKS`` until it ends. A failure is logged, never raised."""
+    ``_FAITHFULNESS_TASKS`` until it ends, as a ``phase:faithfulness`` span on the
+    run's Langfuse trace. A failure is logged, never raised."""
 
     async def _run() -> None:
         # asyncio.create_task snapshots the parent task's ContextVars at spawn
@@ -61,7 +63,10 @@ def _spawn_judge(check: Callable[[], Awaitable[object]], name: str) -> asyncio.T
         # the parent.
         llm_feature_var.set(_JUDGE_FEATURE)
         try:
-            await check()
+            # The orchestrator launches judges between phases, so without this
+            # span their generations would hang off the run's root span.
+            with span("phase:faithfulness"):
+                await check()
         except Exception as exc:  # noqa: BLE001 — defensive; check is non-critical
             logger.debug("Faithfulness task failed: %s", exc)
 

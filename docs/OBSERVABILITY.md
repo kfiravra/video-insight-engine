@@ -4,7 +4,7 @@ LLM observability is the project's debugging story for "this video came out wron
 
 Everything is **best-effort**: every Langfuse call is wrapped in try/except, all helpers no-op when keys are unset (the SDK is not even imported then), and the current span lives in a contextvar so concurrent pipeline runs don't contaminate each other's traces. A failed observability layer must not bring down the pipeline.
 
-The services use the Langfuse **Python SDK v4** (`langfuse>=4.7,<5`, OpenTelemetry underneath) through one shared client, `packages/llm-common/src/llm_common/observability/`; each service's `src/services/observability` re-exports it bound to its settings. `ENVIRONMENT` (lowercased) becomes the Langfuse environment in prod (`production`); dev leaves `ENVIRONMENT` blank and compose sets `LANGFUSE_TRACING_ENVIRONMENT=development` instead, so the two filter apart even inside one project.
+The services use the Langfuse **Python SDK v4** (`langfuse>=4.7,<5`, OpenTelemetry underneath) through one shared client, `packages/llm-common/src/llm_common/observability/`; each service's `src/services/observability` re-exports it bound to its settings. Compose sets `LANGFUSE_TRACING_ENVIRONMENT` (`development` in dev, `production` in prod) and prod's `ENVIRONMENT=production` is passed to the SDK explicitly too, so dev and prod traces filter apart even inside one project.
 
 ## Quick start
 

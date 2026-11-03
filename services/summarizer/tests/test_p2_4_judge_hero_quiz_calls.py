@@ -21,7 +21,7 @@ from llm_common.context import llm_feature_var
 
 from src.config import settings
 from src.routes import pipeline_faithfulness, pipeline_orchestration
-from src.services.observability import run_trace
+from src.services.observability import finish_generation, generation, run_trace
 from src.services.pipeline import faithfulness
 from src.services.pipeline import faithfulness_hero_quiz as hq
 from llm_common.observability.testing import LangfuseCapture
@@ -374,3 +374,28 @@ class TestCostBound:
 
         caps = sorted(c.kwargs["max_tokens"] for c in llm.call_llm_fast.call_args_list)
         assert caps == sorted([hq.HERO_MAX_TOKENS, hq.QUIZ_MAX_TOKENS])
+
+
+# ─── Langfuse nesting ───────────────────────────────────────────────────
+class TestJudgeSpan:
+    async def test_should_run_the_judges_in_a_phase_span_under_the_root_when_traced(
+        self, langfuse_capture: LangfuseCapture
+    ):
+        async with run_trace(name="pipeline:vid123"):
+            task = pipeline_faithfulness._launch_hero_quiz_check(_ctx())  # type: ignore[arg-type]
+            assert task is not None
+            await task
+
+        assert langfuse_capture.named("phase:faithfulness").parent == "pipeline:vid123"
+
+    async def test_should_nest_a_judge_generation_in_the_phase_span_when_spawned_between_phases(
+        self, langfuse_capture: LangfuseCapture
+    ):
+        async def check() -> None:
+            finish_generation(generation("faithfulness", model="judge-model"), output="{}")
+
+        async with run_trace(name="pipeline:vid123"):
+            await pipeline_faithfulness._spawn_judge(check, "judge-test")
+
+        (judge,) = langfuse_capture.generations("faithfulness")
+        assert judge.parent == "phase:faithfulness"
