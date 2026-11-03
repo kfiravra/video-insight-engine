@@ -32,7 +32,7 @@ export const TabBar = memo(function TabBar({
 }: TabBarProps) {
   return (
     <div
-      className={cn('flex gap-2 overflow-x-auto pb-1 scrollbar-none scroll-fade-x', className)}
+      className={cn('flex gap-2 overflow-x-auto pb-1 scrollbar-hide scroll-fade-x', className)}
       role="tablist"
     >
       {tabs.map((tab) => {

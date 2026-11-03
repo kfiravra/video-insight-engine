@@ -62,8 +62,11 @@ export function useDeleteVideo() {
 
   return useMutation({
     mutationFn: (id: string) => videosApi.delete(id),
-    onSuccess: () => {
+    onSuccess: (_data, id) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.videos.lists() });
+      // The detail entry is gone on the server: drop it so an open page never
+      // re-renders the deleted video from cache.
+      queryClient.removeQueries({ queryKey: queryKeys.videos.detail(id) });
     },
   });
 }
@@ -93,9 +96,12 @@ export function useBulkDeleteVideos() {
       // Delete videos in parallel
       await Promise.all(videoIds.map((id) => videosApi.delete(id)));
     },
-    onSuccess: () => {
+    onSuccess: (_data, videoIds) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.videos.lists() });
       queryClient.invalidateQueries({ queryKey: queryKeys.folders.lists() });
+      for (const id of videoIds) {
+        queryClient.removeQueries({ queryKey: queryKeys.videos.detail(id) });
+      }
     },
   });
 }

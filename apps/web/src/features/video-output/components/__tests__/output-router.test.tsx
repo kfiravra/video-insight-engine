@@ -154,6 +154,7 @@ describe('OutputRouter while tabs stream in', () => {
     isStreaming?: boolean;
     streamError?: string | null;
     replacedTabIds?: Record<string, string>;
+    processingStartedAtMs?: number;
   }
 
   function streamingRouter(tabs: StreamTab[] | null, extra: RouterOverrides = {}) {
@@ -184,6 +185,21 @@ describe('OutputRouter while tabs stream in', () => {
     render(streamingRouter([provisionalMoments]));
 
     expect(screen.getByRole('list', { name: 'Processing stages' })).toBeInTheDocument();
+  });
+
+  it('should keep the elapsed clock counting from the job start once the first tab has landed', () => {
+    render(streamingRouter([provisionalMoments], { processingStartedAtMs: Date.now() - 95_000 }));
+
+    expect(screen.getByText('1:35')).toBeInTheDocument();
+  });
+
+  it('should dock the progress strip above the output while the run is live', () => {
+    render(streamingRouter([provisionalMoments]));
+
+    const dock = screen.getByText('Generating').closest('[data-slot="progress-dock"]');
+    expect(dock).not.toBeNull();
+    expect(dock?.className).toContain('sticky');
+    expect(dock?.className).toContain('top-0');
   });
 
   it('should show the planned tabs that have not landed as pending pills', () => {

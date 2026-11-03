@@ -34,6 +34,10 @@ export interface VideoDetail {
   folderId: string | null;
   meta: VIEResponseMeta | null;
   tabs: TabEntry[] | null;
+  /** ISO time the run that owns this summary was dispatched. Present only while
+   *  `status` is pending/processing; the elapsed clock counts from it so a
+   *  refresh mid-run shows the real wait. */
+  processingStartedAt?: string;
   /** Original-language nested artifact. Absent for English-source videos and
    *  for sound-only music videos forced to English. When present, the FE
    *  renders a toggle to view the original-language tabs/meta. Always

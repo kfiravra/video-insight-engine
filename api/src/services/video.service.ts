@@ -796,6 +796,15 @@ export class VideoService {
       sourceLanguage ? refreshFrameUrls(sourceLanguage.tabs) : Promise.resolve(),
     ]);
 
+    const status = summary?.status || video.status;
+    // The run's start time rides along only while it runs: the client's
+    // elapsed clock counts from it, so a refresh mid-run shows the real wait.
+    // Rows written before the stamp fall back to their creation time.
+    const processingStartedAt =
+      status === 'pending' || status === 'processing'
+        ? (summary?.processingStartedAt ?? summary?.createdAt)?.toISOString()
+        : undefined;
+
     return {
       id: video._id.toString(),
       videoSummaryId: video.videoSummaryId.toString(),
@@ -804,10 +813,11 @@ export class VideoService {
       creator: video.channel || summary?.channel,
       duration: video.duration || summary?.duration,
       thumbnailUrl: video.thumbnailUrl || summary?.thumbnailUrl,
-      status: summary?.status || video.status,
+      status,
       folderId: video.folderId?.toString() || null,
       meta,
       tabs,
+      ...(processingStartedAt ? { processingStartedAt } : {}),
       // sourceLanguage is conditional — omitted entirely for English-source
       // videos rather than serialized as `null`. The FE checks presence to
       // decide whether to render the language toggle.

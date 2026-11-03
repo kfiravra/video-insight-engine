@@ -371,6 +371,8 @@ Get video with summary.
 
 The same `sourceLanguage` block is included on the public share endpoint (`GET /share/:slug`) and is consumed by `apps/web/src/api/share.ts` + `apps/web/src/api/videos.ts`.
 
+`processingStartedAt` (ISO 8601) is present only while `status` is `pending` or `processing`: when the run that owns the row was dispatched (re-stamped on retry and stall redispatch). The web client counts its elapsed clock from it, so a refresh mid-run shows the real wait. Absent once the run has settled.
+
 `updateAvailable: true` is present when the summary is `completed` and stamped with an older `pipelineVersion` than the current one: the copy is served as it is, and the UI offers "update to latest version" (`POST /videos` with `updateToLatest: true`). Absent otherwise (never `false` or `null`), including for an unstamped (pre-stamping) summary, a summary still running, and always for the shared demo account, which may not pay for an update.
 
 ---

@@ -69,6 +69,9 @@ interface OutputRouterProps {
    *  surfaces a Cancel control after a brief delay (so it doesn't compete
    *  with the peak moment). */
   onCancelStream?: () => void;
+  /** The job's server start time (epoch ms): the elapsed clock's origin in
+   *  both the pre-tab placeholder and the docked progress strip. */
+  processingStartedAtMs?: number;
   /** Optional toggle for switching between original-language and English
    *  content. Rendered in the app header when present (`LanguageToggleSlot`). */
   languageToggle?: React.ReactNode;
@@ -145,6 +148,7 @@ export function OutputRouter({
   onRetryStream,
   retryingStream,
   onCancelStream,
+  processingStartedAtMs,
   languageToggle,
 }: OutputRouterProps) {
   // meta wins, but triage arrives much earlier in the stream — falling back
@@ -278,6 +282,7 @@ export function OutputRouter({
                 videoSummaryId={videoSummaryId}
                 pendingTabCount={pendingTabs.length}
                 onCancel={onCancelStream}
+                processingStartedAtMs={processingStartedAtMs}
               />
             ) : isStreaming ? (
               <StreamingPlaceholder
@@ -292,6 +297,7 @@ export function OutputRouter({
                 language={language}
                 warnings={warnings}
                 onCancel={onCancelStream}
+                processingStartedAtMs={processingStartedAtMs}
               />
             ) : streamError ? (
               <StreamErrorCard

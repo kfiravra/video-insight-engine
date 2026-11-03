@@ -24,6 +24,29 @@ describe('StatBanner', () => {
     expect(list).toBeInTheDocument();
   });
 
+  it('lays the stats out as a responsive grid: two columns on phones, auto-fit tiles from sm up', () => {
+    render(<StatBanner stats={stats} />);
+    const list = screen.getByRole('list', { name: /key stats/i });
+    expect(list.className).toContain('grid');
+    expect(list.className).toContain('grid-cols-2');
+    expect(list.className).toContain('repeat(auto-fit,minmax(140px,1fr))');
+    expect(list.className).not.toContain('flex-wrap');
+  });
+
+  it('never uses inline-block tiles or mid-word breaking', () => {
+    const { container } = render(
+      <StatBanner stats={[{ label: 'Throughput', value: 'Extraordinarily-long-value' }]} />,
+    );
+    expect(container.innerHTML).not.toContain('inline-block');
+    expect(container.innerHTML).not.toContain('break-all');
+    expect(container.querySelector('.break-words')).not.toBeNull();
+  });
+
+  it('renders a numeric value instead of throwing', () => {
+    render(<StatBanner stats={[{ label: 'Steps', value: 8 as unknown as string }]} />);
+    expect(screen.getByText('8')).toBeInTheDocument();
+  });
+
   it('renders nothing when no stat has both a label and value', () => {
     const { container } = render(
       <StatBanner stats={[{ label: '', value: '' }, { label: 'X', value: '' }]} />,

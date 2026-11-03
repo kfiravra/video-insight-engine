@@ -8,6 +8,7 @@ import { DOMAIN_META } from '@/components/vie/cards/domain-meta';
 import { accentStyle } from './output/lib/content-accent';
 import { STREAM_PHASE_LABELS } from '@/features/video-output/hooks/use-summary-stream';
 import { STAGE_INDEX, stagesFor, type StageDef } from '@/features/video-output/lib/stream-stages';
+import { formatElapsed, useElapsedSeconds } from '@/features/video-output/hooks/use-elapsed-seconds';
 import type {
   StreamPhase,
   StreamPhaseDetail,
@@ -28,6 +29,9 @@ interface StreamingPlaceholderProps {
   language?: string;
   warnings?: string[];
   onCancel?: () => void;
+  /** The job's server start time (epoch ms) — the elapsed clock's origin.
+   *  Without it the clock counts from this component's mount. */
+  processingStartedAtMs?: number;
 }
 
 /** Delay (ms) before the Cancel control fades in. The first seconds of
@@ -64,26 +68,6 @@ const GENERIC_SPOTLIGHTS: Spotlight[] = [
   { emoji: '💬', title: 'Chat with the video', text: 'Ask questions once processing finishes; answers cite the transcript.' },
 ];
 
-function formatElapsed(totalSeconds: number): string {
-  const m = Math.floor(totalSeconds / 60);
-  const s = totalSeconds % 60;
-  return `${m}:${String(s).padStart(2, '0')}`;
-}
-
-/** Wall-clock seconds since this placeholder mounted. Restarts on refresh —
- *  it measures the user's wait, not the pipeline's runtime. */
-function useElapsedSeconds(): number {
-  const [elapsed, setElapsed] = useState(0);
-  useEffect(() => {
-    const startedAt = Date.now();
-    const timer = setInterval(() => {
-      setElapsed(Math.floor((Date.now() - startedAt) / 1000));
-    }, 1000);
-    return () => clearInterval(timer);
-  }, []);
-  return elapsed;
-}
-
 export function StreamingPlaceholder({
   streamPhase = 'connecting',
   phaseDetail,
@@ -96,8 +80,9 @@ export function StreamingPlaceholder({
   language,
   warnings = [],
   onCancel,
+  processingStartedAtMs,
 }: StreamingPlaceholderProps) {
-  const elapsed = useElapsedSeconds();
+  const elapsed = useElapsedSeconds(processingStartedAtMs);
 
   const [showCancel, setShowCancel] = useState(false);
   useEffect(() => {

@@ -1,7 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { createElement, type ReactNode } from "react";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { BrowserRouter } from "react-router-dom";
 import { renderHook, waitFor, act } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
-import { createWrapper } from "../../test/test-utils";
+import { createWrapper, createTestQueryClient } from "../../test/test-utils";
+import { queryKeys } from "@/lib/query-keys";
 import { server } from "../../test/mocks/server";
 import { createMockVideo } from "../../test/mocks/handlers";
 import {
@@ -260,6 +264,25 @@ describe("useVideos", () => {
   });
 
   describe("useDeleteVideo", () => {
+    it("should drop the deleted video's detail entry from the cache", async () => {
+      const queryClient = createTestQueryClient();
+      // Seeded entries have no observer; the default gcTime: 0 collects them on a
+      // timer that beats the assertion on a slow runner, so hold them for this test.
+      queryClient.setDefaultOptions({ queries: { retry: false, gcTime: Infinity } });
+      queryClient.setQueryData(queryKeys.videos.detail("video-1"), { id: "video-1" });
+      queryClient.setQueryData(queryKeys.videos.detail("video-2"), { id: "video-2" });
+      const wrapper = ({ children }: { children: ReactNode }) =>
+        createElement(QueryClientProvider, { client: queryClient }, createElement(BrowserRouter, null, children));
+      const { result } = renderHook(() => useDeleteVideo(), { wrapper });
+
+      await act(async () => {
+        await result.current.mutateAsync("video-1");
+      });
+
+      expect(queryClient.getQueryData(queryKeys.videos.detail("video-1"))).toBeUndefined();
+      expect(queryClient.getQueryData(queryKeys.videos.detail("video-2"))).toEqual({ id: "video-2" });
+    });
+
     it("should delete a video", async () => {
       const { result } = renderHook(() => useDeleteVideo(), {
         wrapper: createWrapper(),

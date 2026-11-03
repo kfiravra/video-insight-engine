@@ -281,7 +281,7 @@ describe('MomentTrack', () => {
 
     it('shows timestamps', () => {
       renderTimeline(<MomentTrack items={mixedItems} />);
-      // Time can appear in both the seek chip and the frameless glyph plate.
+      // Time appears in the seek chip (and the clip duration label for ranges).
       expect(screen.getAllByText('0:00').length).toBeGreaterThan(0);
       expect(screen.getAllByText('2:30').length).toBeGreaterThan(0);
     });
@@ -444,12 +444,40 @@ describe('MomentTrack', () => {
       ).toBeTruthy();
     });
 
-    it('always renders the media column — frameless rows get a glyph plate', () => {
+    it('renders no media column for frameless rows — text only, no empty plate', () => {
       renderTimeline(<MomentTrack items={onlyMoments} />);
-      const media = document.querySelectorAll('[data-slot="moment-media"]');
-      expect(media.length).toBe(onlyMoments.length);
-      const plates = document.querySelectorAll('[data-testid^="glyph-plate-"]');
-      expect(plates.length).toBe(onlyMoments.length);
+      expect(document.querySelectorAll('[data-slot="moment-media"]')).toHaveLength(0);
+      expect(document.querySelectorAll('[data-testid^="glyph-plate-"]')).toHaveLength(0);
+      // The rows themselves still render in full.
+      expect(screen.getByText('Intro')).toBeInTheDocument();
+      expect(screen.getByText('Outro')).toBeInTheDocument();
+    });
+
+    it('renders the media column only for the framed rows of a mixed track', () => {
+      const mixed: MomentItem[] = [
+        { time: '0:00', seconds: 0, label: 'Plain' },
+        { time: '1:00', seconds: 60, label: 'Framed', thumbnailUrl: 'https://example.com/f.jpg' },
+        { time: '2:00', seconds: 120, label: 'Plain again' },
+      ];
+      renderTimeline(<MomentTrack items={mixed} />);
+      expect(document.querySelectorAll('[data-slot="moment-media"]')).toHaveLength(1);
+    });
+
+    it('opens the frame preview after a hover delay and fills its 16:9 frame edge to edge', () => {
+      const withFrame: MomentItem[] = [
+        { time: '1:00', seconds: 60, label: 'Framed', thumbnailUrl: 'https://example.com/f.jpg' },
+      ];
+      renderTimeline(<MomentTrack items={withFrame} />);
+      const media = document.querySelector('[data-slot="moment-media"]') as HTMLElement;
+      // Hover grow waits ~300 ms; the delay class is hover-scoped so hover-out shrinks at once.
+      expect(media.className).toContain('group-hover/row:delay-300');
+      expect(media.className).toContain('group-hover/row:w-full');
+      const img = media.querySelector('img') as HTMLImageElement;
+      expect(img.className).toContain('object-cover');
+      expect(img.className).toContain('absolute');
+      expect(img.className).toContain('inset-0');
+      // The frame keeps a fixed aspect so the image has a box to cover.
+      expect(img.parentElement?.className).toContain('aspect-video');
     });
 
     it('shows a "Link copied" confirmation after a successful share', async () => {

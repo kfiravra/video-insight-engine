@@ -325,13 +325,40 @@ describe('TabBar', () => {
 });
 
 describe('SectionNav', () => {
+  const sections = [{ id: 'a', label: 'Day 1' }, { id: 'b', label: 'Day 2' }, { id: 'c', label: 'Day 3' }];
+
   it('should render sections and call onSelect', async () => {
     const user = userEvent.setup();
     const onSelect = vi.fn();
-    const sections = [{ id: 'a', label: 'Day 1' }, { id: 'b', label: 'Day 2' }];
     render(<SectionNav sections={sections} activeId="a" onSelect={onSelect} />);
     await user.click(screen.getByText('Day 2'));
     expect(onSelect).toHaveBeenCalledWith('b');
+  });
+
+  it('should scroll as a chip row with the scrollbar hidden, fade edges and snapping', () => {
+    render(<SectionNav sections={sections} activeId="a" onSelect={vi.fn()} />);
+    const nav = screen.getByRole('navigation', { name: 'Sections' });
+    expect(nav.className).toContain('overflow-x-auto');
+    expect(nav.className).toContain('scrollbar-hide');
+    expect(nav.className).toContain('scroll-fade-x');
+    expect(nav.className).toContain('snap-x');
+    // `scrollbar-none` is not a utility this app defines — it showed a raw scrollbar.
+    expect(nav.className).not.toContain('scrollbar-none');
+    for (const chip of screen.getAllByRole('button')) expect(chip.className).toContain('snap-center');
+  });
+
+  it('should scroll the active chip into view when the active section changes, not on first paint', () => {
+    const scrollIntoView = Element.prototype.scrollIntoView as ReturnType<typeof vi.fn>;
+    scrollIntoView.mockClear();
+    const { rerender } = render(<SectionNav sections={sections} activeId="a" onSelect={vi.fn()} />);
+    // Mount must not scroll: a nav below the fold would otherwise pull the page down.
+    expect(scrollIntoView).not.toHaveBeenCalled();
+
+    rerender(<SectionNav sections={sections} activeId="c" onSelect={vi.fn()} />);
+
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(scrollIntoView.mock.instances[0]).toBe(screen.getByRole('button', { name: 'Day 3' }));
+    expect(scrollIntoView.mock.calls[0][0]).toMatchObject({ inline: 'center', block: 'nearest' });
   });
 });
 

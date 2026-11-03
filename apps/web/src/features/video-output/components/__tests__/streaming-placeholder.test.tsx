@@ -25,6 +25,23 @@ describe("StreamingPlaceholder", () => {
     vi.useRealTimers();
   });
 
+  it("should count the elapsed clock from the job's start time, not from mount", () => {
+    render(<StreamingPlaceholder streamPhase="extraction" processingStartedAtMs={Date.now() - 95_000} />);
+
+    expect(screen.getByText("1:35")).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(screen.getByText("1:36")).toBeInTheDocument();
+  });
+
+  it("should count from mount when the job start time is unknown", () => {
+    render(<StreamingPlaceholder streamPhase="extraction" />);
+
+    expect(screen.getByText("0:00")).toBeInTheDocument();
+  });
+
   it("should render every base stage of the timeline", () => {
     render(<StreamingPlaceholder streamPhase="metadata" />);
 

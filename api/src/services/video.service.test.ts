@@ -196,6 +196,66 @@ describe('VideoService', () => {
       expect(result).not.toHaveProperty('synthesis');
     });
 
+    it('should expose the run start time while the summary is still processing', async () => {
+      const startedAt = new Date('2026-11-02T10:00:00.000Z');
+      mockVideoRepository.findUserVideo.mockResolvedValue({
+        _id: { toString: () => 'vid123' },
+        videoSummaryId: { toString: () => 'summary123' },
+        youtubeId: 'abc123',
+        status: 'processing',
+      });
+      mockVideoRepository.findCacheById.mockResolvedValue({
+        _id: { toString: () => 'summary123' },
+        youtubeId: 'abc123',
+        status: 'processing',
+        processingStartedAt: startedAt,
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      });
+
+      const result = await videoService.getVideo('user123', 'vid123');
+
+      expect(result.processingStartedAt).toBe('2026-11-02T10:00:00.000Z');
+    });
+
+    it('should fall back to the row creation time for a running summary stamped before the field existed', async () => {
+      mockVideoRepository.findUserVideo.mockResolvedValue({
+        _id: { toString: () => 'vid123' },
+        videoSummaryId: { toString: () => 'summary123' },
+        youtubeId: 'abc123',
+        status: 'pending',
+      });
+      mockVideoRepository.findCacheById.mockResolvedValue({
+        _id: { toString: () => 'summary123' },
+        youtubeId: 'abc123',
+        status: 'pending',
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      });
+
+      const result = await videoService.getVideo('user123', 'vid123');
+
+      expect(result.processingStartedAt).toBe('2026-01-01T00:00:00.000Z');
+    });
+
+    it('should omit the run start time once the summary has completed', async () => {
+      mockVideoRepository.findUserVideo.mockResolvedValue({
+        _id: { toString: () => 'vid123' },
+        videoSummaryId: { toString: () => 'summary123' },
+        youtubeId: 'abc123',
+        status: 'completed',
+      });
+      mockVideoRepository.findCacheById.mockResolvedValue({
+        _id: { toString: () => 'summary123' },
+        youtubeId: 'abc123',
+        status: 'completed',
+        processingStartedAt: new Date('2026-11-02T10:00:00.000Z'),
+        createdAt: new Date('2026-11-02T10:00:00.000Z'),
+      });
+
+      const result = await videoService.getVideo('user123', 'vid123');
+
+      expect(result).not.toHaveProperty('processingStartedAt');
+    });
+
     it('should return null output when summary has no intent data', async () => {
       const userId = 'user123';
       const videoId = 'vid123';

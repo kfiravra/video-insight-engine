@@ -95,6 +95,14 @@ export function VideoPlayerProvider({ children }: { children: ReactNode }) {
     };
   }, [isPlayerOpen]);
 
+  // Every close path pauses playback first: the player stays mounted while
+  // collapsed (CSS grid-rows), so hiding it alone would leave the audio
+  // running behind a closed hero.
+  const pauseAndClose = useCallback(() => {
+    playerRef.current?.pauseVideo();
+    setIsPlayerOpen(false);
+  }, []);
+
   // Escape closes the open player — unless the key belongs to a typing
   // surface (search field, chat input), where Escape means clear/cancel.
   useEffect(() => {
@@ -103,21 +111,25 @@ export function VideoPlayerProvider({ children }: { children: ReactNode }) {
       // defaultPrevented → an overlay (Radix dialog, etc.) already consumed
       // this Escape; closing the player underneath it would double-handle.
       if (e.key !== 'Escape' || e.defaultPrevented || isTypingTarget(e.target)) return;
-      setIsPlayerOpen(false);
+      pauseAndClose();
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isPlayerOpen]);
+  }, [isPlayerOpen, pauseAndClose]);
 
   const openPlayer = useCallback(() => {
     setHasEngaged(true);
     setIsPlayerOpen(true);
   }, []);
-  const closePlayer = useCallback(() => setIsPlayerOpen(false), []);
+  const closePlayer = pauseAndClose;
   const togglePlayer = useCallback(() => {
-    if (!isPlayerOpenRef.current) setHasEngaged(true);
-    setIsPlayerOpen(prev => !prev);
-  }, []);
+    if (isPlayerOpenRef.current) {
+      pauseAndClose();
+      return;
+    }
+    setHasEngaged(true);
+    setIsPlayerOpen(true);
+  }, [pauseAndClose]);
 
   const registerPlayerAnchor = useCallback((el: HTMLElement | null) => {
     anchorRef.current = el;

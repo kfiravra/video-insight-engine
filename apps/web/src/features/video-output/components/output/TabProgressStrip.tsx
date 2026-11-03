@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { STREAM_PHASE_LABELS, type StreamPhase } from '@/features/video-output/hooks/use-summary-stream';
 import { STAGE_INDEX, stagesFor, type StageDef } from '@/features/video-output/lib/stream-stages';
+import { formatElapsed, useElapsedSeconds } from '@/features/video-output/hooks/use-elapsed-seconds';
 
 type StageState = 'complete' | 'active' | 'pending';
 
@@ -95,20 +96,27 @@ interface TabProgressStripProps {
   streamPhase?: StreamPhase;
   /** Abort the in-flight stream. */
   onCancel?: () => void;
+  /** The job's server start time (epoch ms) — the elapsed clock's origin, the
+   *  same one the pre-tab placeholder counted from. Without it the clock
+   *  counts from this strip's mount. */
+  processingStartedAtMs?: number;
 }
 
 /**
- * The live-run row above the tab panel: "Generating N of M", the pipeline
- * stages in one compact line and Cancel — so while tabs already stream in,
- * the user still sees where the run is and can still walk away from it.
- * Rendered only while the stream is live.
+ * The live-run row above the tab panel: "Generating N of M", the elapsed
+ * clock, the pipeline stages in one compact line and Cancel — so while tabs
+ * already stream in, the user still sees where the run is, how long it has
+ * run, and can still walk away from it. Rendered only while the stream is
+ * live; the layout docks it above the output.
  */
 export const TabProgressStrip = memo(function TabProgressStrip({
   renderedCount,
   expectedCount,
   streamPhase,
   onCancel,
+  processingStartedAtMs,
 }: TabProgressStripProps) {
+  const elapsed = useElapsedSeconds(processingStartedAtMs);
   return (
     <div className="flex flex-col gap-1.5 px-1 pt-1 animate-[fadeUp_0.35s_var(--ease-out-expo)_both]">
       {streamPhase && (
@@ -121,6 +129,10 @@ export const TabProgressStrip = memo(function TabProgressStrip({
           <span className="type-eyebrow text-[var(--vie-accent)]">Generating</span>
           <span className="text-xs font-medium tabular-nums text-muted-foreground">
             {renderedCount} <span className="text-muted-foreground/50">of</span> {expectedCount}
+          </span>
+          {/* The ticking clock stays out of the live region (see the sr-only status above). */}
+          <span className="text-xs tabular-nums text-muted-foreground/70" aria-hidden="true">
+            {formatElapsed(elapsed)}
           </span>
         </div>
         {streamPhase && <StageRow phase={streamPhase} />}

@@ -35,13 +35,17 @@ interface MomentTimelineRowProps {
 
 /**
  * One timeline row: spine marker + card with the moment text LEADING and the
- * media column TRAILING (end side). The media sits at a 10rem base width and
- * grows to full width when the row enters the scroll focus band
- * (`li[data-focus="true"]`), is hovered/focused, or is the playback-active
- * row — grown media wraps to its own line beneath the text, so the row top
- * never moves. Clicking the image shows it full-size (lightbox); seeking is
- * only via the timestamp chip and the explicit Jump/Play action. LLM frame
- * metadata (caption/OCR/scene type) never renders — internal signal only.
+ * media column TRAILING (end side). The media column exists only when the
+ * moment has a frame — a frameless row is text alone, no empty plate. The
+ * frame sits at a 10rem base width and grows to full width when the row
+ * enters the scroll focus band (`li[data-focus="true"]`), is hovered (after a
+ * short delay, so a pointer passing over the list does not open previews) or
+ * focused, or is the playback-active row — grown media wraps to its own line
+ * beneath the text, so the row top never moves. The image always fills its
+ * fixed 16:9 frame (object-fit cover). Clicking the image shows it full-size
+ * (lightbox); seeking is only via the timestamp chip and the explicit
+ * Jump/Play action. LLM frame metadata (caption/OCR/scene type) never
+ * renders — internal signal only.
  */
 export const MomentTimelineRow = memo(function MomentTimelineRow({
   item,
@@ -197,11 +201,11 @@ export const MomentTimelineRow = memo(function MomentTimelineRow({
                 )}
               </div>
 
-              {/* Text leads, media trails (end side). The media column is
-                  ALWAYS present (glyph plate when no frame) at 10rem base
-                  width; the focus band, hover, focus-within, or playback-
-                  active state grow it to full width — the grown figure wraps
-                  onto its own line BELOW the text, so the row top stays put. */}
+              {/* Text leads, media trails (end side). The media column exists
+                  only for framed moments, at 10rem base width; the focus band,
+                  hover (after ~300 ms), focus-within, or playback-active state
+                  grow it to full width — the grown figure wraps onto its own
+                  line BELOW the text, so the row top stays put. */}
               <div className="flex flex-wrap items-start gap-3">
                 <div className="flex-1 basis-56 min-w-0 space-y-1.5">
                   {/* No clamp: in this view the label IS the substance for
@@ -234,20 +238,24 @@ export const MomentTimelineRow = memo(function MomentTimelineRow({
                   )}
                 </div>
 
-                <figure
-                  data-slot="moment-media"
-                  className={cn(
-                    'w-40 md:w-48 shrink-0',
-                    'transition-[width] duration-[420ms] ease-[var(--ease-out-quint)] motion-reduce:transition-none',
-                    'group-data-[focus=true]/row:w-full group-hover/row:w-full group-focus-within/row:w-full',
-                    isActive && 'w-full',
-                  )}
-                >
-                  {item.thumbnailUrl ? (
+                {item.thumbnailUrl && (
+                  <figure
+                    data-slot="moment-media"
+                    className={cn(
+                      'w-40 md:w-48 shrink-0',
+                      'transition-[width] duration-[420ms] ease-[var(--ease-out-quint)] motion-reduce:transition-none',
+                      // The delay applies only while hovered: hover-in waits, hover-out shrinks at once.
+                      'group-hover/row:delay-300',
+                      'group-data-[focus=true]/row:w-full group-hover/row:w-full group-focus-within/row:w-full',
+                      isActive && 'w-full',
+                    )}
+                  >
                     <EvidenceImage
                       src={item.thumbnailUrl}
                       alt={item.frameCaption ?? `Frame at ${item.time}`}
                       className="rounded-md border-border/30"
+                      // Pinned to the 16:9 box so any thumbnail ratio fills it edge to edge.
+                      imgClassName="absolute inset-0"
                     >
                       {onExpand && (
                         <button
@@ -263,36 +271,8 @@ export const MomentTimelineRow = memo(function MomentTimelineRow({
                         </button>
                       )}
                     </EvidenceImage>
-                  ) : (
-                    <div
-                      data-testid={`glyph-plate-${originalIndex}`}
-                      className="relative aspect-video overflow-hidden rounded-md border border-dashed border-border/40 bg-muted/10"
-                    >
-                      <span
-                        aria-hidden="true"
-                        className="absolute inset-0"
-                        style={{
-                          background: `linear-gradient(135deg, ${moodColor} 0%, transparent 65%)`,
-                          opacity: 0.12,
-                        }}
-                      />
-                      <span className="absolute inset-0 flex flex-col items-center justify-center gap-1">
-                        {item.emoji ? (
-                          <span aria-hidden="true" className="text-2xl leading-none">{item.emoji}</span>
-                        ) : (
-                          <span
-                            aria-hidden="true"
-                            className="size-2.5 rounded-full"
-                            style={{ background: moodColor }}
-                          />
-                        )}
-                        <span dir="ltr" className="font-mono text-sm font-semibold tabular-nums text-foreground/60">
-                          {item.time}
-                        </span>
-                      </span>
-                    </div>
-                  )}
-                </figure>
+                  </figure>
+                )}
               </div>
 
               {/* Row actions — always visible, compact */}

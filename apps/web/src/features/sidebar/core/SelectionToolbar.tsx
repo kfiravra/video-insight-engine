@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { matchPath, useLocation, useNavigate } from "react-router-dom";
 import { Trash2, X, FolderInput } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -29,6 +30,8 @@ export function SelectionToolbar() {
   const selectedFolderIds = useSelectedFolderIds();
   const selectionCount = useSelectionCount();
   const exitSelectionMode = useUIStore((s) => s.exitSelectionMode);
+  const { pathname } = useLocation();
+  const navigate = useNavigate();
 
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
@@ -99,7 +102,12 @@ export function SelectionToolbar() {
       await Promise.all(promises);
       toast.success(`Deleted ${selectionCount} item${selectionCount !== 1 ? "s" : ""}`);
       setShowDeleteDialog(false);
+      // The open video was among the deleted: its page is gone, so land on
+      // the library root. Read before exitSelectionMode clears the selection.
+      const openVideoId = matchPath("/video/:id", pathname)?.params.id;
+      const deletedOpenVideo = openVideoId !== undefined && selectedVideoIds.includes(openVideoId);
       exitSelectionMode();
+      if (deletedOpenVideo) navigate("/board");
     } catch {
       toast.error("Failed to delete items");
     }

@@ -216,6 +216,59 @@ describe('VideoPlayerContext', () => {
     });
   });
 
+  describe('closing pauses playback', () => {
+    function mountPlayer(result: { current: ReturnType<typeof useVideoPlayer> }) {
+      const player = { seekTo: vi.fn(), playVideo: vi.fn(), pauseVideo: vi.fn(), getCurrentTime: vi.fn(() => 0) };
+      result.current.playerRef.current = player;
+      return player;
+    }
+
+    it('should pause the player on closePlayer', () => {
+      const { result } = renderHook(() => useVideoPlayer(), { wrapper: Wrapper });
+      const player = mountPlayer(result);
+      act(() => result.current.openPlayer());
+      expect(player.pauseVideo).not.toHaveBeenCalled();
+
+      act(() => result.current.closePlayer());
+
+      expect(player.pauseVideo).toHaveBeenCalledTimes(1);
+      expect(result.current.isPlayerOpen).toBe(false);
+    });
+
+    it('should pause the player when togglePlayer closes it, not when it opens it', () => {
+      const { result } = renderHook(() => useVideoPlayer(), { wrapper: Wrapper });
+      const player = mountPlayer(result);
+
+      act(() => result.current.togglePlayer());
+      expect(result.current.isPlayerOpen).toBe(true);
+      expect(player.pauseVideo).not.toHaveBeenCalled();
+
+      act(() => result.current.togglePlayer());
+      expect(result.current.isPlayerOpen).toBe(false);
+      expect(player.pauseVideo).toHaveBeenCalledTimes(1);
+    });
+
+    it('should pause the player when Escape closes it', () => {
+      const { result } = renderHook(() => useVideoPlayer(), { wrapper: Wrapper });
+      const player = mountPlayer(result);
+      act(() => result.current.openPlayer());
+
+      act(() => {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      });
+
+      expect(player.pauseVideo).toHaveBeenCalledTimes(1);
+      expect(result.current.isPlayerOpen).toBe(false);
+    });
+
+    it('should close cleanly when no player has mounted yet', () => {
+      const { result } = renderHook(() => useVideoPlayer(), { wrapper: Wrapper });
+      act(() => result.current.openPlayer());
+      expect(() => act(() => result.current.closePlayer())).not.toThrow();
+      expect(result.current.isPlayerOpen).toBe(false);
+    });
+  });
+
   describe('Escape closes the player', () => {
     it('should close the open player on Escape', () => {
       const { result } = renderHook(() => useVideoPlayer(), { wrapper: Wrapper });

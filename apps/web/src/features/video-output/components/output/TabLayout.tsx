@@ -18,6 +18,8 @@ interface TabLayoutProps {
   streamPhase?: StreamPhase;
   /** Abort the in-flight stream (shown in the progress strip while streaming). */
   onCancel?: () => void;
+  /** The job's server start time (epoch ms) for the progress strip's clock. */
+  processingStartedAtMs?: number;
 }
 
 export interface TabLayoutHandle {
@@ -53,7 +55,7 @@ function useFreshArrival(activeTab: string): boolean {
 
 const TabLayoutInner = forwardRef<TabLayoutHandle, TabLayoutProps>(
   function TabLayout(
-    { tabs, primaryTag, children, className, isStreaming = false, totalCount = 0, streamPhase, onCancel },
+    { tabs, primaryTag, children, className, isStreaming = false, totalCount = 0, streamPhase, onCancel, processingStartedAtMs },
     ref,
   ) {
     const coordination = useTabCoordination();
@@ -95,14 +97,22 @@ const TabLayoutInner = forwardRef<TabLayoutHandle, TabLayoutProps>(
     return (
       <div className={cn('flex flex-col gap-4', className)} data-domain={primaryTag} style={domainAccent}>
         {/* Live runs only: a run that stopped (error, cancel) must not read
-            as "N of M ready" — the stream error card speaks for it. */}
+            as "N of M ready" — the stream error card speaks for it. Docked:
+            it stays pinned above the output while the tab scrolls, until the
+            run completes and `isStreaming` drops it. */}
         {isStreaming && (
-          <TabProgressStrip
-            renderedCount={renderedCount}
-            expectedCount={expectedCount}
-            streamPhase={streamPhase}
-            onCancel={onCancel}
-          />
+          <div
+            data-slot="progress-dock"
+            className="sticky top-0 z-20 -mx-1 rounded-b-xl bg-background/85 px-1 pb-1 backdrop-blur-md supports-[backdrop-filter]:bg-background/70"
+          >
+            <TabProgressStrip
+              renderedCount={renderedCount}
+              expectedCount={expectedCount}
+              streamPhase={streamPhase}
+              onCancel={onCancel}
+              processingStartedAtMs={processingStartedAtMs}
+            />
+          </div>
         )}
 
         <div
