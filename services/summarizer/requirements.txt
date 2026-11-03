@@ -20,7 +20,7 @@ litellm>=1.105.0
 # LLM observability (tracing, prompt registry, evals).
 # All helpers no-op when LANGFUSE_PUBLIC_KEY/SECRET_KEY are unset, so this
 # dep is "always installed, conditionally active."
-langfuse>=2.50.0,<3
+langfuse>=4.7,<5
 
 # Gemini native SDK (for audio transcription — LiteLLM file ref doesn't work)
 google-genai>=1.0.0

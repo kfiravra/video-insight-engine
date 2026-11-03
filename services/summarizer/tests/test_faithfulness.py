@@ -8,7 +8,7 @@ Covers:
     * grounded vs ungrounded verdicts
     * judge errors don't crash the check
     * disabled when sample rate is 0
-    * report is logged onto Langfuse trace via log_score
+    * report is scored onto the Langfuse trace via score()
 """
 
 from __future__ import annotations
@@ -21,17 +21,9 @@ from litellm import ModelResponse
 
 from src.services.llm import LLMService
 from src.services.llm_provider import LLMProvider
-from src.services.observability import langfuse_client as lc
+from src.services.observability import run_trace
 from src.services.pipeline import faithfulness as fh
-
-
-@pytest.fixture(autouse=True)
-def _reset_observability(monkeypatch):
-    lc._reset_for_tests()
-    monkeypatch.setattr(lc.settings, "LANGFUSE_PUBLIC_KEY", None, raising=False)
-    monkeypatch.setattr(lc.settings, "LANGFUSE_SECRET_KEY", None, raising=False)
-    yield
-    lc._reset_for_tests()
+from llm_common.observability.testing import LangfuseCapture
 
 
 # ─── Claim flattening ───────────────────────────────────────────────────
@@ -156,15 +148,7 @@ async def test_returns_none_when_no_claims():
 
 
 @pytest.mark.asyncio
-async def test_reports_grounded_score_and_logs_to_langfuse(monkeypatch):
-    # Install fake Langfuse so log_score has a trace target
-    fake_sdk = MagicMock()
-    monkeypatch.setattr(lc, "Langfuse", fake_sdk)
-    monkeypatch.setattr(lc.settings, "LANGFUSE_PUBLIC_KEY", "pk", raising=False)
-    monkeypatch.setattr(lc.settings, "LANGFUSE_SECRET_KEY", "sk", raising=False)
-    lc.init_langfuse()
-    fake_trace = MagicMock()
-    lc._client.trace.return_value = fake_trace
+async def test_reports_grounded_score_and_logs_to_langfuse(langfuse_capture: LangfuseCapture):
 
     llm = _llm_returning(
         [
@@ -181,7 +165,7 @@ async def test_reports_grounded_score_and_logs_to_langfuse(monkeypatch):
         ],
     }
 
-    async with lc.pipeline_trace("vid"):
+    async with run_trace(name="pipeline:vid") as root:
         report = await fh.run_faithfulness_check(
             llm_service=llm,
             transcript="photosynthesis happens. light reactions occur. calvin cycle.",
@@ -194,8 +178,9 @@ async def test_reports_grounded_score_and_logs_to_langfuse(monkeypatch):
     assert report.sample_size == 3
     assert report.grounded_count == 2
     assert report.score == pytest.approx(0.667, abs=0.01)
-    fake_trace.score.assert_called_once()
-    assert fake_trace.score.call_args.kwargs["name"] == "faithfulness"
+    (sent,) = langfuse_capture.scores
+    assert (sent["name"], sent["trace_id"]) == ("faithfulness", root.trace_id)
+    assert sent["value"] == pytest.approx(0.667, abs=0.01)
 
 
 @pytest.mark.asyncio

@@ -47,7 +47,7 @@ from typing import Any, TypeGuard
 from src.config import settings
 from src.models.pipeline_types import MAX_QUIZ_OPTIONS
 from src.services.llm import LLMService
-from src.services.observability import log_score
+from src.services.observability import score
 from src.services.pipeline.faithfulness import (
     _JUDGE_TIMEOUT_SECONDS,
     JUDGE_STAGE,
@@ -395,7 +395,7 @@ def _log_report(sample: Sample, verdicts: list[bool | None]) -> FaithfulnessRepo
         score=round(grounded / len(judged), 3),
     )
     comment = _comment(sample, report, len(verdicts) - len(judged))
-    log_score(sample.score_name, report.score, comment=comment)
+    score(sample.score_name, report.score, comment=comment)
     if not report.passed:
         logger.warning("Low %s score: %.2f (%s)", sample.score_name, report.score, comment)
     return report

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -28,11 +28,12 @@ from litellm.exceptions import (
 from src.config import settings
 from src.services.llm import LLMService
 from src.services.llm_provider import LLMProvider
-from src.services.observability import langfuse_client as lc
+from src.services.observability import run_trace
 from src.services.pipeline import pipeline_timing
 from src.services.pipeline.pipeline_timing import PipelineTimingRecorder, start_run_timing
 from src.utils import llm_retry
 from src.utils.llm_retry import call_llm_with_retry, retry_after_seconds
+from llm_common.observability.testing import LangfuseCapture
 
 _SONNET = "anthropic/claude-sonnet-4-6"
 _HAIKU = "anthropic/claude-haiku-4-5-20251001"
@@ -284,24 +285,17 @@ class TestFallbackTelemetry:
         assert [f["model"] for f in recorder.llm_failures] == [_SONNET, _SONNET]
 
     async def test_should_tag_langfuse_generation_with_fallback_model(
-        self, sleep: AsyncMock, monkeypatch: pytest.MonkeyPatch
+        self, sleep: AsyncMock, langfuse_capture: LangfuseCapture
     ) -> None:
-        lc._reset_for_tests()
-        monkeypatch.setattr(lc, "Langfuse", MagicMock(name="LangfuseSDK"))
-        monkeypatch.setattr(lc.settings, "LANGFUSE_PUBLIC_KEY", "pk", raising=False)
-        monkeypatch.setattr(lc.settings, "LANGFUSE_SECRET_KEY", "sk", raising=False)
-        lc.init_langfuse()
-        trace = MagicMock()
-        cast(MagicMock, lc._client).trace.return_value = trace
-        try:
-            with patch("src.services.llm_telemetry.completion_cost", return_value=0.0):
-                async with lc.pipeline_trace("vid-1"):
-                    await self._run_fallback()
-        finally:
-            lc._reset_for_tests()
+        with patch("src.services.llm_telemetry.completion_cost", return_value=0.0):
+            async with run_trace(name="pipeline:vid-1"):
+                await self._run_fallback()
 
-        generation = trace.generation.call_args.kwargs
-        assert (generation["model"], generation["metadata"]["fallbackFrom"]) == (_GPT4O, _SONNET)
+        *failed, answered = langfuse_capture.generations()
+        assert (answered.model, answered.metadata["fallbackFrom"]) == (_GPT4O, _SONNET)
+        # The failed attempts are generations too: ERROR with the error class.
+        assert [g.model for g in failed] == [_SONNET, _SONNET]
+        assert {g.level for g in failed} == {"ERROR"}
 
 
 def _dropped() -> Timeout:

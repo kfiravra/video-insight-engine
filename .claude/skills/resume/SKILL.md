@@ -47,5 +47,7 @@ Next:
 Blockers: <or none>
 ```
 
-Then start on step 1 unless the user says otherwise. If the notes look stale against `git log`
-(commits after the last Log entry), say so first and reconcile the notes before working.
+Then ask the user what to do next and end the turn. Do not start any Next step, run a command
+that changes state (branch switch, pull, install, build), or edit a file in the same turn; work
+begins on the user's next message. If the notes look stale against `git log` (commits after the
+last Log entry), say so in the report and offer to reconcile them.

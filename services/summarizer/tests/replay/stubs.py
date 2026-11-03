@@ -209,7 +209,7 @@ def _patch_targets(stubs: ReplayStubs) -> dict[str, Any]:
         f"{store_mod}.store_visual_chunks": stubs.store_chunks,
         f"{assembly_mod}.send_video_status_background": _no_status_background,
         "src.routes.pipeline_runner.send_video_status": _no_status,
-        "src.services.observability.langfuse_client._client": None,
+        "llm_common.observability.client._client": None,
     }
 
 

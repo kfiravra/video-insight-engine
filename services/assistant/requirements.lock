@@ -15,7 +15,6 @@ annotated-types==0.7.0
 anyio==4.14.1
     # via
     #   httpx
-    #   langfuse
     #   openai
     #   sse-starlette
     #   starlette
@@ -70,6 +69,8 @@ fsspec==2026.6.0
     # via
     #   huggingface-hub
     #   torch
+googleapis-common-protos==1.76.0
+    # via opentelemetry-exporter-otlp-proto-http
 grpcio==1.82.0
     # via qdrant-client
 h11==0.16.0
@@ -104,7 +105,6 @@ idna==3.18
     # via
     #   anyio
     #   httpx
-    #   langfuse
     #   requests
     #   yarl
 importlib-metadata==8.9.0
@@ -127,8 +127,10 @@ jsonschema==4.26.0
     # via litellm
 jsonschema-specifications==2025.9.1
     # via jsonschema
-langfuse==2.60.10
-    # via -r services/assistant/requirements.txt
+langfuse==4.18.0
+    # via
+    #   -r services/assistant/requirements.txt
+    #   llm-common (packages/llm-common/pyproject.toml)
 litellm==1.105.0
     # via
     #   -r services/assistant/requirements.txt
@@ -163,6 +165,32 @@ numpy==2.5.1
     #   transformers
 openai==2.44.0
     # via litellm
+opentelemetry-api==1.45.2
+    # via
+    #   langfuse
+    #   opentelemetry-exporter-http-transport
+    #   opentelemetry-exporter-otlp-proto-http
+    #   opentelemetry-sdk
+    #   opentelemetry-semantic-conventions
+opentelemetry-exporter-http-transport==0.66b2
+    # via opentelemetry-exporter-otlp-proto-http
+opentelemetry-exporter-otlp-common==0.66b2
+    # via opentelemetry-exporter-otlp-proto-http
+opentelemetry-exporter-otlp-proto-common==1.45.2
+    # via opentelemetry-exporter-otlp-proto-http
+opentelemetry-exporter-otlp-proto-http==1.45.2
+    # via langfuse
+opentelemetry-proto==1.45.2
+    # via
+    #   opentelemetry-exporter-otlp-proto-common
+    #   opentelemetry-exporter-otlp-proto-http
+opentelemetry-sdk==1.45.2
+    # via
+    #   langfuse
+    #   opentelemetry-exporter-otlp-common
+    #   opentelemetry-exporter-otlp-proto-http
+opentelemetry-semantic-conventions==0.66b2
+    # via opentelemetry-sdk
 packaging==24.2
     # via
     #   huggingface-hub
@@ -179,7 +207,10 @@ propcache==0.5.2
     #   aiohttp
     #   yarl
 protobuf==7.35.1
-    # via qdrant-client
+    # via
+    #   googleapis-common-protos
+    #   opentelemetry-proto
+    #   qdrant-client
 pydantic==2.13.4
     # via
     #   -r services/assistant/requirements.txt
@@ -233,7 +264,8 @@ regex==2026.6.28
     #   transformers
 requests==2.34.2
     # via
-    #   langfuse
+    #   opentelemetry-exporter-http-transport
+    #   opentelemetry-exporter-otlp-proto-http
     #   tiktoken
 rich==15.0.0
     # via typer
@@ -284,6 +316,9 @@ tokenizers==0.22.2
     # via
     #   litellm
     #   transformers
+# Regenerate with the header command PLUS `--extra-index-url https://download.pytorch.org/whl/cpu`
+# (uv leaves index URLs out of the header), or torch leaves the +cpu build and pulls CUDA;
+# then re-add this note.
 torch==2.12.1+cpu
     # via sentence-transformers
 tqdm==4.68.3
@@ -304,7 +339,12 @@ typing-extensions==4.16.0
     #   fastapi
     #   grpcio
     #   huggingface-hub
+    #   langfuse
     #   openai
+    #   opentelemetry-api
+    #   opentelemetry-exporter-otlp-proto-http
+    #   opentelemetry-sdk
+    #   opentelemetry-semantic-conventions
     #   pydantic
     #   pydantic-core
     #   pytest-asyncio

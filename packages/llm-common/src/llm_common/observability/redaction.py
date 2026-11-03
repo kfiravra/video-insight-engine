@@ -1,9 +1,9 @@
 """Redaction + payload-size helpers for the Langfuse observability layer.
 
-Split out of :mod:`langfuse_client` to keep that file focused on the
-trace/span/score plumbing. The patterns and helpers here have no
-dependency on the Langfuse SDK — they're pure string transforms — so
-they can be reused for any other "scrub before logging" need.
+Shared by every service that ships LLM payloads to Langfuse (summarizer,
+assistant). The patterns and helpers here have no dependency on the
+Langfuse SDK — they're pure string transforms — so they can be reused for
+any other "scrub before logging" need.
 
 Design contract: helpers must NEVER raise and must NEVER mutate input.
 ``redact_pii`` returns the redacted string; ``_sanitize_messages`` returns

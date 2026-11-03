@@ -37,7 +37,7 @@ from typing import Any
 
 from src.config import settings
 from src.services.llm import LLMService
-from src.services.observability import log_score
+from src.services.observability import score
 from src.services.pipeline.faithfulness_context import (
     _TRANSCRIPT_BUDGET_CHARS,
     _select_claim_context,
@@ -250,14 +250,14 @@ async def run_faithfulness_check(
         return None
 
     grounded_count = sum(1 for v in judged if v is True)
-    score = grounded_count / len(judged)
+    grounded_ratio = grounded_count / len(judged)
     report = FaithfulnessReport(
         sample_size=len(judged),
         grounded_count=grounded_count,
-        score=round(score, 3),
+        score=round(grounded_ratio, 3),
     )
 
-    log_score(
+    score(
         "faithfulness",
         report.score,
         comment=f"{report.grounded_count}/{report.sample_size} grounded "

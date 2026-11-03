@@ -1,7 +1,12 @@
-"""Tests for src.services.observability.langfuse_client (assistant).
+"""Tests for the assistant's Langfuse wiring (``src.services.observability``).
 
-Mirrors the summarizer's test suite. The assistant-specific concepts —
-``session_trace`` and ``span`` — get dedicated coverage here.
+The shared client is tested in ``packages/llm-common/tests``; this file covers
+what the assistant adds on top:
+- ``init_langfuse()`` reads the assistant's settings
+- the package re-exports the shared helpers
+- ``chat_trace``: one trace per turn (``chat:<videoId>`` / ``chat:library``),
+  session ``chat-<sessionId>``, no raw user id in the tags, the user-id policy
+- tool and loop spans nest under the turn's trace
 """
 
 from __future__ import annotations
@@ -9,204 +14,106 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
+from llm_common import observability as shared
+from llm_common.observability import client as shared_client
+from llm_common.observability.testing import LangfuseCapture
 
-from src.services.observability import langfuse_client as lc
+from src.config import settings
+from src.services import observability
+from src.services.observability import chat_trace, span
 
-
-@pytest.fixture(autouse=True)
-def _reset_module_state(monkeypatch):
-    lc._reset_for_tests()
-    monkeypatch.setattr(lc.settings, "LANGFUSE_PUBLIC_KEY", None, raising=False)
-    monkeypatch.setattr(lc.settings, "LANGFUSE_SECRET_KEY", None, raising=False)
-    yield
-    lc._reset_for_tests()
+# ─── init_langfuse ──────────────────────────────────────────────────────
 
 
-def _install_fake_sdk(monkeypatch) -> MagicMock:
-    fake_sdk_cls = MagicMock(name="LangfuseSDK")
-    monkeypatch.setattr(lc, "Langfuse", fake_sdk_cls)
-    monkeypatch.setattr(lc.settings, "LANGFUSE_PUBLIC_KEY", "pk_test", raising=False)
-    monkeypatch.setattr(lc.settings, "LANGFUSE_SECRET_KEY", "sk_test", raising=False)
-    return fake_sdk_cls
+def test_init_should_return_none_when_keys_are_missing(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(settings, "LANGFUSE_PUBLIC_KEY", None)
+    monkeypatch.setattr(settings, "LANGFUSE_SECRET_KEY", None)
+    assert observability.init_langfuse() is None
+    assert observability.is_enabled() is False
 
 
-def test_init_returns_none_when_keys_missing():
-    assert lc.init_langfuse() is None
-    assert lc.is_enabled() is False
+def test_init_should_build_the_client_from_assistant_settings_when_keys_are_set(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    sdk = MagicMock(name="Langfuse")
+    monkeypatch.setattr(shared_client, "_load_sdk", lambda: (sdk, MagicMock()))
+    monkeypatch.setattr(settings, "LANGFUSE_PUBLIC_KEY", "pk_test")
+    monkeypatch.setattr(settings, "LANGFUSE_SECRET_KEY", "sk_test")
+    monkeypatch.setattr(settings, "LANGFUSE_BASE_URL", "https://cloud.langfuse.com")
+    monkeypatch.setattr(settings, "ENVIRONMENT", "development")
+
+    assert observability.init_langfuse() is sdk.return_value
+    assert sdk.call_args.kwargs["base_url"] == "https://cloud.langfuse.com"
+    assert sdk.call_args.kwargs["environment"] == "development"
 
 
-def test_init_builds_client_when_keys_present(monkeypatch):
-    _install_fake_sdk(monkeypatch)
-    assert lc.init_langfuse() is not None
-    assert lc.is_enabled() is True
+@pytest.mark.parametrize("name", observability.__all__)
+def test_package_should_re_export_the_shared_helper_when_imported(name: str):
+    if name in {"init_langfuse", "chat_trace"}:
+        pytest.skip("assistant-specific")
+    assert getattr(observability, name) is getattr(shared, name)
 
 
-@pytest.mark.asyncio
-async def test_session_trace_yields_none_when_disabled():
-    async with lc.session_trace(video_id="v1") as trace:
-        assert trace is None
+# ─── chat_trace ─────────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
-async def test_session_trace_opens_and_resets_context(monkeypatch):
-    _install_fake_sdk(monkeypatch)
-    lc.init_langfuse()
-    fake_trace = MagicMock()
-    lc._client.trace.return_value = fake_trace
-
-    async with lc.session_trace(video_id="v1", user_id="u1", session_id="s1") as trace:
-        assert trace is fake_trace
-        assert lc.get_current_trace() is fake_trace
-    assert lc.get_current_trace() is None
-    lc._client.trace.assert_called_once()
-    kwargs = lc._client.trace.call_args.kwargs
-    assert kwargs["name"] == "chat:v1"
-    assert kwargs["user_id"] == "u1"
-    assert kwargs["session_id"] == "s1"
-    assert "videoId:v1" in kwargs["tags"]
-    assert "userId:u1" in kwargs["tags"]
+async def test_chat_trace_should_yield_none_when_disabled():
+    async with chat_trace(video_id="v1") as root:
+        assert root is None
 
 
-@pytest.mark.asyncio
-async def test_span_creates_child_when_trace_active(monkeypatch):
-    _install_fake_sdk(monkeypatch)
-    lc.init_langfuse()
-    fake_trace = MagicMock()
-    fake_span = MagicMock()
-    fake_trace.span.return_value = fake_span
-    lc._client.trace.return_value = fake_trace
+async def test_chat_trace_should_name_the_turn_and_group_the_session_when_a_session_id_is_sent(
+    langfuse_capture: LangfuseCapture,
+):
+    async with chat_trace(
+        video_id="yt1", user_id="u1", session_id="s1", metadata={"historyLen": 2}
+    ) as root:
+        assert root is not None
 
-    async with lc.session_trace(video_id="v1"):
-        async with lc.span("tool", metadata={"intent": "quiz_generator"}) as s:
-            assert s is fake_span
-        fake_span.end.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_span_yields_none_when_no_trace():
-    async with lc.span("tool") as s:
-        assert s is None
+    turn = langfuse_capture.named("chat:yt1")
+    assert turn.attributes["session.id"] == "chat-s1"
+    assert turn.attributes["user.id"] == "u1"
+    assert turn.attributes["langfuse.trace.tags"] == ("videoId:yt1",)
+    assert turn.attributes["langfuse.trace.metadata.historyLen"] == "2"
 
 
-@pytest.mark.asyncio
-async def test_span_swallows_create_errors(monkeypatch):
-    _install_fake_sdk(monkeypatch)
-    lc.init_langfuse()
-    fake_trace = MagicMock()
-    fake_trace.span.side_effect = RuntimeError("create boom")
-    lc._client.trace.return_value = fake_trace
-
-    async with lc.session_trace(video_id="v1"):
-        async with lc.span("tool") as s:
-            assert s is None  # creation failed cleanly
-
-
-@pytest.mark.asyncio
-async def test_log_generation_records_under_current_trace(monkeypatch):
-    _install_fake_sdk(monkeypatch)
-    lc.init_langfuse()
-    fake_trace = MagicMock()
-    lc._client.trace.return_value = fake_trace
-
-    async with lc.session_trace(video_id="v1"):
-        lc.log_generation(
-            name="rag_generation",
-            model="anthropic/claude-sonnet-4-6",
-            input_payload=[{"role": "user", "content": "hello"}],
-            output_payload="hi back",
-            input_tokens=4,
-            output_tokens=3,
-            cost_usd=0.0001,
-            latency_ms=80,
-        )
-
-    fake_trace.generation.assert_called_once()
-
-
-def test_redact_pii_strips_emails():
-    assert "alice@example.com" not in lc.redact_pii("contact alice@example.com")
-
-
-def test_truncate_payload_caps_large_strings():
-    out = lc.truncate_payload("y" * 5000, max_bytes=100)
-    assert out.endswith("[TRUNCATED]")
-    # The original length must NOT be encoded — that's a sizing oracle.
-    assert "5000" not in out
-
-
-# ─── Secret-token redaction + structured content (added 2026-05-20) ─────
-def test_redact_pii_strips_jwt_and_keys():
-    jwt = (
-        "eyJhbGciOiJIUzI1NiJ9"
-        ".eyJzdWIiOiIxMjM0NTY3ODkwIn0"
-        ".SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
-    )
-    text = (
-        f"jwt={jwt} aws=AKIAIOSFODNN7EXAMPLE "
-        f"openai=sk-proj-aaaaaaaaaaaaaaaaaaaaaaaaaaa "
-        f"anthropic=sk-ant-api03-xxxxxxxxxxxxxxxxxxxxabcdef "
-        f"gh=ghp_abcdefghijklmnopqrstuvwxyzABCD1234"
-    )
-    out = lc.redact_pii(text)
-    for needle in (
-        jwt, "AKIAIOSFODNN7EXAMPLE", "sk-proj-", "sk-ant-api03",
-        "ghp_abcdefghijklmnopqrstuvwxyzABCD1234",
-    ):
-        assert needle not in out
-
-
-@pytest.mark.asyncio
-async def test_structured_content_blocks_are_redacted(monkeypatch):
-    """Mirrors the summarizer test — OCR text inside content blocks is redacted."""
-    _install_fake_sdk(monkeypatch)
-    lc.init_langfuse()
-    fake_trace = MagicMock()
-    lc._client.trace.return_value = fake_trace
-
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "OCR found alice@example.com"},
-                {"type": "image", "source": {"type": "base64", "data": "img"}},
-            ],
-        },
-    ]
-    async with lc.session_trace(video_id="v1"):
-        lc.log_generation(
-            name="rag_generation",
-            model="m",
-            input_payload=messages,
-            output_payload="",
-        )
-    sent = fake_trace.generation.call_args.kwargs["input"]
-    assert "alice@example.com" not in sent[0]["content"][0]["text"]
-    assert sent[0]["content"][1]["type"] == "image"
-
-
-# ─── User-id consent gate ───────────────────────────────────────────────
-@pytest.mark.asyncio
-async def test_user_id_omit_mode_drops_user_id(monkeypatch):
-    _install_fake_sdk(monkeypatch)
-    monkeypatch.setattr(lc.settings, "LANGFUSE_USER_ID_MODE", "omit", raising=False)
-    lc.init_langfuse()
-    fake_trace = MagicMock()
-    lc._client.trace.return_value = fake_trace
-    async with lc.session_trace(video_id="v1", user_id="user-1"):
+async def test_chat_trace_should_be_named_library_when_there_is_no_video(
+    langfuse_capture: LangfuseCapture,
+):
+    async with chat_trace(video_id=None, tags=["library"]):
         pass
-    assert lc._client.trace.call_args.kwargs["user_id"] is None
+
+    turn = langfuse_capture.named("chat:library")
+    assert turn.attributes["langfuse.trace.tags"] == ("library",)
+    assert "session.id" not in turn.attributes
 
 
-@pytest.mark.asyncio
-async def test_user_id_hash_mode_replaces_user_id(monkeypatch):
-    _install_fake_sdk(monkeypatch)
-    monkeypatch.setattr(lc.settings, "LANGFUSE_USER_ID_MODE", "hash", raising=False)
-    monkeypatch.setattr(lc.settings, "LANGFUSE_USER_ID_HASH_SALT", "pepper", raising=False)
-    lc.init_langfuse()
-    fake_trace = MagicMock()
-    lc._client.trace.return_value = fake_trace
-    async with lc.session_trace(video_id="v1", user_id="user-1"):
+async def test_chat_trace_should_send_no_user_when_the_mode_is_omit(
+    monkeypatch: pytest.MonkeyPatch, langfuse_capture: LangfuseCapture
+):
+    monkeypatch.setattr(shared_client._settings, "LANGFUSE_USER_ID_MODE", "omit")
+
+    async with chat_trace(video_id="yt1", user_id="u1"):
         pass
-    sent = lc._client.trace.call_args.kwargs["user_id"]
-    assert sent != "user-1"
-    assert len(sent) == 16
+
+    assert "user.id" not in langfuse_capture.named("chat:yt1").attributes
+
+
+async def test_spans_should_nest_under_the_turn_when_opened_inside_it(
+    langfuse_capture: LangfuseCapture,
+):
+    async with chat_trace(video_id="yt1"):
+        async with span("library_agent"):
+            async with span("tool:quiz_generator", as_type="tool"):
+                pass
+
+    agent = langfuse_capture.named("library_agent")
+    tool = langfuse_capture.named("tool:quiz_generator")
+    assert agent.parent == "chat:yt1"
+    assert (tool.parent, tool.type) == ("library_agent", "tool")
+
+
+async def test_span_should_yield_none_when_outside_a_turn(langfuse_capture: LangfuseCapture):
+    async with span("tool:orphan") as handle:
+        assert handle is None
+    assert langfuse_capture.observations() == []

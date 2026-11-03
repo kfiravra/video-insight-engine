@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import AsyncGenerator
+from contextlib import aclosing
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -24,7 +25,7 @@ from litellm.exceptions import (
 from src.config import settings
 from src.exceptions import LLMError
 from src.logging_config import get_logger
-from src.services.observability import log_generation
+from src.services.llm_generation import CallGeneration, call_generation
 
 logger = get_logger(__name__)
 
@@ -104,33 +105,32 @@ class LLMProvider:
             kwargs["fallbacks"] = self._fallback_models
 
         try:
-            start_monotonic = time.monotonic()
-            # litellm types this as ModelResponse | CustomStreamWrapper; with
-            # stream unset it's always a ModelResponse — Any avoids the union.
-            response: Any = await acompletion(**kwargs)
-            latency_ms = int((time.monotonic() - start_monotonic) * 1000)
-            choice = response.choices[0]
-            if choice.finish_reason == "length":
-                logger.warning(
-                    "llm_response_truncated",
-                    model=self._model,
-                    max_tokens=max_tokens,
-                )
-            content = choice.message.content or ""
-            if span_name:
-                usage = getattr(response, "usage", None)
-                self._log_generation_safe(
-                    span_name=span_name,
-                    msg_dicts=messages,
-                    content=content,
-                    input_tokens=getattr(usage, "prompt_tokens", 0) if usage else 0,
-                    output_tokens=getattr(usage, "completion_tokens", 0) if usage else 0,
-                    cost_usd=_safe_completion_cost(response=response),
-                    latency_ms=latency_ms,
-                    finish_reason=choice.finish_reason,
-                    extra_metadata=span_metadata,
-                )
-            return content
+            with call_generation(self._model, span_name, messages, span_metadata) as call:
+                start_monotonic = time.monotonic()
+                # litellm types this as ModelResponse | CustomStreamWrapper; with
+                # stream unset it's always a ModelResponse — Any avoids the union.
+                response: Any = await acompletion(**kwargs)
+                latency_ms = int((time.monotonic() - start_monotonic) * 1000)
+                choice = response.choices[0]
+                if choice.finish_reason == "length":
+                    logger.warning(
+                        "llm_response_truncated",
+                        model=self._model,
+                        max_tokens=max_tokens,
+                    )
+                content = choice.message.content or ""
+                if span_name:
+                    usage = getattr(response, "usage", None)
+                    call.succeed(
+                        content=content,
+                        input_tokens=_usage_int(usage, "prompt_tokens"),
+                        output_tokens=_usage_int(usage, "completion_tokens"),
+                        cost_usd=_safe_completion_cost(response=response),
+                        latency_ms=latency_ms,
+                        finish_reason=choice.finish_reason,
+                        extra_metadata=span_metadata,
+                    )
+                return content
         except (RateLimitError, Timeout, LiteLLMServiceUnavailable, APIError) as exc:
             logger.error(
                 "llm_completion_failed",
@@ -189,29 +189,28 @@ class LLMProvider:
             kwargs["fallbacks"] = self._fallback_models
 
         try:
-            start_monotonic = time.monotonic()
-            # litellm types this as ModelResponse | CustomStreamWrapper; with
-            # stream unset it's always a ModelResponse — Any avoids the union.
-            response: Any = await acompletion(**kwargs)
-            latency_ms = int((time.monotonic() - start_monotonic) * 1000)
-            choice = response.choices[0]
-            message = choice.message
-            content = message.content or None
-            tool_calls = _parse_tool_calls(getattr(message, "tool_calls", None))
-            if span_name:
-                usage = getattr(response, "usage", None)
-                self._log_generation_safe(
-                    span_name=span_name,
-                    msg_dicts=messages,
-                    content=content or "",
-                    input_tokens=getattr(usage, "prompt_tokens", 0) if usage else 0,
-                    output_tokens=getattr(usage, "completion_tokens", 0) if usage else 0,
-                    cost_usd=_safe_completion_cost(response=response),
-                    latency_ms=latency_ms,
-                    finish_reason=choice.finish_reason,
-                    extra_metadata={"toolCallCount": len(tool_calls), **(span_metadata or {})},
-                )
-            return ToolCompletion(content=content, tool_calls=tool_calls)
+            with call_generation(self._model, span_name, messages, span_metadata) as call:
+                start_monotonic = time.monotonic()
+                # litellm types this as ModelResponse | CustomStreamWrapper; with
+                # stream unset it's always a ModelResponse — Any avoids the union.
+                response: Any = await acompletion(**kwargs)
+                latency_ms = int((time.monotonic() - start_monotonic) * 1000)
+                choice = response.choices[0]
+                message = choice.message
+                content = message.content or None
+                tool_calls = _parse_tool_calls(getattr(message, "tool_calls", None))
+                if span_name:
+                    usage = getattr(response, "usage", None)
+                    call.succeed(
+                        content=content or "",
+                        input_tokens=_usage_int(usage, "prompt_tokens"),
+                        output_tokens=_usage_int(usage, "completion_tokens"),
+                        cost_usd=_safe_completion_cost(response=response),
+                        latency_ms=latency_ms,
+                        finish_reason=choice.finish_reason,
+                        extra_metadata={"toolCallCount": len(tool_calls), **(span_metadata or {})},
+                    )
+                return ToolCompletion(content=content, tool_calls=tool_calls)
         except (RateLimitError, Timeout, LiteLLMServiceUnavailable, APIError) as exc:
             logger.error(
                 "llm_tool_completion_failed",
@@ -278,6 +277,22 @@ class LLMProvider:
         if span_name:
             kwargs["stream_options"] = {"include_usage": True}
 
+        with call_generation(self._model, span_name, messages, span_metadata) as call:
+            # ``aclosing``: a client that stops reading closes the provider stream now.
+            async with aclosing(
+                self._stream_tokens(kwargs, span_name, span_metadata, call)
+            ) as tokens:
+                async for token in tokens:
+                    yield token
+
+    async def _stream_tokens(
+        self,
+        kwargs: dict[str, Any],
+        span_name: str | None,
+        span_metadata: dict[str, Any] | None,
+        call: CallGeneration,
+    ) -> AsyncGenerator[str, None]:
+        """The stream behind :meth:`stream_with_messages`; finishes ``call`` on the last chunk."""
         start_monotonic = time.monotonic()
         accumulated: list[str] = []
         usage: Any = None
@@ -319,11 +334,9 @@ class LLMProvider:
             raise LLMError(f"LLM authentication failed: {exc}") from exc
 
         if span_name:
-            input_tokens = getattr(usage, "prompt_tokens", 0) if usage else 0
-            output_tokens = getattr(usage, "completion_tokens", 0) if usage else 0
-            self._log_generation_safe(
-                span_name=span_name,
-                msg_dicts=messages,
+            input_tokens = _usage_int(usage, "prompt_tokens")
+            output_tokens = _usage_int(usage, "completion_tokens")
+            call.succeed(
                 content="".join(accumulated),
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
@@ -336,37 +349,6 @@ class LLMProvider:
                 finish_reason=finish_reason,
                 extra_metadata={"streamed": True, **(span_metadata or {})},
             )
-
-    def _log_generation_safe(
-        self,
-        *,
-        span_name: str,
-        msg_dicts: list[dict],
-        content: str,
-        input_tokens: int,
-        output_tokens: int,
-        cost_usd: float,
-        latency_ms: int,
-        finish_reason: str | None,
-        extra_metadata: dict[str, Any] | None,
-    ) -> None:
-        """Best-effort Langfuse generation log. ``log_generation`` swallows
-        SDK failures internally, so no extra guard is needed here.
-        """
-        log_generation(
-            name=span_name,
-            model=self._model,
-            input_payload=msg_dicts,
-            output_payload=content,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            cost_usd=cost_usd,
-            latency_ms=latency_ms,
-            metadata={
-                "finishReason": finish_reason,
-                **(extra_metadata or {}),
-            },
-        )
 
     async def translate_to_english(self, text: str) -> str | None:
         """Translate a short text to English for RAG search.
@@ -426,6 +408,12 @@ def _parse_tool_calls(raw_calls: Any) -> list[dict[str, Any]]:
             }
         )
     return parsed
+
+
+def _usage_int(usage: Any, attr: str) -> int:
+    """``usage.attr`` when it is a real int (MagicMock attributes are not)."""
+    value = getattr(usage, attr, 0) if usage is not None else 0
+    return value if isinstance(value, int) else 0
 
 
 def _safe_completion_cost(

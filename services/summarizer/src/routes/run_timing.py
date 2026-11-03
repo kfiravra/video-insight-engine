@@ -15,7 +15,7 @@ import time
 from typing import Any
 
 from src.repositories.mongodb_repository import MongoDBVideoRepository
-from src.services.observability import log_span, update_trace_metadata
+from src.services.observability import update_root_metadata
 from src.services.pipeline.context import PipelineContext
 from src.services.pipeline.download_timing import failed_video_downloads
 from src.services.pipeline.phases.enrichment import QUIZ_CALL_STEP
@@ -125,16 +125,6 @@ def _trace_timing_summary(doc: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _log_phase_spans(timing: PipelineTimingRecorder) -> None:
-    """Mirror each recorded phase as a Langfuse span with real start/end times."""
-    for phase in timing.phases:
-        log_span(
-            name=f"phase:{phase['name']}",
-            start_time=timing.wall_time(phase["startMs"]),
-            end_time=timing.wall_time(phase["endMs"]),
-        )
-
-
 def degraded_reasons(
     ctx: PipelineContext, downloads: list[dict], video_summary_id: str
 ) -> list[str]:
@@ -178,8 +168,7 @@ async def persist_run_timing(
         doc["counts"]["truncated"] = truncated_calls(timing)
         reasons = degraded_reasons(ctx, doc["downloads"], video_summary_id)
         doc["degraded"], doc["degradedReasons"] = bool(reasons), reasons
-        update_trace_metadata({"timing": _trace_timing_summary(doc)})
-        _log_phase_spans(timing)
+        update_root_metadata({"timing": _trace_timing_summary(doc)})
         await asyncio.to_thread(repository.set_pipeline_timing, video_summary_id, doc, reasons)
     except Exception as exc:
         logger.warning("[pipeline] timing record failed for %s: %s", video_summary_id, exc)

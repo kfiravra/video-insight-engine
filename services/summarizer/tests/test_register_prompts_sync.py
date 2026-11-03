@@ -141,3 +141,35 @@ class TestMissingSdk:
 
         with pytest.raises(SystemExit, match="Langfuse SDK is not installed"):
             mod._build_client(dry_run=False)
+
+
+class TestClientConstructor:
+    """SDK v4 takes ``base_url``; ``host`` is deprecated (P0.3b)."""
+
+    def test_should_pass_base_url_when_building_the_v4_client(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
+        monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
+        monkeypatch.setenv("LANGFUSE_BASE_URL", "https://eu.example")
+        sdk = MagicMock(name="Langfuse")
+        monkeypatch.setitem(sys.modules, "langfuse", ModuleType("langfuse"))
+        sys.modules["langfuse"].Langfuse = sdk  # type: ignore[attr-defined]
+        mod = _load_script()
+
+        assert mod._build_client(dry_run=False) is sdk.return_value
+        assert sdk.call_args.kwargs == {
+            "public_key": "pk-test",
+            "secret_key": "sk-test",
+            "base_url": "https://eu.example",
+        }
+
+    def test_should_find_the_used_methods_when_the_v4_sdk_is_installed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import inspect
+
+        from langfuse import Langfuse
+
+        assert "base_url" in inspect.signature(Langfuse.__init__).parameters
+        assert callable(Langfuse.get_prompt) and callable(Langfuse.create_prompt)

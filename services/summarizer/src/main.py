@@ -167,13 +167,14 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
         except Exception as e:
             logger.warning("callback_shutdown_failed", error=str(e))
 
-    # Drain Langfuse buffer so in-flight spans aren't lost on container stop.
+    # Flush the Langfuse buffer and stop its export threads, so in-flight
+    # spans aren't lost on container stop.
     try:
-        from src.services.observability import flush_langfuse
+        from src.services.observability import shutdown_langfuse
 
-        await flush_langfuse()
+        await shutdown_langfuse()
     except Exception as e:
-        logger.warning("langfuse_flush_failed", error=str(e))
+        logger.warning("langfuse_shutdown_failed", error=str(e))
 
 
 app = FastAPI(title="vie-summarizer", lifespan=lifespan)

@@ -113,6 +113,9 @@ class ModelAnswer:
     start_monotonic: float
     latency_ms: int
     ttft_ms: int | None
+    # The call's open Langfuse generation (``None`` outside a run trace or
+    # without a span name); finished by the provider when it accepts the answer.
+    generation: Any | None = None
 
 
 def record_refused(

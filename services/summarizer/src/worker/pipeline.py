@@ -145,6 +145,7 @@ async def drive_pipeline(payload: VideoJobPayload) -> None:
             llm_service,
             owner,
             force_refresh=payload.bypass_cache,
+            run_path="worker",
         )
     finally:
         await asyncio.to_thread(clear_override, video_summary_id)

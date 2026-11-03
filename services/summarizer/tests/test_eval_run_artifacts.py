@@ -191,7 +191,7 @@ class TestRunnerFlag:
             patch.object(pipeline_runner, "run_pipeline_phases", _phases),
             patch.object(pipeline_runner, "send_video_status", AsyncMock()),
             patch.object(pipeline_runner, "clear_override", MagicMock()),
-            patch.object(pipeline_runner, "pipeline_trace", trace),
+            patch.object(pipeline_runner, "run_trace", trace),
         ):
             _ = [
                 ev

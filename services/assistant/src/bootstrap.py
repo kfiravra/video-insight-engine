@@ -25,7 +25,7 @@ from src.services.api_client import ApiClient
 from src.services.assistant import AssistantService
 from src.services.context_builder import ContextBuilder
 from src.services.llm_provider import LLMProvider
-from src.services.observability import flush_langfuse, init_langfuse
+from src.services.observability import init_langfuse, shutdown_langfuse
 from src.services.rag import RAGService
 from src.tools.concept_explain import ConceptExplainTool
 from src.tools.folder_organizer import FolderOrganizerTool
@@ -164,8 +164,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     yield
 
-    # Cleanup
-    await flush_langfuse()
+    # Cleanup (shutdown flushes Langfuse and stops its export threads)
+    await shutdown_langfuse()
     await api_client.aclose()
     mongo_client.close()
     if usage_callback:

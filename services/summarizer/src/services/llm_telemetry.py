@@ -1,19 +1,23 @@
-"""LLM call telemetry — Langfuse generation logging extracted from the provider.
+"""LLM call telemetry: the Langfuse generation of one provider call.
 
 Kept as standalone helpers so :mod:`src.services.llm_provider` stays focused
-on completion plumbing. Every helper here is best-effort: observability
-outages must never bubble out of an LLM call.
+on completion plumbing. The generation opens just before the request goes out
+(:func:`open_generation`), so its start and end are the call's own, and is
+finished with the answer (:func:`record_generation`) or the error
+(:func:`record_generation_failure`). Every helper is best-effort:
+observability outages must never bubble out of an LLM call.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any
 
 from litellm.cost_calculator import completion_cost
 
-from src.services.observability import log_generation
+from src.services.observability import error_status, finish_generation, generation, usage_details
 
 logger = logging.getLogger(__name__)
 
@@ -23,60 +27,101 @@ def stopwatch_ms_since(start_monotonic: float) -> int:
     return int((time.monotonic() - start_monotonic) * 1000)
 
 
-def record_generation(
+def _usage_int(usage: object, attr: str) -> int:
+    """``usage.attr`` when it is a real int (MagicMock attributes are not)."""
+    value = getattr(usage, attr, 0) if usage is not None else 0
+    return value if isinstance(value, int) else 0
+
+
+def open_generation(
     *,
     span_name: str,
     model: str,
     msg_dicts: list[dict[str, Any]],
-    content: str,
+    model_parameters: dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> Any | None:
+    """Start the call's generation under the current span; ``None`` outside a run trace.
+
+    ``model_parameters`` carries the sampling parameters the request actually
+    sends (e.g. ``temperature``) into the generation's ``modelParameters``.
+    """
+    try:
+        return generation(
+            span_name,
+            model=model,
+            input=msg_dicts,
+            model_parameters=model_parameters,
+            metadata=metadata,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Generation open skipped (span=%s): %s", span_name, exc)
+        return None
+
+
+def record_generation(
+    *,
+    handle: Any | None,
+    span_name: str,
     response: Any,
+    content: str,
     latency_ms: int,
     finish_reason: str | None,
     extra_metadata: dict[str, Any] | None,
-    model_parameters: dict[str, Any] | None = None,
 ) -> None:
-    """Best-effort Langfuse generation log.
+    """Finish a call's generation with its output, token usage, cost and metadata.
 
-    ``model_parameters`` carries the sampling parameters the request actually
-    sent (e.g. ``temperature``) into the generation's ``modelParameters``.
-    Wrapped in a broad try/except — observability outages must never
-    bubble out of an LLM call.
+    Anthropic's prompt-cache reads and writes go into ``usage_details`` and,
+    as ``cacheReadTokens`` / ``cacheCreationTokens`` / ``cacheHit``, into the
+    metadata, so "is the extraction prompt cached?" is answerable from the UI.
     """
+    if handle is None:
+        return
     try:
         usage = getattr(response, "usage", None)
-        input_tokens = getattr(usage, "prompt_tokens", 0) if usage else 0
-        output_tokens = getattr(usage, "completion_tokens", 0) if usage else 0
-        # Anthropic prompt-cache token breakdown. Surfacing these in Langfuse
-        # metadata lets us answer "is the static extraction prompt actually
-        # being cached?" from the UI without cross-referencing MongoDB.
-        cache_creation_tokens = getattr(usage, "cache_creation_input_tokens", 0) if usage else 0
-        cache_read_tokens = getattr(usage, "cache_read_input_tokens", 0) if usage else 0
+        input_tokens = _usage_int(usage, "prompt_tokens")
+        output_tokens = _usage_int(usage, "completion_tokens")
+        cache_creation_tokens = _usage_int(usage, "cache_creation_input_tokens")
+        cache_read_tokens = _usage_int(usage, "cache_read_input_tokens")
         cost = 0.0
         try:
             cost = completion_cost(completion_response=response) or 0.0
         except Exception as exc:  # noqa: BLE001 — cost lookup is non-critical
             logger.debug("Cost lookup failed (span=%s): %s", span_name, exc)
         cache_metadata: dict[str, Any] = {}
-        if isinstance(cache_creation_tokens, int) and cache_creation_tokens > 0:
+        if cache_creation_tokens > 0:
             cache_metadata["cacheCreationTokens"] = cache_creation_tokens
-        if isinstance(cache_read_tokens, int) and cache_read_tokens > 0:
+        if cache_read_tokens > 0:
             cache_metadata["cacheReadTokens"] = cache_read_tokens
             cache_metadata["cacheHit"] = True
-        log_generation(
-            name=span_name,
-            model=model,
-            input_payload=msg_dicts,
-            output_payload=content,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
+        finish_generation(
+            handle,
+            output=content,
+            usage=usage_details(
+                input_tokens,
+                output_tokens,
+                cache_read_tokens=cache_read_tokens,
+                cache_creation_tokens=cache_creation_tokens,
+            ),
             cost_usd=cost,
-            latency_ms=latency_ms,
-            model_parameters=model_parameters,
             metadata={
                 "finishReason": finish_reason,
+                "latencyMs": latency_ms,
                 **cache_metadata,
                 **(extra_metadata or {}),
             },
         )
     except Exception as exc:  # noqa: BLE001
         logger.debug("Generation record skipped (span=%s): %s", span_name, exc)
+
+
+def record_generation_failure(handle: Any | None, error: BaseException) -> None:
+    """End a call's generation that raised: ``ERROR``, or ``WARNING`` when it was cancelled."""
+    if handle is None:
+        return
+    cancelled = isinstance(error, asyncio.CancelledError)
+    finish_generation(
+        handle,
+        level="WARNING" if cancelled else "ERROR",
+        status_message="cancelled" if cancelled else error_status(error),
+    )

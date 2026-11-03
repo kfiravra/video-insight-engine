@@ -24,7 +24,6 @@
     "src/services/media/frame_scorer.py",
     "src/services/media/image_dedup.py",
     "src/services/media/s3_client.py",
-    "src/services/observability/langfuse_client.py",
     "src/services/pipeline/phases/assembly.py",
     "src/services/pipeline/phases/transcript.py",
     "src/services/transcription/gemini_transcriber.py",

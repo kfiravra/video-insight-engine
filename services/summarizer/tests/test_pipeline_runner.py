@@ -17,11 +17,13 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 from llm_common.context import llm_feature_var
+from llm_common.observability.testing import LangfuseCapture
 
 from src.exceptions import TranscriptError
 from src.models.pipeline_types import PlanResult
 from src.models.schemas import ErrorCode, ProcessingStatus
 from src.routes import pipeline_faithfulness, pipeline_orchestration, pipeline_runner
+from src.services.observability import run_trace
 from src.config import settings
 from src.services.pipeline.phases import frames_done
 from src.services.pipeline.pipeline_helpers import (
@@ -644,7 +646,7 @@ async def test_records_transcript_meta_after_transcript_phase_success() -> None:
     trace_meta = MagicMock()
 
     await _drain_phases(
-        ctx, repository, patch.object(pipeline_orchestration, "update_trace_metadata", trace_meta)
+        ctx, repository, patch.object(pipeline_orchestration, "update_root_metadata", trace_meta)
     )
 
     repository.set_transcript_meta.assert_called_once()
@@ -982,3 +984,34 @@ async def test_run_end_should_cancel_a_probe_still_waiting_for_the_transcript() 
     await asyncio.gather(ctx.tier_probe_task, return_exceptions=True)
 
     assert ctx.tier_probe_task.cancelled()
+
+
+# ─── Langfuse phase spans ─────────────────────────────────────────────────
+
+
+class TestOrchestratorPhaseSpans:
+    """The five orchestrator phases are ``phase:<name>`` spans under the run's root."""
+
+    async def test_should_nest_each_orchestrator_phase_under_the_root_when_traced(
+        self, langfuse_capture: LangfuseCapture
+    ) -> None:
+        async with run_trace(name="pipeline:vsid"):
+            await _drain_phases(_english_ctx({}), MagicMock())
+
+        parents = {o.name: o.parent for o in langfuse_capture.observations()}
+        for phase in ("metadata", "transcript_frames", "visual_inject", "assembly"):
+            assert parents.get(f"phase:{phase}") == "pipeline:vsid", phase
+
+    async def test_should_add_a_translation_span_when_the_source_is_not_english(
+        self, langfuse_capture: LangfuseCapture
+    ) -> None:
+        async def _translation_stub(_ctx, _repo, _vsid):
+            yield "data: translation\n\n"
+
+        translation = patch(
+            "src.services.pipeline.phases.translation.run_phase_translation", _translation_stub
+        )
+        async with run_trace(name="pipeline:vsid"):
+            await _drain_phases(_non_english_ctx(), MagicMock(), translation)
+
+        assert langfuse_capture.named("phase:translation").parent == "pipeline:vsid"

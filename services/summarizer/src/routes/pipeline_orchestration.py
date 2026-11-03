@@ -24,7 +24,7 @@ from src.routes.pipeline_faithfulness import (
     _launch_hero_quiz_check,
 )
 from src.routes.run_timing import log_run_summary, mark_phase, persist_run_timing
-from src.services.observability import update_trace_metadata
+from src.services.observability import span, update_root_metadata
 from src.services.pipeline.context import PipelineContext
 from src.services.pipeline.phases import (
     run_phase_assembly,
@@ -62,7 +62,7 @@ async def _record_transcript_outcome(
     fallback chain still leaves ``outcome="failed"`` + ``attempted`` +
     ``errorCode`` on the row, because the phase's own ``finally`` stamped
     ``ctx.transcript_trail`` before re-raising. It has to live INSIDE the
-    Langfuse ``pipeline_trace``: the ``except TranscriptError`` in
+    Langfuse ``run_trace``: the ``except TranscriptError`` in
     ``stream_summarization`` sits outside it, so trace metadata written
     there would silently no-op. Best-effort — it must never raise, or it
     would mask the pipeline's own exception in that ``finally``.
@@ -74,7 +74,7 @@ async def _record_transcript_outcome(
         return
     try:
         meta = build_transcript_meta(transcript_data, getattr(ctx, "video_data", None), trail)
-        update_trace_metadata(
+        update_root_metadata(
             {
                 "transcriptSource": meta["source"],
                 "transcriptType": meta["type"],
@@ -220,14 +220,15 @@ async def _run_phase_two(
     from src.services.pipeline.phases.probe import start_tier_probe
 
     phase_start = time.monotonic()
-    start_tier_probe(ctx)
-    try:
-        async for event in run_parallel_phases(_phase_two_members(split), ctx):
-            yield event
-    finally:
-        # On the split path this wall spans the field groups too (SERVICE-SUMMARIZER.md, 4b).
-        mark_phase(ctx, timing, "transcript_frames", phase_start)
-        await _record_transcript_outcome(ctx, repository, video_summary_id)
+    with span("phase:transcript_frames"):
+        start_tier_probe(ctx)
+        try:
+            async for event in run_parallel_phases(_phase_two_members(split), ctx):
+                yield event
+        finally:
+            # On the split path this wall spans the field groups too (SERVICE-SUMMARIZER.md, 4b).
+            mark_phase(ctx, timing, "transcript_frames", phase_start)
+            await _record_transcript_outcome(ctx, repository, video_summary_id)
 
 
 async def _frames_done_then_extraction(
@@ -244,8 +245,9 @@ async def _frames_done_then_extraction(
     timeout. The runner also records the "extraction" step in pipeline.timing.
     """
     phase_start = time.monotonic()
-    for event in frames_done_step(ctx):
-        yield event
+    with span("phase:visual_inject"):
+        for event in frames_done_step(ctx):
+            yield event
     mark_phase(ctx, timing, "visual_inject", phase_start)
     async for event in run_parallel_phases([run_phase_extraction], ctx):
         yield event
@@ -291,8 +293,9 @@ async def _run_translation_step(
     try:
         from src.services.pipeline.phases.translation import run_phase_translation
 
-        async for event in run_phase_translation(ctx, repository, video_summary_id):
-            yield event
+        with span("phase:translation"):
+            async for event in run_phase_translation(ctx, repository, video_summary_id):
+                yield event
         # Assembly deferred the terminal event for non-English videos so
         # `done` fires only after the source-language surface is final.
         # Reaching here means translation ran to completion (success or a
@@ -326,8 +329,9 @@ async def _run_early_phases(
     # starts the t=0 group in the background (captions, description
     # analysis, low-res + 720p downloads) and returns.
     phase_start = time.monotonic()
-    async for event in run_phase_metadata(ctx):
-        yield event
+    with span("phase:metadata"):
+        async for event in run_phase_metadata(ctx):
+            yield event
     mark_phase(ctx, timing, "metadata", phase_start)
 
     # Phase 2: text branch (transcript → tier probe → plan ∥ memory) ∥
@@ -351,8 +355,8 @@ async def _run_phases_in_order(
 ) -> AsyncGenerator[str, None]:
     """Run every pipeline phase in order, streaming SSE chunks to the caller.
 
-    Lives inside the Langfuse ``pipeline_trace`` context so every LLM span
-    attaches to the parent trace. Phase timings are recorded on ``ctx`` for
+    Lives inside the Langfuse ``run_trace`` context so every phase span and
+    LLM generation nests under the run's root span. Phase timings are recorded on ``ctx`` for
     the final summary log. Any faithfulness tasks spawned mid-pipeline are
     drained before this coroutine returns so their scores reach Langfuse
     before the trace is flushed.
@@ -368,8 +372,9 @@ async def _run_phases_in_order(
         # quiz (1d.1/1d.3: the quiz never blocks tabs; its tab joins last),
         # then the save.
         phase_start = time.monotonic()
-        async for event in run_phase_assembly(ctx):
-            yield event
+        with span("phase:assembly"):
+            async for event in run_phase_assembly(ctx):
+                yield event
         mark_phase(ctx, timing, "assembly", phase_start)
         _launch_judges(ctx, spawned_faithfulness, "assembly")
 
@@ -380,7 +385,7 @@ async def _run_phases_in_order(
         log_run_summary(ctx, timer, timing, logger)
     finally:
         # Drain in-flight faithfulness tasks BEFORE the surrounding
-        # ``pipeline_trace`` exits and flushes — otherwise the judge's
-        # ``log_score`` lands in the SDK buffer after explicit flush and
+        # ``run_trace`` exits and flushes — otherwise the judge's
+        # ``score`` lands in the SDK buffer after explicit flush and
         # may be lost on container stop.
         await _drain_faithfulness(spawned_faithfulness)

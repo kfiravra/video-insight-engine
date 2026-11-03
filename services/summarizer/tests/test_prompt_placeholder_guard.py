@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src import config as app_config
-from src.services.observability import langfuse_client as lc
+from llm_common.observability import client as lc
 from src.services.pipeline import prompt_builder, prompt_registry
 from src.services.pipeline.prompt_builder import (
     PROMPTS_DIR,

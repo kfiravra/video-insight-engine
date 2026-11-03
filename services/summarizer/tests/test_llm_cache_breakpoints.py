@@ -15,7 +15,7 @@ import copy
 import json
 from collections.abc import Iterator
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -24,11 +24,12 @@ from litellm.llms.openai.chat.gpt_transformation import OpenAIGPTConfig
 
 from src.services import llm_provider as lp
 from src.services.llm_messages import TextBlock, text_block
-from src.services.observability import langfuse_client as lc
+from src.services.observability import run_trace
 from src.services.pipeline import pipeline_timing
 from src.services.pipeline.pipeline_timing import PipelineTimingRecorder, start_run_timing
 from src.utils import llm_retry
 from src.utils.llm_retry import call_llm_with_retry
+from llm_common.observability.testing import LangfuseCapture
 
 _SONNET = "anthropic/claude-sonnet-4-6"
 _HAIKU = "anthropic/claude-haiku-4-5-20251001"
@@ -242,18 +243,6 @@ class TestCacheTokensStillRecorded:
         finally:
             pipeline_timing._recorder_var.reset(token)
 
-    @pytest.fixture
-    def fake_trace(self, monkeypatch: pytest.MonkeyPatch) -> Iterator[MagicMock]:
-        lc._reset_for_tests()
-        monkeypatch.setattr(lc, "Langfuse", MagicMock(name="LangfuseSDK"))
-        monkeypatch.setattr(lc.settings, "LANGFUSE_PUBLIC_KEY", "pk", raising=False)
-        monkeypatch.setattr(lc.settings, "LANGFUSE_SECRET_KEY", "sk", raising=False)
-        lc.init_langfuse()
-        trace = MagicMock()
-        cast(MagicMock, lc._client).trace.return_value = trace
-        yield trace
-        lc._reset_for_tests()
-
     async def test_should_record_cache_tokens_in_pipeline_timing(
         self, recorder: PipelineTimingRecorder
     ) -> None:
@@ -265,14 +254,17 @@ class TestCacheTokensStillRecorded:
         assert (call["cacheReadTokens"], call["cacheWriteTokens"]) == (6000, 1200)
 
     async def test_should_record_cache_read_tokens_on_langfuse_generation(
-        self, fake_trace: MagicMock
+        self, langfuse_capture: LangfuseCapture
     ) -> None:
         fake = AsyncMock(return_value=_response(cache_read=6000))
         with (
             patch("src.services.llm_provider.acompletion", fake),
             patch("src.services.llm_telemetry.completion_cost", return_value=0.0),
         ):
-            async with lc.pipeline_trace("vid-1"):
+            async with run_trace(name="pipeline:vid-1"):
                 await _provider(_HAIKU).complete(_blocks(), span_name="extraction")
 
-        assert fake_trace.generation.call_args.kwargs["metadata"]["cacheReadTokens"] == 6000
+        (generation,) = langfuse_capture.generations("extraction")
+        assert generation.metadata["cacheReadTokens"] == 6000
+        assert generation.usage is not None
+        assert generation.usage["cache_read_input_tokens"] == 6000

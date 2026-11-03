@@ -38,7 +38,7 @@ def quiet_usage_sinks() -> Iterator[None]:
     """Keep the ledger + Langfuse emits off the network; timing is under test."""
     with (
         patch("src.services.transcription.usage.record_manual_usage", MagicMock()),
-        patch("src.services.transcription.usage.log_generation", MagicMock()),
+        patch("src.services.transcription.usage.finish_generation", MagicMock()),
     ):
         yield
 

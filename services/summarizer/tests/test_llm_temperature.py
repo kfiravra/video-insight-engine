@@ -9,16 +9,16 @@ generation's ``modelParameters`` on every path, including ``model_override``.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Iterator
-from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from src.services import llm_provider as lp
 from src.services.llm import LLMService
-from src.services.observability import langfuse_client as lc
+from src.services.observability import run_trace
 from src.utils import llm_retry
 from src.utils.llm_retry import call_llm_with_retry
+from llm_common.observability.testing import LangfuseCapture
 
 _SONNET = "anthropic/claude-sonnet-4-6"
 _HAIKU = "anthropic/claude-haiku-4-5-20251001"
@@ -54,20 +54,6 @@ def acompletion() -> Iterator[AsyncMock]:
 @pytest.fixture
 def provider() -> lp.LLMProvider:
     return lp.LLMProvider(model=_SONNET, fast_model=_HAIKU, fallback_models=["openai/gpt-4o"])
-
-
-@pytest.fixture
-def fake_trace(monkeypatch: pytest.MonkeyPatch) -> Iterator[MagicMock]:
-    """A fake Langfuse SDK whose trace object records ``generation`` calls."""
-    lc._reset_for_tests()
-    monkeypatch.setattr(lc, "Langfuse", MagicMock(name="LangfuseSDK"))
-    monkeypatch.setattr(lc.settings, "LANGFUSE_PUBLIC_KEY", "pk", raising=False)
-    monkeypatch.setattr(lc.settings, "LANGFUSE_SECRET_KEY", "sk", raising=False)
-    lc.init_langfuse()
-    trace = MagicMock()
-    cast(MagicMock, lc._client).trace.return_value = trace
-    yield trace
-    lc._reset_for_tests()
 
 
 @pytest.fixture
@@ -186,24 +172,30 @@ class TestRetryTemperature:
 class TestTemperatureTelemetry:
     @pytest.mark.parametrize("entry", list(_PROVIDER_ENTRY_POINTS))
     async def test_should_record_temperature_in_generation_model_parameters(
-        self, provider: lp.LLMProvider, acompletion: AsyncMock, fake_trace: MagicMock, entry: str
+        self,
+        provider: lp.LLMProvider,
+        acompletion: AsyncMock,
+        langfuse_capture: LangfuseCapture,
+        entry: str,
     ) -> None:
         with patch("src.services.llm_telemetry.completion_cost", return_value=0.0):
-            async with lc.pipeline_trace("vid-1"):
+            async with run_trace(name="pipeline:vid-1"):
                 await _PROVIDER_ENTRY_POINTS[entry](provider)(
                     span_name="tier_probe", temperature=0.0
                 )
 
-        assert fake_trace.generation.call_args.kwargs["model_parameters"] == {"temperature": 0.0}
+        (generation,) = langfuse_capture.generations("tier_probe")
+        assert generation.model_parameters == {"temperature": 0.0}
 
     async def test_should_leave_model_parameters_unset_when_temperature_none(
-        self, provider: lp.LLMProvider, acompletion: AsyncMock, fake_trace: MagicMock
+        self, provider: lp.LLMProvider, acompletion: AsyncMock, langfuse_capture: LangfuseCapture
     ) -> None:
         with patch("src.services.llm_telemetry.completion_cost", return_value=0.0):
-            async with lc.pipeline_trace("vid-1"):
+            async with run_trace(name="pipeline:vid-1"):
                 await provider.complete("hi", span_name="plan")
 
-        assert "model_parameters" not in fake_trace.generation.call_args.kwargs
+        (generation,) = langfuse_capture.generations("plan")
+        assert generation.model_parameters is None
 
 
 class TestUnsupportedTemperatureGuard:
