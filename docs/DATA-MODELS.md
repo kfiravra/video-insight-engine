@@ -582,6 +582,26 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
   billingRunId: string | absent,    // the minutes ledger's run id for that dispatch (server UUID per
                                     // submission, P3.1): the terminal status settles / releases the
                                     // hold keyed by it; same $unset rules as requestId (vie-api only)
+  currentRunId: string | absent,    // P0b: the run id of the latest attempt. vie-api mints one per
+                                    // dispatch (stampDispatchContext); the summarizer re-stamps it from
+                                    // POST /summarize and when it starts an attempt the api never
+                                    // dispatched (retry, replay, regenerate). Billing never reads it.
+                                    // $unset by the GDPR cascade.
+  runs: [{                          // P0b: one entry per attempt, newest last, the newest 50 kept
+    runId: string,                  // one attempt = one runId = one Langfuse trace
+    traceId: string,                // sha256(runId) hex, first 32 chars (traceIdForRun / trace_id_for_run)
+    requestId?: string,             // the dispatching request ($unset by the GDPR cascade)
+    userId?: string,                // who dispatched it, only so the GDPR cascade finds the entry
+    attempt: number,                // 1 at dispatch; a retry's fresh entry counts up
+    pipelineVersion?: string,
+    bypass: boolean,                // the dispatch's bypassCache
+    path?: "worker" | "sse" | "dev",// set when the summarizer starts the attempt
+    chatSessionId?: string,         // P1: the chat session that asked for it ($unset by GDPR)
+    retryOf?: string,               // the runId this attempt follows (summarizer-minted entries)
+    status: "dispatched" | "running" | "completed" | "failed" | "cache_hit",
+    dispatchedAt?: Date, startedAt?: Date, endedAt?: Date
+  }] | absent,                      // api pushes `dispatched`; the summarizer sets `running` (or
+                                    // pushes its own entry); the status callback's runId closes it
   degraded: true | absent,          // admin run badge: meta.degraded (a failed extraction group, a
                                     // dropped chunked batch, or critical coverage), OR a failed frame
                                     // download (set at the run's end; no user-facing banner)

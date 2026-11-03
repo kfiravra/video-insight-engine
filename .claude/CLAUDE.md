@@ -23,7 +23,7 @@ Mongo + Redis + Qdrant + RabbitMQ via docker compose. Full context dump: [PROJEC
 - `vie-summarizer` hot-reloads from `src/`: no code edits during a live pipeline run. The worker does not reload: `docker compose restart vie-summarizer-worker`.
 - `vie-web` serves a stale build; use `pnpm dev:web` for hot reload.
 - Single-file bind mounts (`pipeline-version.json`, `domains.json`) need `--force-recreate` to pick up edits.
-- `packages/shared/src/config/pipeline-version.json` is ONE value read by api and summarizer; a bump creates new dedupKey rows for every video ([docs/IDEMPOTENCY.md](../docs/IDEMPOTENCY.md)). `?bypassCache=true` is the surgical refresh.
+- `packages/shared/src/config/pipeline-version.json` is ONE value read by api and summarizer; a bump creates new dedupKey rows for every video ([docs/IDEMPOTENCY.md](../docs/IDEMPOTENCY.md)). `bypassCache: true` in the `POST /api/videos` body is the surgical refresh.
 - Mongo is a single-node replica set (`rs0`); host clients need `?directConnection=true`.
 - CI runs Python 3.11, local venvs are 3.12; async tick-count tests can pass locally and fail in CI.
 - `gh` works only as `env -u GITHUB_TOKEN gh ...` (the exported token is invalid).

@@ -49,12 +49,15 @@ class FakeApi:
         self.doc_statuses = list(doc_statuses or [])
         self.stream_statuses = list(stream_statuses or [])
         self.doc = doc or _DOC
+        self.run_ids: dict[str, str] = {}
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
         if request.method == "POST" and path == "/api/videos":
             self.posts.append(json.loads(request.content))
-            return httpx.Response(201, json={"video": {"id": "uv1", "videoSummaryId": "vs1"}})
+            return httpx.Response(
+                201, json={"video": {"id": "uv1", "videoSummaryId": "vs1"}, **self.run_ids}
+            )
         if path == "/api/videos/vs1/stream":
             self.stream_opens += 1
             status = self.stream_statuses.pop(0) if self.stream_statuses else 200
@@ -106,6 +109,26 @@ class TestRunPipeline:
         mount(FakeApi())
         out = await _eval_api.run_pipeline(_API, _URL, "t")
         assert (out["videoSummaryId"], out["duration"], len(out["tabs"])) == ("vs1", 300, 1)
+
+    async def test_should_keep_the_submits_run_and_trace_ids_when_the_doc_has_none(
+        self, mount
+    ) -> None:
+        api = FakeApi()
+        api.run_ids = {"runId": "run-1", "traceId": "tr-1"}
+        mount(api)
+
+        out = await _eval_api.run_pipeline(_API, _URL, "t")
+
+        assert (out["runId"], out["traceId"]) == ("run-1", "tr-1")
+
+    async def test_should_prefer_the_docs_run_ids_when_a_retry_re_ran_the_row(self, mount) -> None:
+        api = FakeApi(doc={**_DOC, "runId": "run-retry", "traceId": "tr-retry"})
+        api.run_ids = {"runId": "run-1", "traceId": "tr-1"}
+        mount(api)
+
+        out = await _eval_api.run_pipeline(_API, _URL, "t")
+
+        assert (out["runId"], out["traceId"]) == ("run-retry", "tr-retry")
 
     async def test_should_raise_when_doc_reports_failure(self, mount) -> None:
         mount(FakeApi(doc={"status": "failed", "error": "boom"}))

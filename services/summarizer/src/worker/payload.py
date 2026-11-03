@@ -50,5 +50,10 @@ class VideoJobPayload(BaseModel):
     providers: ProviderConfig | None = None
     bypass_cache: bool = Field(default=False, alias="bypassCache")
     request_id: str = Field(alias="requestId", min_length=1)
+    # P0b: the attempt's run id (absent on messages published before it); a
+    # retry keeps it and the runner turns an id that already ran into a fresh one.
+    run_id: str | None = Field(default=None, alias="runId", min_length=1)
+    pipeline_version: str | None = Field(default=None, alias="pipelineVersion")
+    chat_session_id: str | None = Field(default=None, alias="chatSessionId")
     attempt: int = Field(default=1, ge=1)
     created_at: str = Field(alias="createdAt")

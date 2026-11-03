@@ -229,6 +229,56 @@ describe('GDPR cascade deletion — end-to-end integration', () => {
     expect(await db.collection('videoSummaryCache').countDocuments({})).toBe(1);
   });
 
+  it('should strip the dispatcher ids from the shared cache rows and their runs when the dispatcher is deleted (P0b)', async () => {
+    const doomed = await userRepo.create({ email: 'runs-doomed@example.com', passwordHash: '$2b$10$fake', name: 'runs' });
+    const userId = doomed._id.toString();
+    const withRuns = new ObjectId();
+    const withoutRuns = new ObjectId();
+    const run = (runId: string, by = userId) => ({
+      runId, traceId: `t-${runId}`, requestId: `req-${runId}`, chatSessionId: `chat-${runId}`,
+      userId: by, attempt: 1, bypass: false, status: 'completed',
+    });
+    const redispatched = new ObjectId();
+    await db.collection('videoSummaryCache').insertMany([
+      {
+        _id: withRuns, youtubeId: 'yt-runs-1', status: 'completed', isLatest: true, version: 1, retryCount: 0,
+        userId, requestId: 'req-r2', billingRunId: 'bill-r2', currentRunId: 'r2', runs: [run('r1'), run('r2')],
+        createdAt: new Date(), updatedAt: new Date(),
+      },
+      {
+        _id: withoutRuns, youtubeId: 'yt-runs-2', status: 'completed', isLatest: true, version: 1, retryCount: 0,
+        userId, requestId: 'req-old', createdAt: new Date(), updatedAt: new Date(),
+      },
+      {
+        // Another user re-dispatched this row after the deleted user's run.
+        _id: redispatched, youtubeId: 'yt-runs-3', status: 'completed', isLatest: true, version: 1, retryCount: 0,
+        userId: 'someone-else', currentRunId: 'r4', runs: [run('r3'), run('r4', 'someone-else')],
+        createdAt: new Date(), updatedAt: new Date(),
+      },
+    ] as unknown as Document[]);
+
+    await service.executeHardDelete(userId, { initiatedBy: 'admin', adminId: 'op', reason: 'runs test' });
+
+    const rows = await db.collection('videoSummaryCache').find({ _id: { $in: [withRuns, withoutRuns] } }).toArray();
+    for (const row of rows) {
+      expect(row).not.toHaveProperty('userId');
+      expect(row).not.toHaveProperty('requestId');
+      expect(row).not.toHaveProperty('billingRunId');
+      expect(row).not.toHaveProperty('currentRunId');
+    }
+    const runs = rows.find(r => r._id.equals(withRuns))?.runs as Record<string, unknown>[];
+    expect(runs.map(r => [r.runId, r.traceId, r.requestId, r.chatSessionId, r.userId])).toEqual([
+      ['r1', 't-r1', undefined, undefined, undefined],
+      ['r2', 't-r2', undefined, undefined, undefined],
+    ]);
+    const other = await db.collection('videoSummaryCache').findOne({ _id: redispatched });
+    expect(other?.userId).toBe('someone-else');
+    expect((other?.runs as Record<string, unknown>[]).map(r => [r.runId, r.requestId, r.userId])).toEqual([
+      ['r3', undefined, undefined],
+      ['r4', 'req-r4', 'someone-else'],
+    ]);
+  });
+
   it('pseudonymises the minutes ledger: the user is named nowhere, every amount stays (Q12)', async () => {
     await createBillingIndexes(db);
     const billing = new BillingService(new BillingRepository(db), userRepo, silentLogger);

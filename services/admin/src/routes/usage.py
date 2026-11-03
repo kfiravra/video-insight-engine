@@ -639,13 +639,12 @@ def _build_run_call(raw: dict) -> RunCallSummary:
     )
 
 
-async def _degraded_by_summary_id(
-    db: Any, summary_ids: set[str]
-) -> dict[str, tuple[bool, list[str] | None]]:
-    """Map video_summary_id → (degraded flag, degradedReasons) from the videoSummaryCache docs.
+async def _cache_rows_by_summary_id(db: Any, summary_ids: set[str]) -> dict[str, dict]:
+    """Map video_summary_id → its videoSummaryCache doc (degraded fields + runs[] ids).
 
     Ids that are not valid ObjectIds (or have no doc) are simply absent from
-    the returned map — the caller renders those runs with ``degraded=None``.
+    the returned map — the caller renders those runs with ``degraded=None``
+    and no Langfuse link.
     """
     oids: dict[ObjectId, str] = {}
     for sid in summary_ids:
@@ -657,12 +656,26 @@ async def _degraded_by_summary_id(
         return {}
     cursor = db.videoSummaryCache.find(
         {"_id": {"$in": list(oids)}},
-        {"degraded": 1, "degradedReasons": 1},
+        {"degraded": 1, "degradedReasons": 1, "runs.requestId": 1, "runs.traceId": 1},
     )
     docs = await cursor.to_list(len(oids))
-    return {
-        oids[doc["_id"]]: (bool(doc.get("degraded")), doc.get("degradedReasons")) for doc in docs
-    }
+    return {oids[doc["_id"]]: doc for doc in docs}
+
+
+def _attach_cache_fields(results: list[RunSummary], rows: dict[str, dict]) -> None:
+    """Fill each run's degraded badge and Langfuse link from its videoSummaryCache doc.
+
+    The link is the stored trace id of the doc's newest ``runs[]`` entry with
+    the run's request id (P-6). A run without a doc keeps ``None`` for all three.
+    """
+    for run in results:
+        row = rows.get(run.video_summary_id) if run.video_summary_id else None
+        if row is None:
+            continue
+        run.degraded, run.degraded_reasons = bool(row.get("degraded")), row.get("degradedReasons")
+        if run.request_id:
+            trace_id = langfuse.latest_trace_ids_by_request(row.get("runs")).get(run.request_id)
+            run.langfuse_url = langfuse.trace_url(trace_id)
 
 
 def _build_run_summary(run_group: dict, calls: list[dict], ordinal: int | None) -> RunSummary:
@@ -799,21 +812,12 @@ async def usage_by_run(
         ordinal = ordinal_map.get((req_id, vid_id))
         results.append(_build_run_summary(group, calls, ordinal))
 
-    # Step 5: best-effort Langfuse deep-links (one batched call; no-op if unconfigured).
-    request_ids = [r.request_id for r in results if r.request_id]
-    trace_urls = await langfuse.map_request_ids_to_urls(request_ids)
-    for run in results:
-        if run.request_id:
-            run.langfuse_url = trace_urls.get(run.request_id)
-
-    # Step 6: degraded-run badges — one batched videoSummaryCache lookup for
-    # the page's summary ids. Runs without a resolvable doc stay None.
+    # Step 5: one batched videoSummaryCache lookup for the page's summary ids:
+    # the degraded-run badge, and the Langfuse link from the stored trace id of
+    # the run's newest runs[] entry with its request id (P-6; no Langfuse call;
+    # needs LANGFUSE_PROJECT_ID). Runs without a resolvable doc stay None.
     summary_ids = {r.video_summary_id for r in results if r.video_summary_id}
-    degraded_map = await _degraded_by_summary_id(db, summary_ids)
-    for run in results:
-        found = degraded_map.get(run.video_summary_id) if run.video_summary_id else None
-        if found is not None:
-            run.degraded, run.degraded_reasons = found
+    _attach_cache_fields(results, await _cache_rows_by_summary_id(db, summary_ids))
 
     _cache[cache_key] = results
     return results

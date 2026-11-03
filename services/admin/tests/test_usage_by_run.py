@@ -7,7 +7,12 @@ from httpx import ASGITransport, AsyncClient
 
 from src.config import settings
 from src.main import app
-from src.routes.usage import _build_run_call, _build_run_summary, _degraded_by_summary_id
+from src.routes.usage import (
+    _attach_cache_fields,
+    _build_run_call,
+    _build_run_summary,
+    _cache_rows_by_summary_id,
+)
 
 
 @pytest.fixture
@@ -298,7 +303,7 @@ class _FakeDb:
 
 
 class TestDegradedBySummaryId:
-    """_degraded_by_summary_id maps videoSummaryCache docs to badge flags."""
+    """_cache_rows_by_summary_id maps videoSummaryCache docs (badge flags, runs[] ids)."""
 
     @pytest.mark.anyio
     async def test_maps_degraded_and_clean_docs(self) -> None:
@@ -312,9 +317,9 @@ class TestDegradedBySummaryId:
                 {"_id": ObjectId(clean_id)},  # pre-feature/clean doc: no field
             ]
         )
-        result = await _degraded_by_summary_id(db, {degraded_id, clean_id})
-        assert result[degraded_id] == (True, None)
-        assert result[clean_id] == (False, None)
+        result = await _cache_rows_by_summary_id(db, {degraded_id, clean_id})
+        assert result[degraded_id]["degraded"] is True
+        assert result[clean_id].get("degraded") is None
 
     @pytest.mark.anyio
     async def test_returns_the_reasons_with_the_flag(self) -> None:
@@ -330,13 +335,13 @@ class TestDegradedBySummaryId:
                 }
             ]
         )
-        result = await _degraded_by_summary_id(db, {degraded_id})
-        assert result[degraded_id] == (True, ["media_download_failed"])
+        result = await _cache_rows_by_summary_id(db, {degraded_id})
+        assert result[degraded_id]["degradedReasons"] == ["media_download_failed"]
 
     @pytest.mark.anyio
     async def test_invalid_object_ids_are_skipped(self) -> None:
         db = _FakeDb([])
-        result = await _degraded_by_summary_id(db, {"not-an-oid", ""})
+        result = await _cache_rows_by_summary_id(db, {"not-an-oid", ""})
         assert result == {}
         # No query was issued — nothing valid to look up.
         assert db.last_filter is None
@@ -345,5 +350,58 @@ class TestDegradedBySummaryId:
     async def test_missing_docs_are_absent_from_map(self) -> None:
         missing_id = "664f0000000000000000cc00"
         db = _FakeDb([])
-        result = await _degraded_by_summary_id(db, {missing_id})
+        result = await _cache_rows_by_summary_id(db, {missing_id})
         assert missing_id not in result
+
+
+class TestAttachCacheFields:
+    """The by-run page's badge and Langfuse link come from the run's cache doc (P-6)."""
+
+    def _run(self, request_id: str | None = "req-1", vsid: str | None = "vs-1"):
+        group = {
+            "_id": request_id,
+            "video_id": "yt",
+            "video_summary_id": vsid,
+            "first_call": None,
+            "last_call": None,
+            "total_cost_usd": 0.0,
+            "call_count": 0,
+        }
+        return _build_run_summary(group, [], None)
+
+    def test_should_link_the_newest_attempt_of_the_request_when_the_project_is_set(
+        self, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(settings, "LANGFUSE_PROJECT_ID", "proj-1")
+        monkeypatch.setattr(settings, "LANGFUSE_BASE_URL", "https://lf.example")
+        run = self._run()
+        rows = {
+            "vs-1": {
+                "degraded": True,
+                "runs": [
+                    {"requestId": "req-1", "traceId": "t-old"},
+                    {"requestId": "req-1", "traceId": "t-new"},
+                ],
+            }
+        }
+
+        _attach_cache_fields([run], rows)
+
+        assert run.langfuse_url == "https://lf.example/project/proj-1/traces/t-new"
+        assert run.degraded is True
+
+    def test_should_leave_no_link_when_the_project_id_is_unset(self, monkeypatch) -> None:
+        monkeypatch.setattr(settings, "LANGFUSE_PROJECT_ID", "")
+        run = self._run()
+
+        _attach_cache_fields([run], {"vs-1": {"runs": [{"requestId": "req-1", "traceId": "t"}]}})
+
+        assert (run.langfuse_url, run.degraded) == (None, False)
+
+    def test_should_leave_the_run_untouched_when_it_has_no_cache_doc(self, monkeypatch) -> None:
+        monkeypatch.setattr(settings, "LANGFUSE_PROJECT_ID", "proj-1")
+        run = self._run(vsid=None)
+
+        _attach_cache_fields([run], {})
+
+        assert (run.langfuse_url, run.degraded) == (None, None)

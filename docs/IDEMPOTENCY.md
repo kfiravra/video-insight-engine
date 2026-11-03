@@ -135,7 +135,7 @@ Before single-sourcing, the api hardcoded `v2` while the summarizer hardcoded `v
 
 ## Bypass for power users
 
-`POST /api/videos?bypassCache=true` skips the idempotency gate entirely. Use when a user explicitly wants a fresh run (admin tool, paid feature). The route's existing `bypassCache` flag handles this.
+`POST /api/videos` with `bypassCache: true` in the body (a body field, not a query param) skips the idempotency gate entirely. Use when a user explicitly wants a fresh run (admin tool, paid feature). The route's existing `bypassCache` flag handles this.
 
 `updateToLatest: true` skips the gate too: it is the user's explicit move to the current version, so a plain submit of the same video moments earlier must not answer it as a `duplicate`. Unlike `bypassCache` it inserts no version row: it meets the current version's shared row through the normal upsert, so a double-click attaches the second click to the first click's run (its hold given back). Both flags are refused for the shared demo account (`requireNotDemo`).
 

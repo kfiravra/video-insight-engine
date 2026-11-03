@@ -18,9 +18,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from llm_common import observability as shared
 from llm_common.observability import client as shared_client
+from llm_common.observability import trace_id_for_run
 
 from src.config import settings
 from src.routes import pipeline_runner
+from src.services.pipeline.run_registry import RunIdentity
 from src.services import observability
 from llm_common.observability.testing import LangfuseCapture
 
@@ -63,6 +65,9 @@ def test_package_should_re_export_the_shared_helper_when_imported(name: str):
 # ─── Trace attributes ───────────────────────────────────────────────────
 
 
+_RUN = RunIdentity(run_id="run-1", trace_id=trace_id_for_run("run-1"), attempt=2, retry_of="run-0")
+
+
 def test_run_trace_args_should_name_the_run_and_its_session_when_given_a_row():
     args = pipeline_runner._run_trace_args(
         {"language": "en", "userId": "u1"},
@@ -71,17 +76,25 @@ def test_run_trace_args_should_name_the_run_and_its_session_when_given_a_row():
         user_id="u1",
         request_id="req-1",
         run_path="worker",
+        run=_RUN,
+        bypass=True,
     )
-    assert args["name"] == "pipeline:vsid1"
+    assert args["trace_id"] == trace_id_for_run("run-1")
+    assert args["name"] == "pipeline:yt1"
     assert args["session_id"] == "pipeline-vsid1"
     assert args["user_id"] == "u1"
     assert args["tags"] == [
         "youtubeId:yt1",
         "videoSummaryId:vsid1",
         "path:worker",
+        "run:run-1",
+        "attempt:2",
+        f"pipelineVersion:{settings.PIPELINE_VERSION}",
+        "bypass:true",
+        "retryOf:run-0",
         "requestId:req-1",
     ]
-    assert args["input"] == {"youtubeId": "yt1", "videoSummaryId": "vsid1"}
+    assert args["input"] == {"youtubeId": "yt1", "videoSummaryId": "vsid1", "runId": "run-1"}
     # The user id goes through LANGFUSE_USER_ID_MODE; never raw into metadata.
     assert "userId" not in args["metadata"]
     assert args["metadata"]["requestId"] == "req-1"
@@ -89,7 +102,14 @@ def test_run_trace_args_should_name_the_run_and_its_session_when_given_a_row():
 
 def test_run_trace_args_should_leave_out_request_and_flags_when_absent():
     args = pipeline_runner._run_trace_args(
-        {}, youtube_id="yt1", video_summary_id="v", user_id=None, request_id=None, run_path="sse"
+        {},
+        youtube_id="yt1",
+        video_summary_id="v",
+        user_id=None,
+        request_id=None,
+        run_path="sse",
+        run=RunIdentity(run_id="r", trace_id=trace_id_for_run("r"), attempt=1),
+        bypass=False,
     )
     assert not any(tag.startswith("requestId:") for tag in args["tags"])
     assert {"requestId", "evalRun", "coldMedia"}.isdisjoint(args["metadata"])
@@ -130,9 +150,16 @@ async def test_runner_should_open_one_trace_in_the_rows_session_when_the_pipelin
 ):
     monkeypatch.setattr(pipeline_runner.settings, "REDIS_ENABLED", False)
 
-    await _drain({"youtubeId": "yt1", "userId": "u1"}, _one_phase, run_path="worker")
+    entry = {
+        "youtubeId": "yt1",
+        "userId": "u1",
+        "currentRunId": "run-a",
+        "runs": [{"runId": "run-a", "status": "dispatched", "attempt": 1}],
+    }
+    await _drain(entry, _one_phase, run_path="worker")
 
-    root = langfuse_capture.named("pipeline:vsid")
+    root = langfuse_capture.named("pipeline:yt1")
+    assert root.trace_id == trace_id_for_run("run-a")
     assert root.parent is None
     assert root.attributes["session.id"] == "pipeline-vsid"
     assert root.attributes["user.id"] == "u1"
@@ -176,6 +203,6 @@ async def test_runner_should_mark_the_trace_failed_when_the_run_fails(
 
     assert any("error" in ev for ev in events)
     (root,) = [
-        s for s in langfuse_capture.exporter.get_finished_spans() if s.name == "pipeline:vsid"
+        s for s in langfuse_capture.exporter.get_finished_spans() if s.name == "pipeline:yt1"
     ]
     assert root.status.status_code.name == "ERROR"

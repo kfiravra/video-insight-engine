@@ -16,6 +16,7 @@ export interface MockContainer {
     findCacheById: ReturnType<typeof vi.fn>;
     updateCacheEntry: ReturnType<typeof vi.fn>;
     tryClaimDispatchRelease: ReturnType<typeof vi.fn>;
+    closeRun: ReturnType<typeof vi.fn>;
     getUserVideos: ReturnType<typeof vi.fn>;
     mergeSynthesis: ReturnType<typeof vi.fn>;
     promoteCompletedVersion: ReturnType<typeof vi.fn>;
@@ -175,6 +176,7 @@ export function createMockContainer(): MockContainer {
       // Default: claim succeeds, so the FAILED-handler tests that don't
       // override this continue to see `dispatchGuardService.release` called.
       tryClaimDispatchRelease: vi.fn().mockResolvedValue(true),
+      closeRun: vi.fn().mockResolvedValue(undefined),
       getUserVideos: vi.fn().mockResolvedValue([]),
       mergeSynthesis: vi.fn().mockResolvedValue(undefined),
       promoteCompletedVersion: vi.fn().mockResolvedValue(false),

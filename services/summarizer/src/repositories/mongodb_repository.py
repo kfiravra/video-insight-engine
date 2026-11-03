@@ -10,6 +10,7 @@ from pymongo.collection import Collection
 from pymongo.database import Database
 
 from src.models.schemas import ErrorCode, ProcessingStatus
+from src.services.pipeline.run_registry import RUNS_KEPT
 
 
 def _utc_now() -> datetime:
@@ -64,7 +65,13 @@ class MongoDBVideoRepository:
         cursor = (
             self._collection.find(
                 {"status": ProcessingStatus.PROCESSING.value, "updatedAt": {"$lt": older_than}},
-                projection={"_id": 1, "youtubeId": 1, "updatedAt": 1, "status": 1},
+                projection={
+                    "_id": 1,
+                    "youtubeId": 1,
+                    "updatedAt": 1,
+                    "status": 1,
+                    "currentRunId": 1,
+                },
             )
             .sort("updatedAt", 1)
             .limit(limit)
@@ -253,6 +260,7 @@ class MongoDBVideoRepository:
         video_summary_id: str,
         user_id: str | None,
         request_id: str | None,
+        run_id: str | None = None,
     ) -> None:
         """Record who dispatched this run so the SSE producer can attribute ``llm_usage``.
 
@@ -262,13 +270,69 @@ class MongoDBVideoRepository:
         not carry is ``$unset`` — an earlier dispatcher's id must never linger
         and bill the wrong account. No ``updatedAt`` bump: that field is the
         stall sweeper's liveness signal and a dispatch is not progress.
+
+        ``run_id`` (P0b) re-stamps ``currentRunId`` when the api sent one; it is
+        never unset here (an older api sends none, and vie-api already stamped it).
         """
         fields = {"userId": user_id, "requestId": request_id}
         update: dict[str, Any] = {}
         present = {name: value for name, value in fields.items() if value}
         absent = {name: "" for name, value in fields.items() if not value}
+        if run_id:
+            present["currentRunId"] = run_id
         if present:
             update["$set"] = present
         if absent:
             update["$unset"] = absent
         self._collection.update_one({"_id": ObjectId(video_summary_id)}, update)
+
+    def start_run(
+        self,
+        video_summary_id: str,
+        run: dict[str, Any],
+        *,
+        take_over: bool,
+        superseded: str | None = None,
+    ) -> bool:
+        """Mark this attempt's ``runs[]`` entry running and make it ``currentRunId`` (P-2).
+
+        ``take_over``: the api pushed a ``dispatched`` entry for ``run["runId"]``;
+        its status, start time, path and trace id are set in place, only while it
+        is still ``dispatched`` (``False`` back when another attempt took it, so
+        the caller mints a fresh id). Otherwise the entry is pushed, keeping the
+        newest ``RUNS_KEPT``. ``superseded``: an earlier attempt still open
+        (``dispatched`` / ``running`` after a crash) is closed as ``failed``.
+        No ``updatedAt`` bump.
+        """
+        oid = ObjectId(video_summary_id)
+        if superseded:
+            self._collection.update_one(
+                {
+                    "_id": oid,
+                    "runs": {
+                        "$elemMatch": {
+                            "runId": superseded,
+                            "status": {"$in": ["dispatched", "running"]},
+                        }
+                    },
+                },
+                {"$set": {"runs.$.status": "failed", "runs.$.endedAt": run.get("startedAt")}},
+            )
+        if take_over:
+            fields = {f"runs.$.{key}": value for key, value in run.items() if key != "runId"}
+            result = self._collection.update_one(
+                {
+                    "_id": oid,
+                    "runs": {"$elemMatch": {"runId": run["runId"], "status": "dispatched"}},
+                },
+                {"$set": {"currentRunId": run["runId"], **fields}},
+            )
+            return result.matched_count == 1
+        self._collection.update_one(
+            {"_id": oid},
+            {
+                "$set": {"currentRunId": run["runId"]},
+                "$push": {"runs": {"$each": [run], "$slice": -RUNS_KEPT}},
+            },
+        )
+        return True

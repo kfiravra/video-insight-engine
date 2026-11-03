@@ -9,8 +9,8 @@ pass only (the noise mode's r2 always runs fresh). Before the pass starts:
 2. Keep rows created at/after ``since`` whose status is ``completed`` and
    whose youtubeId is in the pass, then read each doc (``GET
    /api/videos/:id``) — the same payload ``run_pipeline`` returns, with
-   ``submittedAt`` = the row's ``createdAt`` so the Langfuse trace lookup
-   still finds the run.
+   ``submittedAt`` = the row's ``createdAt`` and ``traceId`` from the doc
+   (P0b), so the Langfuse trace lookup still finds the run.
 
 Those entries are scored from the stored doc and never POSTed; anything not
 completed (failed, still running, older than ``since``, missing) runs

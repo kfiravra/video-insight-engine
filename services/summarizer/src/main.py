@@ -256,7 +256,11 @@ async def summarize(
     request_id = structlog.contextvars.get_contextvars().get("request_id")
     try:
         await asyncio.to_thread(
-            repository.set_dispatch_context, request.videoSummaryId, request.userId, request_id
+            repository.set_dispatch_context,
+            request.videoSummaryId,
+            request.userId,
+            request_id,
+            request.runId,
         )
     except (InvalidId, TypeError):
         raise HTTPException(status_code=400, detail="Invalid video summary ID format")
