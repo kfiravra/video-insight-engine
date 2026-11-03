@@ -222,10 +222,12 @@ def _trace_targets(runs: list[EntryRun]) -> dict[str, TraceTarget]:
     targets: dict[str, TraceTarget] = {}
     for run in runs:
         actual = run.actual or {}
-        if actual.get("videoSummaryId") and actual.get("submittedAt"):
+        if actual.get("videoSummaryId") and (actual.get("traceId") or actual.get("submittedAt")):
+            submitted = actual.get("submittedAt")
             targets[run.record["id"]] = TraceTarget(
                 video_summary_id=actual["videoSummaryId"],
-                submitted_at=datetime.fromisoformat(actual["submittedAt"]),
+                submitted_at=datetime.fromisoformat(submitted) if submitted else None,
+                trace_id=actual.get("traceId"),
             )
     return targets
 

@@ -40,7 +40,11 @@ def needs_refresh(outcome: VideoOutcome) -> bool:
 
 def _target(outcome: VideoOutcome) -> TraceTarget:
     submitted = datetime.fromisoformat(outcome.submitted_at) if outcome.submitted_at else None
-    return TraceTarget(video_summary_id=str(outcome.video_summary_id), submitted_at=submitted)
+    return TraceTarget(
+        video_summary_id=str(outcome.video_summary_id),
+        submitted_at=submitted,
+        trace_id=outcome.trace_id,
+    )
 
 
 def _refreshed_assertions(
