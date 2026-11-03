@@ -583,8 +583,8 @@ services:
       # BACKUP_MAX_AGE_HOURS trips a backup_stale alert (alert_evaluator.py).
       BACKUP_DIR: /backups
       BACKUP_MAX_AGE_HOURS: ${BACKUP_MAX_AGE_HOURS:-26}
-      # Langfuse — read-only, only to build "Open in Langfuse" deep-links.
-      # Project id is auto-resolved from the keys when LANGFUSE_PROJECT_ID is blank.
+      # Langfuse — only to build "Open in Langfuse" deep-links from stored trace
+      # ids; LANGFUSE_PROJECT_ID is required for them (blank = no links).
       LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-https://cloud.langfuse.com}
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
