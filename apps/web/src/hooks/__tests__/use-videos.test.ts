@@ -266,6 +266,9 @@ describe("useVideos", () => {
   describe("useDeleteVideo", () => {
     it("should drop the deleted video's detail entry from the cache", async () => {
       const queryClient = createTestQueryClient();
+      // Seeded entries have no observer; the default gcTime: 0 collects them on a
+      // timer that beats the assertion on a slow runner, so hold them for this test.
+      queryClient.setDefaultOptions({ queries: { retry: false, gcTime: Infinity } });
       queryClient.setQueryData(queryKeys.videos.detail("video-1"), { id: "video-1" });
       queryClient.setQueryData(queryKeys.videos.detail("video-2"), { id: "video-2" });
       const wrapper = ({ children }: { children: ReactNode }) =>
