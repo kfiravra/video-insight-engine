@@ -235,6 +235,37 @@ describe('VideoPlayerContext', () => {
       expect(result.current.isPlayerOpen).toBe(false);
     });
 
+    it('should start playback when openPlayer opens the player', () => {
+      const { result } = renderHook(() => useVideoPlayer(), { wrapper: Wrapper });
+      const player = mountPlayer(result);
+
+      act(() => result.current.openPlayer());
+
+      expect(result.current.isPlayerOpen).toBe(true);
+      expect(player.playVideo).toHaveBeenCalledTimes(1);
+      expect(player.pauseVideo).not.toHaveBeenCalled();
+    });
+
+    it('should start playback again when togglePlayer reopens a paused player', () => {
+      const { result } = renderHook(() => useVideoPlayer(), { wrapper: Wrapper });
+      const player = mountPlayer(result);
+
+      act(() => result.current.togglePlayer());
+      expect(player.playVideo).toHaveBeenCalledTimes(1);
+      act(() => result.current.togglePlayer());
+      expect(player.pauseVideo).toHaveBeenCalledTimes(1);
+      act(() => result.current.togglePlayer());
+
+      expect(result.current.isPlayerOpen).toBe(true);
+      expect(player.playVideo).toHaveBeenCalledTimes(2);
+    });
+
+    it('should open cleanly when no player has mounted yet', () => {
+      const { result } = renderHook(() => useVideoPlayer(), { wrapper: Wrapper });
+      expect(() => act(() => result.current.openPlayer())).not.toThrow();
+      expect(result.current.isPlayerOpen).toBe(true);
+    });
+
     it('should pause the player when togglePlayer closes it, not when it opens it', () => {
       const { result } = renderHook(() => useVideoPlayer(), { wrapper: Wrapper });
       const player = mountPlayer(result);
