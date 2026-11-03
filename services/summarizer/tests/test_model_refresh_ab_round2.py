@@ -10,6 +10,7 @@ the recording provider). No network, no LLM, no spend.
 from __future__ import annotations
 
 import copy
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,7 @@ from _model_ab_cost import CallEstimate, PlannedCall  # noqa: E402
 from _model_ab_eqa import (  # noqa: E402
     description_of,
     eqa_plan_request,
+    generations_from,
     match_traced,
     trace_check,
 )
@@ -354,3 +356,45 @@ class TestMedian:
 
     def test_should_report_zero_when_there_are_no_values(self) -> None:
         assert true_median([]) == 0.0
+
+
+def _observation(name: str, kind: str = "GENERATION", trace: str = "t1", **fields: Any) -> dict:
+    return {"name": name, "type": kind, "traceId": trace, **fields}
+
+
+class TestEqaTraceRead:
+    """The v2 observations read (SDK v4 public API) gives the same inputs as the v1 reads did."""
+
+    def _observations(self) -> list[dict[str, Any]]:
+        messages = [{"role": "user", "content": "plan me"}]
+        return [
+            _observation("pipeline:6acd", kind="SPAN"),
+            _observation("tier_probe", output=json.dumps(_PROBE)),
+            _observation("description_analysis", input=json.dumps(messages)),
+            _observation(
+                "plan",
+                input=json.dumps(messages),
+                model="anthropic/claude-sonnet-4-6",
+                usageDetails={"output": 833},
+                metadata={"cacheReadTokens": 16290},
+            ),
+        ]
+
+    def test_should_decode_the_raw_json_input_and_output_when_v2_returns_text(self) -> None:
+        trace = generations_from(self._observations(), "6acd")
+
+        assert trace["trace_id"] == "t1"
+        assert trace["probe_output"] == _PROBE
+        assert trace["plan_request"] == [{"role": "user", "content": "plan me"}]
+        assert trace["plan_usage"] == {"output": 833}
+        assert trace["plan_metadata"] == {"cacheReadTokens": 16290}
+
+    def test_should_refuse_observations_from_more_than_one_trace(self) -> None:
+        observations = [*self._observations(), _observation("plan", trace="t2")]
+        with pytest.raises(ValueError, match="2 traces"):
+            generations_from(observations, "6acd")
+
+    def test_should_name_the_missing_generation(self) -> None:
+        observations = [o for o in self._observations() if o["name"] != "tier_probe"]
+        with pytest.raises(ValueError, match="tier_probe"):
+            generations_from(observations, "6acd")
