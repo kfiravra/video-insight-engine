@@ -67,7 +67,7 @@ describe('BillingRepairService (P1.6, real Mongo replica set)', () => {
   });
 
   describe('stale holds', () => {
-    it('should settle a hold whose run completed but whose completion never arrived, with its cost', async () => {
+    it('should settle a hold whose run completed but whose run cost never arrived, on its llm_usage cost', async () => {
       await holdVideo('req-1', 10);
       const { insertedId } = await stampRun('req-1', 'completed');
       await db().collection('llm_usage').insertMany([
@@ -79,8 +79,22 @@ describe('BillingRepairService (P1.6, real Mongo replica set)', () => {
 
       const report = await run();
 
-      expect(report.holdsSettled).toBe(1);
-      expect((await ledger({ type: 'debit' })).map((d) => d.costUsd)).toEqual([0.2]);
+      expect([report.holdsSettled, report.holdsReleased]).toEqual([1, 0]);
+      expect((await ledger({ type: 'debit' })).map((d) => [d.tokens, d.costUsd, d.mirrorsHold])).toEqual([[-600, 0.2, true]]);
+      expect((await ledger({ type: 'release' })).map((d) => d.tokens)).toEqual([240]);
+      expect((await billing.summary(userId)).balance).toBe(400);
+      await expectConsistent();
+    });
+
+    it('should settle a stale completed run that cost more than its hold into debt', async () => {
+      await holdVideo('req-1', 10);
+      const { insertedId } = await stampRun('req-1', 'completed');
+      await db().collection('llm_usage').insertOne({ request_id: 'req-1', video_summary_id: insertedId.toHexString(), cost_usd: 0.6, timestamp: clock.now() });
+      clock.advance(4 * HOUR_MS);
+
+      expect((await run()).holdsSettled).toBe(1);
+
+      expect(await billing.summary(userId)).toMatchObject({ debt: 800, balance: -800 });
       await expectConsistent();
     });
 
@@ -90,7 +104,7 @@ describe('BillingRepairService (P1.6, real Mongo replica set)', () => {
       ['unstamped (a later dispatch took the stamp)', () => stampRun('req-other', 'processing')],
       ['stalled for 3 h (B13)', () => stampRun('req-1', 'pending')],
       ['"completed" by an older run, before the hold (W2)', () => stampRun('req-1', 'completed', new Date(clock.now().getTime() - HOUR_MS))],
-    ])('should release a hold whose run is %s and give the free video back', async (_label, arrange) => {
+    ])('should release a hold whose run is %s and give every token back', async (_label, arrange) => {
       await holdVideo('req-1', 10);
       await arrange();
       clock.advance(4 * HOUR_MS);
@@ -98,7 +112,8 @@ describe('BillingRepairService (P1.6, real Mongo replica set)', () => {
       const report = await run();
 
       expect(report.holdsReleased).toBe(1);
-      expect((await billing.summary(userId)).free.available).toBe(true);
+      expect((await billing.summary(userId)).balance).toBe(1000);
+      expect((await ledger({ type: 'release' })).map((e) => e.reason)).toEqual(['stale']);
       await expectConsistent();
     });
 
@@ -123,46 +138,61 @@ describe('BillingRepairService (P1.6, real Mongo replica set)', () => {
 
   describe('lot expiry', () => {
     it('should expire what is left of a lot past its expiry, exactly once', async () => {
-      await billing.grantLot(userId, { minutes: 100, expiresAt: new Date(clock.now().getTime() + HOUR_MS) }, ctx());
+      await billing.grantLot(userId, { tokens: 100, expiresAt: new Date(clock.now().getTime() + HOUR_MS) }, ctx());
       clock.advance(2 * HOUR_MS);
 
       const first = await run();
       const second = await run();
 
-      expect([first.lotMinutesExpired, second.lotMinutesExpired]).toEqual([100, 0]);
-      expect((await ledger({ type: 'expire' })).map((e) => e.minutes)).toEqual([-100]);
+      expect([first.lotTokensExpired, second.lotTokensExpired]).toEqual([100, 0]);
+      expect((await ledger({ type: 'expire' })).map((e) => [e.unit, e.tokens])).toEqual([['tokens', -100]]);
+      expect((await billing.summary(userId)).balance).toBe(1000);
       await expectConsistent();
+    });
+
+    it('should leave a minute lot from before the token migration alone', async () => {
+      await billing.ensureAccount(userId);
+      const account = await db().collection('billingAccounts').findOne({ ownerId: new ObjectId(userId) });
+      await db().collection('creditLots').insertOne({
+        accountId: account?._id, minutesGranted: 100, minutesRemaining: 100, source: { kind: 'admin', ref: 'legacy' },
+        expiresAt: new Date(clock.now().getTime() - HOUR_MS), createdAt: new Date('2026-10-01T00:00:00Z'),
+      });
+
+      expect((await run()).lotTokensExpired).toBe(0);
+      expect(await ledger({ type: 'expire' })).toEqual([]);
     });
   });
 
   describe('recurring grants (P2.6 end-to-end)', () => {
     it('should grant a lot that expires at the grant\'s next run, once per month', async () => {
-      const { grantId } = await billing.createRecurringGrant(userId, { minutes: 300, every: 'month', active: true }, ctx());
+      const { grantId } = await billing.createRecurringGrant(userId, { tokens: 10_000, every: 'month', active: true }, ctx());
 
       const first = await run();
       const again = await run();
 
       expect([first.recurringLots, again.recurringLots]).toEqual([1, 0]);
       const detail = await billing.getAccountDetail(userId);
-      expect(detail.lots).toEqual([expect.objectContaining({ minutesGranted: 300, expiresAt: '2026-12-01T10:00:00.000Z', source: { kind: 'recurring', ref: grantId } })]);
+      expect(detail.lots.filter((lot) => lot.source.kind === 'recurring')).toEqual([
+        expect.objectContaining({ tokensGranted: 10_000, expiresAt: '2026-12-01T10:00:00.000Z', source: { kind: 'recurring', ref: grantId } }),
+      ]);
       expect(detail.recurringGrants[0]).toMatchObject({ nextRunAt: '2026-12-01T10:00:00.000Z', lastRunAt: '2026-11-01T10:00:00.000Z' });
     });
 
     it('should expire last month\'s lot and grant a fresh one at the next run — no rollover', async () => {
-      await billing.createRecurringGrant(userId, { minutes: 300, every: 'month', active: true }, ctx());
+      await billing.createRecurringGrant(userId, { tokens: 10_000, every: 'month', active: true }, ctx());
       await run();
       clock.set('2026-12-01T10:00:00Z');
 
       const report = await run();
 
-      expect([report.lotMinutesExpired, report.recurringLots]).toEqual([300, 1]);
-      expect((await billing.summary(userId)).credits.available).toBe(300);
+      expect([report.lotTokensExpired, report.recurringLots]).toEqual([10_000, 1]);
+      expect((await billing.summary(userId)).credits.available).toBe(11_000);
       await expectConsistent();
     });
 
     it('should leave no gap at the turn of the month: the old lot lasts until the new one is in (I3)', async () => {
       const graced = { recurringLotGraceMs: 10 * 60 * 1000 };
-      await billing.createRecurringGrant(userId, { minutes: 300, every: 'month', active: true }, ctx());
+      await billing.createRecurringGrant(userId, { tokens: 10_000, every: 'month', active: true }, ctx());
       await run(graced);
       clock.set('2026-12-01T10:01:00Z');
 
@@ -171,14 +201,14 @@ describe('BillingRepairService (P1.6, real Mongo replica set)', () => {
       clock.set('2026-12-01T10:11:00Z');
       const afterGrace = await run(graced);
 
-      expect(beforeTick).toBe(300);
-      expect(afterGrace.lotMinutesExpired).toBe(300);
-      expect((await billing.summary(userId)).credits.available).toBe(300);
+      expect(beforeTick).toBe(11_000);
+      expect(afterGrace.lotTokensExpired).toBe(10_000);
+      expect((await billing.summary(userId)).credits.available).toBe(11_000);
       await expectConsistent();
     });
 
     it('should retire the grant of an erased user and pause it while the user is soft-deleted (I7)', async () => {
-      const { grantId } = await billing.createRecurringGrant(userId, { minutes: 300, every: 'month', active: true }, ctx());
+      const { grantId } = await billing.createRecurringGrant(userId, { tokens: 300, every: 'month', active: true }, ctx());
       await db().collection('users').updateOne({ _id: new ObjectId(userId) }, { $set: { deletedAt: clock.now() } });
 
       expect((await run()).recurringLots).toBe(0);
@@ -190,18 +220,30 @@ describe('BillingRepairService (P1.6, real Mongo replica set)', () => {
     });
 
     it('should skip inactive and deleted grants', async () => {
-      await billing.createRecurringGrant(userId, { minutes: 300, every: 'month', active: false }, ctx());
-      const { grantId } = await billing.createRecurringGrant(userId, { minutes: 300, every: 'month', active: true }, ctx());
+      await billing.createRecurringGrant(userId, { tokens: 300, every: 'month', active: false }, ctx());
+      const { grantId } = await billing.createRecurringGrant(userId, { tokens: 300, every: 'month', active: true }, ctx());
       await billing.deleteRecurringGrant(userId, grantId, ctx());
 
       expect((await run()).recurringLots).toBe(0);
+    });
+
+    it('should leave a minute grant from before the token migration for the migration to convert', async () => {
+      await billing.ensureAccount(userId);
+      const account = await db().collection('billingAccounts').findOne({ ownerId: new ObjectId(userId) });
+      await db().collection('recurringGrants').insertOne({
+        accountId: account?._id, minutes: 300, every: 'month', active: true, nextRunAt: clock.now(), lastRunAt: null,
+        actorId: 'system:test', auditId: new ObjectId(), reason: 'demo', createdAt: clock.now(), updatedAt: clock.now(), deletedAt: null,
+      });
+
+      expect((await run()).recurringLots).toBe(0);
+      expect((await billing.getAccountDetail(userId)).recurringGrants).toEqual([]);
     });
   });
 
   describe('projection drift', () => {
     it('should warn and write one llm_alerts row for an account that no longer equals its ledger', async () => {
-      await billing.grantLot(userId, { minutes: 100 }, ctx());
-      await db().collection('billingAccounts').updateOne({}, { $set: { 'buckets.credit.minutesAvailable': 999, updatedAt: clock.now() } });
+      await billing.grantLot(userId, { tokens: 100 }, ctx());
+      await db().collection('billingAccounts').updateOne({}, { $set: { 'buckets.credit.tokensAvailable': 999, updatedAt: clock.now() } });
 
       const report = await run();
       await run();
@@ -214,7 +256,7 @@ describe('BillingRepairService (P1.6, real Mongo replica set)', () => {
     });
 
     it('should not flag a consistent account', async () => {
-      await billing.grantLot(userId, { minutes: 100 }, ctx());
+      await billing.grantLot(userId, { tokens: 100 }, ctx());
 
       expect((await run()).driftAccounts).toBe(0);
     });
@@ -304,7 +346,7 @@ describe('BillingRepairService (P1.6, real Mongo replica set)', () => {
 
   describe('run control', () => {
     it('should skip the whole run while another process holds the lock', async () => {
-      await billing.grantLot(userId, { minutes: 100, expiresAt: new Date(clock.now().getTime() + HOUR_MS) }, ctx());
+      await billing.grantLot(userId, { tokens: 100, expiresAt: new Date(clock.now().getTime() + HOUR_MS) }, ctx());
       clock.advance(2 * HOUR_MS);
       const held: RepairLock = { acquire: async () => null, release: vi.fn() };
 
@@ -316,14 +358,14 @@ describe('BillingRepairService (P1.6, real Mongo replica set)', () => {
       const report = await run();
 
       expect(report).toEqual({
-        holdsSettled: 0, holdsReleased: 0, lotMinutesExpired: 0, recurringLots: 0,
+        holdsSettled: 0, holdsReleased: 0, lotTokensExpired: 0, recurringLots: 0,
         driftAccounts: 0, llmUsagePseudonymised: 0, deletionsProcessed: 0, failedSteps: [],
       });
       expect(await ledger({})).toEqual([]);
     });
 
     it('should run every other step when one fails, and release the lock', async () => {
-      await billing.grantLot(userId, { minutes: 100, expiresAt: new Date(clock.now().getTime() + HOUR_MS) }, ctx());
+      await billing.grantLot(userId, { tokens: 100, expiresAt: new Date(clock.now().getTime() + HOUR_MS) }, ctx());
       clock.advance(2 * HOUR_MS);
       const lock: RepairLock = { acquire: async () => 'token-1', release: vi.fn().mockResolvedValue(undefined) };
       const failing = { runScheduledDeletions: vi.fn().mockRejectedValue(new Error('cascade down')) };
@@ -331,7 +373,7 @@ describe('BillingRepairService (P1.6, real Mongo replica set)', () => {
       const report = await run({ lock, deletions: failing });
 
       expect(report.failedSteps).toEqual(['gdpr_deletions']);
-      expect(report.lotMinutesExpired).toBe(100);
+      expect(report.lotTokensExpired).toBe(100);
       expect(lock.release).toHaveBeenCalledWith('token-1');
     });
   });

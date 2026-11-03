@@ -74,7 +74,7 @@ export class LedgerEnforcement {
       const run = stampedRun(await this.deps.dispatchStamps.findCacheById(videoSummaryId));
       if (!run) return;
       const costUsd = await this.deps.llmUsage.sumRunCost(run.costRequestId, videoSummaryId);
-      if (outcome === 'completed') await this.deps.billing.settle(run.runId, { costUsd });
+      if (outcome === 'completed') await this.deps.billing.settleActual(run.runId, costUsd);
       else await this.deps.billing.release(run.runId, outcome, { costUsd });
     } catch (err) {
       this.deps.logger.warn({ err, videoSummaryId, outcome }, 'billing_run_finish_failed');

@@ -27,13 +27,11 @@ export interface BillingErasureCounts {
   recurringGrants: number;
   /** adminAudit rows about the user, re-keyed onto the tombstone. */
   auditRows: number;
-  /** `billingShadow` rows (P1 diagnostics), deleted. */
-  shadowRows: number;
 }
 
 function nothingErased(): BillingErasureCounts {
   return {
-    accounts: 0, accountsWithHolds: 0, ledgerEntries: 0, creditLots: 0, actorRefs: 0, recurringGrants: 0, auditRows: 0, shadowRows: 0,
+    accounts: 0, accountsWithHolds: 0, ledgerEntries: 0, creditLots: 0, actorRefs: 0, recurringGrants: 0, auditRows: 0,
   };
 }
 
@@ -49,7 +47,7 @@ interface ErasureContext {
 }
 
 /**
- * GDPR erasure for the minutes ledger (brief Q12) and the admin audit rows
+ * GDPR erasure for the token ledger (brief Q12) and the admin audit rows
  * that join to it (C1). The ledger is append-only and its amounts are
  * accounting records, so a user's rows are pseudonymised, never deleted:
  *
@@ -61,14 +59,14 @@ interface ErasureContext {
  *   `source.ref`, holds' run ids, `capsAuditIds`, recurring grants'
  *   `auditId`, and the `_id` of its adminAudit rows (the P3.8 migration
  *   derives them from the user id) — gets a fresh random value, one per old
- *   value, so the account's own joins still hold;
+ *   value, so the account's own joins still hold; a key that names the user
+ *   itself (`grant:signup:<userId>`) takes the tombstone id;
  * - where the user acted as an admin, `actorId` becomes `system:erased-user`
  *   and adminAudit's `actorEmail` / `ip` go.
  *
  * `userDeletions.originalUserId` keeps the real id, which is exactly why
  * nothing may be left that it can reach. Amounts, lots and `accountId` links
- * stay; the account's recurring grants are retired; the user's `billingShadow`
- * rows are deleted. Other users' rows keep their ids, so the migration's
+ * stay; the account's recurring grants are retired. Other users' rows keep their ids, so the migration's
  * idempotency for live users is untouched. One transaction: a retry after a
  * failure finds everything or nothing moved. A user with nothing to erase
  * returns at once (and needs no replica set).
@@ -80,7 +78,6 @@ export class BillingErasureRepository {
   private readonly lots: Collection<CreditLotDocument>;
   private readonly recurringGrants: Collection<RecurringGrantDocument>;
   private readonly audit: Collection<AdminAuditDocument>;
-  private readonly shadow: Collection<{ userId: ObjectId }>;
 
   constructor(db: Db) {
     this.billing = new BillingRepository(db);
@@ -89,7 +86,6 @@ export class BillingErasureRepository {
     this.lots = db.collection('creditLots');
     this.recurringGrants = db.collection('recurringGrants');
     this.audit = db.collection('adminAudit');
-    this.shadow = db.collection('billingShadow');
   }
 
   async eraseUser(userId: string, now: Date): Promise<BillingErasureCounts> {
@@ -109,7 +105,6 @@ export class BillingErasureRepository {
       }
       await this.scrubActor(ctx);
       await this.rewriteAuditRows(ctx);
-      ctx.counts.shadowRows = (await this.shadow.deleteMany({ userId: user }, { session })).deletedCount;
       return ctx.counts;
     });
   }
@@ -120,7 +115,6 @@ export class BillingErasureRepository {
       this.ledger.countDocuments({ $or: [{ userId: user }, { actorId: userHex }] }, { limit: 1 }),
       this.recurringGrants.countDocuments({ actorId: userHex }, { limit: 1 }),
       this.audit.countDocuments({ $or: [{ targetId: userHex }, { actorId: userHex }] }, { limit: 1 }),
-      this.shadow.countDocuments({ userId: user }, { limit: 1 }),
     ]);
     return probes.some((count) => count > 0);
   }
@@ -173,6 +167,8 @@ export class BillingErasureRepository {
     const { user, tombstone, ids } = ctx;
     const ref = ids.sourceRef(entry.source.kind, entry.source.ref);
     let idempotencyKey = remapKey(entry.idempotencyKey, entry.source.ref, ref);
+    // Keys that name the user (`grant:signup:<userId>`) take the tombstone instead.
+    idempotencyKey = remapKey(idempotencyKey, ctx.userHex, tombstone.toHexString());
     const set: Partial<LedgerEntryDocument> & Record<string, unknown> = { 'source.ref': ref };
     if (entry.auditId) {
       const auditId = ids.auditId(entry.auditId);

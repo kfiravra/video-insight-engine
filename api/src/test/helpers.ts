@@ -106,9 +106,6 @@ export interface MockContainer {
   submitBurstLimiter: {
     consume: ReturnType<typeof vi.fn>;
   };
-  chatFairUse: {
-    consume: ReturnType<typeof vi.fn>;
-  };
   idempotencyRepository: {
     findByHash: ReturnType<typeof vi.fn>;
     reserveHash: ReturnType<typeof vi.fn>;
@@ -283,10 +280,6 @@ export function createMockContainer(): MockContainer {
     },
     // Default: under the limit. Burst-limit route tests make `consume` reject.
     submitBurstLimiter: {
-      consume: vi.fn().mockResolvedValue(undefined),
-    },
-    // Default: under the free chat limit. Chat route tests make `consume` reject.
-    chatFairUse: {
       consume: vi.fn().mockResolvedValue(undefined),
     },
     idempotencyRepository: {

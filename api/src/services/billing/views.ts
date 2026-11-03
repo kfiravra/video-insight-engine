@@ -1,4 +1,5 @@
-import { freeWindowState, spendableCredit, spendableLots, videoLimits } from './allocation.js';
+import { SIGNUP_GRANT_TOKENS } from '@vie/types';
+import { maxVideoMinutes, spendableCredit, spendableLots } from './allocation.js';
 import { planAvailable } from './plan-cycle.js';
 import type {
   AccountSnapshot,
@@ -21,14 +22,14 @@ import type {
 
 // Stored documents (ObjectId / Date) → plain-JSON views (hex / ISO strings).
 
-function iso(date: Date | null): string | null {
+function iso(date: Date | null | undefined): string | null {
   return date ? date.toISOString() : null;
 }
 
 export function toAllocationLot(lot: CreditLotDocument): AllocationLot {
   return {
     lotId: lot._id.toHexString(),
-    minutesRemaining: lot.minutesRemaining,
+    tokensRemaining: lot.tokensRemaining,
     expiresAt: lot.expiresAt,
     createdAt: lot.createdAt,
   };
@@ -36,10 +37,9 @@ export function toAllocationLot(lot: CreditLotDocument): AllocationLot {
 
 export function toSplitView(split: BucketSplitDocument): BucketSplit {
   return {
-    free: split.free,
     plan: split.plan,
     credit: split.credit,
-    lots: split.lots.map((slice) => ({ lotId: slice.lotId.toHexString(), minutes: slice.minutes })),
+    lots: split.lots.map((slice) => ({ lotId: slice.lotId.toHexString(), tokens: slice.tokens })),
   };
 }
 
@@ -49,9 +49,8 @@ export function toHoldView(hold: BillingHoldDocument): HoldView {
     userId: hold.userId.toHexString(),
     youtubeId: hold.youtubeId,
     durationSec: hold.durationSec,
-    minutes: hold.minutes,
+    tokens: hold.tokens,
     split: toSplitView(hold.split),
-    freeVideoAt: iso(hold.freeVideoAt),
     planCycleStart: iso(hold.planCycleStart),
     createdAt: hold.createdAt.toISOString(),
   };
@@ -61,8 +60,8 @@ export function toLotView(lot: CreditLotDocument, now: Date): CreditLotView {
   const expired = lot.expiresAt !== null && lot.expiresAt.getTime() <= now.getTime();
   return {
     lotId: lot._id.toHexString(),
-    minutesGranted: lot.minutesGranted,
-    minutesRemaining: lot.minutesRemaining,
+    tokensGranted: lot.tokensGranted,
+    tokensRemaining: lot.tokensRemaining,
     source: lot.source,
     ...(lot.priceUsdCents !== undefined && { priceUsdCents: lot.priceUsdCents }),
     expiresAt: iso(lot.expiresAt),
@@ -71,16 +70,22 @@ export function toLotView(lot: CreditLotDocument, now: Date): CreditLotView {
   };
 }
 
+/** A ledger row in its own unit: token entries, or minute history from before the migration. */
 export function toLedgerView(entry: LedgerEntryDocument): LedgerEntryView {
+  const unit = entry.unit === 'tokens' ? 'tokens' : 'minutes';
   return {
     id: entry._id.toHexString(),
     userId: entry.userId.toHexString(),
     type: entry.type,
     bucket: entry.bucket,
-    minutes: entry.minutes,
+    unit,
+    amount: (unit === 'tokens' ? entry.tokens : entry.minutes) ?? 0,
+    ...(entry.mirrorsHold && { mirrorsHold: true }),
     ...(entry.lotId && { lotId: entry.lotId.toHexString() }),
     source: entry.source,
     idempotencyKey: entry.idempotencyKey,
+    ...(entry.executionKind !== undefined && { executionKind: entry.executionKind }),
+    ...(entry.executionId !== undefined && { executionId: entry.executionId }),
     ...(entry.youtubeId !== undefined && { youtubeId: entry.youtubeId }),
     ...(entry.durationSec !== undefined && { durationSec: entry.durationSec }),
     ...(entry.costUsd !== undefined && { costUsd: entry.costUsd }),
@@ -94,7 +99,7 @@ export function toLedgerView(entry: LedgerEntryDocument): LedgerEntryView {
 export function toRecurringGrantView(grant: RecurringGrantDocument): RecurringGrantView {
   return {
     grantId: grant._id.toHexString(),
-    minutes: grant.minutes,
+    tokens: grant.tokens,
     every: grant.every,
     active: grant.active,
     nextRunAt: grant.nextRunAt.toISOString(),
@@ -109,28 +114,26 @@ export function toRecurringGrantView(grant: RecurringGrantDocument): RecurringGr
 
 /** Snapshot of an account already rolled to `now`; `lots` = its open lots. */
 export function toSnapshot(account: BillingAccountDocument, lots: CreditLotDocument[], now: Date): AccountSnapshot {
-  const free = freeWindowState(account.buckets.free.recentFreeVideoAt, account.caps, now);
-  const { minutesGranted, minutesUsed, cycleStart, cycleEnd } = account.buckets.plan;
+  const { tokensGranted, tokensUsed, cycleStart, cycleEnd } = account.buckets.plan;
+  const remaining = planAvailable(account, now);
+  const credits = spendableCredit(lots.map(toAllocationLot), now);
+  const debt = account.buckets.debt.tokens;
   return {
     accountId: account._id.toHexString(),
     ownerType: account.ownerType,
     ownerId: account.ownerId.toHexString(),
     plan: { ...account.plan, periodStart: iso(account.plan.periodStart), periodEnd: iso(account.plan.periodEnd) },
-    free: {
-      perWindow: free.cap,
-      usedInWindow: free.inWindow.length,
-      available: free.available,
-      nextFreeAt: iso(free.nextFreeAt),
-      maxVideoMinutes: videoLimits(account.caps).freeMaxMinutes,
-    },
-    planMinutes: {
+    planTokens: {
       cycleStart: iso(cycleStart),
       cycleEnd: iso(cycleEnd),
-      granted: minutesGranted,
-      used: minutesUsed,
-      remaining: planAvailable(account, now),
+      granted: tokensGranted,
+      used: tokensUsed,
+      remaining,
     },
-    credits: { available: spendableCredit(lots.map(toAllocationLot), now) },
+    credits: { available: credits },
+    debt,
+    balance: remaining + credits - debt,
+    signupGrantAt: iso(account.signupGrantAt),
     caps: { ...account.caps },
     openHolds: account.holds.length,
     version: account.version,
@@ -138,32 +141,30 @@ export function toSnapshot(account: BillingAccountDocument, lots: CreditLotDocum
   };
 }
 
-/** The user's own view (P3.6): minutes only, never a dollar amount. */
+/** The user's own view: tokens only, never a dollar amount. */
 export function toUsageSummary(account: BillingAccountDocument, lots: CreditLotDocument[], now: Date): UsageSummary {
   const snapshot = toSnapshot(account, lots, now);
-  const limits = videoLimits(account.caps);
-  const paidMinutes = snapshot.planMinutes.remaining + snapshot.credits.available;
   const usable = spendableLots(lots.map(toAllocationLot), now);
+  const onPro = account.plan.id === 'pro' && snapshot.planTokens.cycleEnd !== null;
   return {
     plan: { id: account.plan.id, periodEnd: snapshot.plan.periodEnd },
-    free: {
-      available: snapshot.free.available,
-      nextFreeAt: snapshot.free.nextFreeAt,
-      maxVideoMinutes: limits.freeMaxMinutes,
-      perWindow: snapshot.free.perWindow,
-    },
-    planMinutes: {
-      granted: snapshot.planMinutes.granted,
-      used: snapshot.planMinutes.used,
-      remaining: snapshot.planMinutes.remaining,
-      cycleEnd: snapshot.planMinutes.cycleEnd,
-    },
+    balance: snapshot.balance,
+    planTokens: onPro
+      ? {
+          granted: snapshot.planTokens.granted,
+          used: snapshot.planTokens.used,
+          remaining: snapshot.planTokens.remaining,
+          cycleEnd: snapshot.planTokens.cycleEnd,
+        }
+      : null,
     credits: {
       available: snapshot.credits.available,
-      lots: usable.map((lot) => ({ minutes: lot.minutesRemaining, expiresAt: iso(lot.expiresAt) })),
+      lots: usable.map((lot) => ({ tokens: lot.tokensRemaining, expiresAt: iso(lot.expiresAt) })),
     },
-    holds: account.holds.map((hold) => ({ youtubeId: hold.youtubeId, minutes: hold.minutes })),
-    maxVideoMinutes: paidMinutes > 0 || account.plan.id === 'pro' ? limits.paidMaxMinutes : limits.freeMaxMinutes,
+    debt: snapshot.debt,
+    holds: account.holds.map((hold) => ({ youtubeId: hold.youtubeId, tokens: hold.tokens })),
+    maxVideoMinutes: maxVideoMinutes(account.caps),
     blocked: account.caps.blocked === true,
+    signupGrantTokens: account.signupGrantAt ? SIGNUP_GRANT_TOKENS : 0,
   };
 }

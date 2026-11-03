@@ -42,7 +42,7 @@ export interface BillingRepairDeps {
 export interface RepairReport {
   holdsSettled: number;
   holdsReleased: number;
-  lotMinutesExpired: number;
+  lotTokensExpired: number;
   recurringLots: number;
   driftAccounts: number;
   llmUsagePseudonymised: number;
@@ -66,7 +66,7 @@ export class BillingRepairService {
     if (!token) return 'locked';
     const now = this.now();
     const report: RepairReport = {
-      holdsSettled: 0, holdsReleased: 0, lotMinutesExpired: 0, recurringLots: 0,
+      holdsSettled: 0, holdsReleased: 0, lotTokensExpired: 0, recurringLots: 0,
       driftAccounts: 0, llmUsagePseudonymised: 0, deletionsProcessed: 0, failedSteps: [],
     };
     try {
@@ -113,7 +113,7 @@ export class BillingRepairService {
     if (action === 'keep') return;
     const costUsd = await this.deps.llmUsage.sumRunCost(run?.requestId ?? hold.requestId, run?._id?.toHexString() ?? null);
     if (action === 'settle') {
-      const outcome = await this.deps.billing.settle(hold.requestId, { costUsd });
+      const outcome = await this.deps.billing.settleActual(hold.requestId, costUsd);
       if (outcome.status === 'debited') report.holdsSettled++;
       return;
     }
@@ -124,7 +124,7 @@ export class BillingRepairService {
   private async expireLots(now: Date, report: RepairReport): Promise<void> {
     const accountIds = await this.deps.maintenance.listAccountIdsWithExpiredLots(now, BATCH);
     await this.eachItem(accountIds, 'lot_expiry', async (accountId) => {
-      report.lotMinutesExpired += await this.deps.billing.expireLots(accountId);
+      report.lotTokensExpired += await this.deps.billing.expireLots(accountId);
     });
   }
 

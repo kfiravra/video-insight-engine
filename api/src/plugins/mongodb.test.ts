@@ -183,9 +183,9 @@ describe('MongoDB plugin', () => {
         expect(await findIndex('ledgerEntries', { 'source.ref': 1 })).toBeDefined();
       });
 
-      it('should index open creditLots in FIFO order with a minutesRemaining > 0 partial filter', async () => {
-        const index = await findIndex('creditLots', { accountId: 1, expiresAt: 1, createdAt: 1 });
-        expect(index?.partialFilterExpression).toEqual({ minutesRemaining: { $gt: 0 } });
+      it('should index open creditLots in FIFO order with a tokensRemaining > 0 partial filter', async () => {
+        const index = await findIndex('creditLots', { accountId: 1, expiresAt: 1, createdAt: 1, _id: 1 });
+        expect(index?.partialFilterExpression).toEqual({ tokensRemaining: { $gt: 0 } });
       });
 
       it('should index recurringGrants by account and by nextRunAt', async () => {
@@ -200,8 +200,8 @@ describe('MongoDB plugin', () => {
       it('should index what the repair job scans: hold age, account changes, expired open lots', async () => {
         expect(await findIndex('billingAccounts', { 'holds.createdAt': 1 })).toBeDefined();
         expect(await findIndex('billingAccounts', { updatedAt: 1 })).toBeDefined();
-        const expiry = await findIndex('creditLots', { expiresAt: 1 });
-        expect(expiry?.partialFilterExpression).toEqual({ minutesRemaining: { $gt: 0 } });
+        const expiry = await findIndex('creditLots', { expiresAt: 1, accountId: 1 });
+        expect(expiry?.partialFilterExpression).toEqual({ tokensRemaining: { $gt: 0 } });
       });
     });
 

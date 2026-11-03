@@ -1,16 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import { AppError, RunNotAllowedError } from '../utils/errors.js';
 import { submitOutcome } from './billing/run-stamp.js';
-import { refusalReason, refusalServesWithoutRun } from './billing/billing-errors.js';
+import { refusalServesWithoutRun } from './billing/billing-errors.js';
 import { queuePlanOf, type QueuePlan } from './queue-topology.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { LedgerEnforcement } from './billing/ledger-enforcement.js';
 import type { ProviderConfig } from './summarizer-client.js';
 import type { VideoService } from './video.service.js';
 
-// One playlist item through the minutes ledger: quote + hold on its own
-// server run id, served free when the ledger will not pay but serving costs
-// nothing (Q6), given back on cached / attached / error.
+// One playlist item through the token ledger: quote + hold of its estimate on
+// its own server run id, served free when the ledger will not pay but serving
+// costs nothing (Q6), given back on cached / attached / error.
 
 export interface PlaylistItem {
   video_id: string;
@@ -32,7 +32,7 @@ export interface FailedVideoImport {
   youtubeId: string;
   title: string;
   position: number;
-  /** An error code (`INSUFFICIENT_MINUTES`, `METADATA_UNAVAILABLE`, …; `INTERNAL_ERROR` for anything unexpected), never a raw message (I5). */
+  /** An error code (`INSUFFICIENT_TOKENS`, `METADATA_UNAVAILABLE`, …; `INTERNAL_ERROR` for anything unexpected), never a raw message (I5). */
   error: string;
 }
 
@@ -49,8 +49,6 @@ export interface ItemImportContext {
   userId: string;
   folderId: string;
   providers?: ProviderConfig;
-  /** The up-front quote's free video: open when the import starts. */
-  freeVideoAvailable: boolean;
 }
 
 export interface ItemImporter {
@@ -59,10 +57,13 @@ export interface ItemImporter {
   skip(item: PlaylistItem, error: string): Promise<ItemOutcome>;
 }
 
-/** Refusals after which later items cannot do better, so the import stops there. */
-const STOPPING_CODES = new Set(['INSUFFICIENT_MINUTES', 'TOO_MANY_RUNS', 'ACCOUNT_BLOCKED']);
+/**
+ * Refusals that stop the import: items are admitted in order and the first
+ * one the balance cannot cover ends it, even when a later item is cheaper.
+ */
+const STOPPING_CODES = new Set(['INSUFFICIENT_TOKENS', 'TOO_MANY_RUNS', 'ACCOUNT_BLOCKED']);
 /** …of which these still let a later item through when it costs nothing (a blocked account gets nothing). */
-const SERVEABLE_STOP_CODES = new Set(['INSUFFICIENT_MINUTES', 'TOO_MANY_RUNS']);
+const SERVEABLE_STOP_CODES = new Set(['INSUFFICIENT_TOKENS', 'TOO_MANY_RUNS']);
 
 /** The code a playlist item failure is reported with (I5): the domain code, or INTERNAL_ERROR. */
 function failureCode(err: unknown): string {
@@ -93,13 +94,6 @@ function imported(item: PlaylistItem, result: CreateVideoResult): ItemOutcome {
 
 /** Quote + hold per item (its own server run id); give back on cached / attached / error. */
 export class LedgerItemImporter implements ItemImporter {
-  /**
-   * Whether a later item could still get the free video. Starts from the
-   * quote and closes when an item takes it — one slot per window assumed, so
-   * an admin's `freeVideosPerDay > 1` can only make the import stop sooner.
-   */
-  private freeVideoOpen: boolean;
-
   constructor(
     private readonly videoService: VideoService,
     private readonly enforcement: LedgerEnforcement,
@@ -107,9 +101,7 @@ export class LedgerItemImporter implements ItemImporter {
     /** Per item, the length the up-front quote resolved (null = the pre-flight could not tell). */
     private readonly durationsSec: Array<number | null>,
     private readonly logger: FastifyBaseLogger,
-  ) {
-    this.freeVideoOpen = ctx.freeVideoAvailable;
-  }
+  ) {}
 
   async import(item: PlaylistItem, index: number): Promise<ItemOutcome> {
     const durationSec = this.durationsSec[index];
@@ -119,10 +111,9 @@ export class LedgerItemImporter implements ItemImporter {
     try {
       const hold = await this.enforcement.admit({ requestId: runId, userId: this.ctx.userId, youtubeId: item.video_id, durationSec });
       queuePlan = queuePlanOf(hold.split);
-      if (hold.split.free > 0) this.freeVideoOpen = false;
     } catch (err) {
       if (!(err instanceof AppError)) throw err;
-      const stops = this.stopsImport(err);
+      const stops = STOPPING_CODES.has(err.code);
       return refusalServesWithoutRun(err) ? this.serveFree(item, err.code, stops) : failed(item, err.code, stops);
     }
     let result: CreateVideoResult;
@@ -134,16 +125,6 @@ export class LedgerItemImporter implements ItemImporter {
     }
     await this.enforcement.submitResolved(runId, submitOutcome(result));
     return imported(item, result);
-  }
-
-  /**
-   * A refusal later items cannot do better on stops the import — except a
-   * video only paid minutes could cover while the free video is still open:
-   * a later short item can still take it (W2).
-   */
-  private stopsImport(err: AppError): boolean {
-    if (!STOPPING_CODES.has(err.code)) return false;
-    return !(refusalReason(err) === 'needs_paid_minutes' && this.freeVideoOpen);
   }
 
   /** An unexpected item failure: logged with its error, reported by code only (I5). */

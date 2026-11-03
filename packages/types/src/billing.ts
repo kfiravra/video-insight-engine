@@ -1,15 +1,19 @@
 // ═══════════════════════════════════════════════════
-// Billing: plans, the minutes ledger, credit lots
+// Billing: plans, the token ledger, credit lots
 // ═══════════════════════════════════════════════════
 //
-// Users see video-minutes, never dollars. The ledger (`ledgerEntries`) is the
-// only source of truth for what an account can spend; `billingAccounts`
-// buckets and `creditLots.minutesRemaining` are projections of it. vie-api's
-// BillingService is the only writer. Ids are ObjectId hex and dates ISO
-// strings on the wire; the collections store ObjectId / Date.
+// Users see tokens, never dollars. Every LLM execution they trigger (a video
+// run, a chat turn, a library chat, an action) spends tokens; the api prices
+// them from the execution's real LLM cost (the markup and the estimate live
+// in api `services/billing/tokens.ts`, never here). The ledger
+// (`ledgerEntries`) is the only source of truth for what an account can
+// spend; `billingAccounts` buckets and `creditLots.tokensRemaining` are
+// projections of it. vie-api's BillingService is the only writer. Ids are
+// ObjectId hex and dates ISO strings on the wire; the collections store
+// ObjectId / Date.
 
 // ───────────────────────────────────────────────────
-// Plans and minute constants (single source — no env overrides)
+// Plans, packs and token constants (single source — no env overrides)
 // ───────────────────────────────────────────────────
 
 export const PLAN_IDS = ['free', 'pro'] as const;
@@ -17,47 +21,36 @@ export const PLAN_IDS = ['free', 'pro'] as const;
 export type PlanId = (typeof PLAN_IDS)[number];
 
 export interface PlanConfig {
-  /** Minutes granted per monthly period. Resets each period, no rollover (Q5). */
-  periodMinutes: number;
-  /** Longest video the plan allows: free 30 (the free video), pro 180 (Q2). */
-  maxVideoMinutes: number;
-  /**
-   * RabbitMQ message priority. Set per run by what its hold paid with (P3.4,
-   * api `queue-topology.ts`): any plan or credit minutes queue at `pro`'s, the
-   * free video alone at `free`'s — whichever plan the account is on.
-   */
+  /** Tokens granted per monthly cycle. Resets each cycle, no rollover. */
+  periodTokens: number;
+  /** Retail price per month in US cents (0 on free). Shown only on the Pro card. */
+  priceUsdCents: number;
+  /** RabbitMQ message priority of the account's runs (api `queue-topology.ts`): Pro accounts queue at `pro`'s. */
   queuePriority: number;
 }
 
 export const PLANS: Readonly<Record<PlanId, PlanConfig>> = {
-  free: { periodMinutes: 0, maxVideoMinutes: 30, queuePriority: 1 },
-  pro: { periodMinutes: 600, maxVideoMinutes: 180, queuePriority: 5 },
+  free: { periodTokens: 0, priceUsdCents: 0, queuePriority: 1 },
+  pro: { periodTokens: 20_000, priceUsdCents: 2_000, queuePriority: 5 },
 };
 
-/**
- * The free video (Q3): `perWindow` videos of at most `maxVideoMinutes` per
- * rolling `windowHours`, counted from each free video's own timestamp.
- * `caps.freeVideosPerDay` overrides `perWindow` per account.
- */
-export const FREE_VIDEO = { perWindow: 1, windowHours: 24, maxVideoMinutes: 30 } as const;
+/** One-time grant every new account gets ($1 of retail value). Never expires. */
+export const SIGNUP_GRANT_TOKENS = 1_000;
 
-/** Longest video any paid minutes (plan or credits) can pay for (Q2). */
-export const PAID_MAX_VIDEO_MINUTES = 180;
+/** Longest video anyone can submit; `caps.maxVideoMinutes` only tightens it. */
+export const MAX_VIDEO_MINUTES = 180;
 
-/** Every video costs at least this many minutes (Q8). */
-export const MIN_MINUTES_PER_VIDEO = 3;
-
-export interface CreditPack {
+export interface TokenPack {
   id: string;
   priceUsdCents: number;
-  minutes: number;
-  /** Purchased minutes expire this many months after purchase (Q5). */
+  tokens: number;
+  /** Purchased tokens expire this many months after purchase. */
   expiryMonths: number;
 }
 
-/** v1 sells one pack (Q4); more packs are data, not code. */
-export const CREDIT_PACKS: readonly CreditPack[] = [
-  { id: 'pack_5', priceUsdCents: 500, minutes: 150, expiryMonths: 12 },
+/** One pack for now; more sizes are data, not code. */
+export const TOKEN_PACKS: readonly TokenPack[] = [
+  { id: 'pack_5', priceUsdCents: 500, tokens: 5_000, expiryMonths: 12 },
 ];
 
 // ───────────────────────────────────────────────────
@@ -72,14 +65,39 @@ export type PlanStatus = 'active' | 'past_due' | 'canceled';
 /** `manual` = set by an admin; `provider` = a payment-provider subscription (P4). */
 export type PlanSource = 'manual' | 'provider';
 
-export type BillingBucket = 'free' | 'plan' | 'credit';
+/**
+ * Where tokens sit: the Pro cycle's allowance, credit lots, and `debt` — what
+ * a run cost beyond everything the account had (overdraft). Debt blocks every
+ * new execution until a grant, pack or Pro cycle repays it.
+ */
+export type BillingBucket = 'plan' | 'credit' | 'debt';
+
+/** Buckets found in the ledger: `free` appears only on minute entries written before the token migration. */
+export type LedgerBucket = BillingBucket | 'free';
+
+/** What an entry counts. Entries without `unit` are minutes (history from before the token migration). */
+export type LedgerUnit = 'tokens' | 'minutes';
 
 /**
- * Ledger entry kinds. `minutes` is signed: + adds headroom, − consumes it.
- * A `debit` posts a hold and repeats its minutes for reporting, but does NOT
- * move the balance again — balance = Σ minutes of every entry except `debit`.
+ * Ledger entry kinds. `tokens` is signed: + adds headroom, − consumes it.
+ * A `debit` with `mirrorsHold` posts tokens a hold already took and does NOT
+ * move the balance again; every other entry does. `repay` moves tokens from
+ * an incoming grant (or a new Pro cycle) into the debt bucket. `convert`
+ * closes a minute balance and opens its token counterpart (the migration).
  */
-export type LedgerEntryType = 'grant' | 'hold' | 'debit' | 'release' | 'expire' | 'refund' | 'adjust';
+export type LedgerEntryType =
+  | 'grant'
+  | 'hold'
+  | 'debit'
+  | 'release'
+  | 'expire'
+  | 'refund'
+  | 'adjust'
+  | 'repay'
+  | 'convert';
+
+/** Which kind of LLM execution a debit paid for. */
+export type ExecutionKind = 'video' | 'chat' | 'library_chat' | 'action';
 
 /** Where an entry or lot came from. `ref` is the requestId, auditId, grant id, provider event id, … */
 export type BillingSourceKind = 'run' | 'payment' | 'admin' | 'migration' | 'recurring' | 'system';
@@ -89,26 +107,23 @@ export interface BillingSource {
   ref: string;
 }
 
-/** Admin overrides. A missing (or null) field means "use the plan default". Caps only ever tighten video length. */
+/** Admin overrides. A missing (or null) field means "no override". Caps only ever tighten. */
 export interface AccountCaps {
-  /** Ceiling on video length for this account (applies to free and paid minutes). */
+  /** Ceiling on video length for this account (below MAX_VIDEO_MINUTES). */
   maxVideoMinutes?: number | null;
-  /** Free videos per rolling window; 0 disables the free video. */
-  freeVideosPerDay?: number | null;
   /** Most open holds (runs in flight) the account may have at once. */
   maxConcurrent?: number | null;
-  /** Blocked accounts cannot start a run (the per-account kill switch). */
+  /** Blocked accounts cannot start any execution (the per-account kill switch). */
   blocked?: boolean | null;
 }
 
 export interface LotSlice {
   lotId: string;
-  minutes: number;
+  tokens: number;
 }
 
-/** How one video's minutes were taken: whole video free, or plan then credits FIFO by lot. */
+/** Where a hold's tokens were taken: the plan cycle first, then credit lots FIFO. */
 export interface BucketSplit {
-  free: number;
   plan: number;
   credit: number;
   lots: LotSlice[];
@@ -131,20 +146,24 @@ export interface BillingPlanState {
 export interface PlanBucketState {
   cycleStart: string | null;
   cycleEnd: string | null;
-  minutesGranted: number;
-  minutesUsed: number;
+  tokensGranted: number;
+  tokensUsed: number;
 }
 
-/** A run in flight. Records exactly where its minutes came from, so a release returns them there. */
+/**
+ * A video run in flight: the estimate it holds and exactly where it came
+ * from, so the settle (on the run's real cost) and a release return the
+ * unused part there.
+ */
 export interface BillingHold {
+  /** The run id (`billingRunId`) the hold is keyed by. */
   requestId: string;
   userId: string;
   youtubeId: string | null;
   durationSec: number;
-  minutes: number;
+  /** The estimate held. */
+  tokens: number;
   split: BucketSplit;
-  /** The timestamp this hold added to `buckets.free.recentFreeVideoAt`, if it used the free video. */
-  freeVideoAt: string | null;
   /** `buckets.plan.cycleStart` the plan slice was taken from, if any. */
   planCycleStart: string | null;
   createdAt: string;
@@ -157,14 +176,16 @@ export interface BillingAccount {
   ownerId: string;
   plan: BillingPlanState;
   buckets: {
-    /** Free videos inside the rolling window (pruned lazily). */
-    free: { recentFreeVideoAt: string[] };
     plan: PlanBucketState;
-    /** Σ `creditLots.minutesRemaining` (expired-but-unswept lots included). */
-    credit: { minutesAvailable: number };
+    /** Σ `creditLots.tokensRemaining` (expired-but-unswept lots included). */
+    credit: { tokensAvailable: number };
+    /** Tokens owed (≥ 0). */
+    debt: { tokens: number };
   };
   holds: BillingHold[];
   caps: AccountCaps;
+  /** When the one-time signup grant was written; absent on accounts that never got it. */
+  signupGrantAt?: string;
   /** The last auditIds `setCaps` applied (bounded), so a retried call is a no-op. */
   capsAuditIds?: string[];
   /** Optimistic-concurrency counter, bumped by every write. */
@@ -180,16 +201,26 @@ export interface LedgerEntry {
   /** Who consumed or was acted on (the run's user, the admin's target). */
   userId: string;
   type: LedgerEntryType;
-  bucket: BillingBucket;
-  minutes: number;
+  bucket: LedgerBucket;
+  /** `tokens` on every entry written since the token migration; absent = minutes. */
+  unit?: 'tokens';
+  /** Signed token amount (token entries). */
+  tokens?: number;
+  /** Signed minute amount (entries from before the token migration). */
+  minutes?: number;
+  /** True on a `debit` that posts tokens its hold already took (balance-neutral). */
+  mirrorsHold?: boolean;
   /** Credit entries name their lot. */
   lotId?: string;
   source: BillingSource;
-  /** Unique. `hold:<requestId>:…`, `debit:<requestId>:…`, `admin:<auditId>[:<suffix>]`, … */
+  /** Unique. `hold:<runId>:…`, `debit:<runId>:…`, `debit:exec:<executionId>:…`, `admin:<auditId>[:<suffix>]`, … */
   idempotencyKey: string;
+  executionKind?: ExecutionKind;
+  /** The api's per-request id of a chat / library chat / action execution. */
+  executionId?: string;
   youtubeId?: string;
   durationSec?: number;
-  /** Internal only (margin): LLM $ attributed to the run. Never shown to users. */
+  /** Internal only (margin): LLM $ attributed to the entry. Never shown to users. */
   costUsd?: number;
   /** `users._id` hex of the admin, or `system:<name>`. */
   actorId?: string;
@@ -198,25 +229,25 @@ export interface LedgerEntry {
   createdAt: string;
 }
 
-/** `creditLots` — minutes consumed FIFO by `expiresAt` (never-expiring last), then `createdAt`. */
+/** `creditLots` — tokens consumed FIFO by `expiresAt` (never-expiring last), then `createdAt`. */
 export interface CreditLot {
   _id: string;
   accountId: string;
-  minutesGranted: number;
-  minutesRemaining: number;
+  tokensGranted: number;
+  tokensRemaining: number;
   source: BillingSource;
-  /** What the customer paid (refund math). Absent on admin/recurring lots. */
+  /** What the customer paid (refund math). Absent on admin/recurring/signup lots. */
   priceUsdCents?: number;
   /** null = never expires. */
   expiresAt: string | null;
   createdAt: string;
 }
 
-/** `recurringGrants` — a lot of `minutes` granted every period (demo / eval accounts, Q20). Applied by the repair job. */
+/** `recurringGrants` — a lot of `tokens` granted every period (demo / eval accounts). Applied by the repair job. */
 export interface RecurringGrant {
   _id: string;
   accountId: string;
-  minutes: number;
+  tokens: number;
   every: 'month';
   active: boolean;
   nextRunAt: string;
@@ -230,41 +261,6 @@ export interface RecurringGrant {
   deletedAt: string | null;
 }
 
-/**
- * Where the run is: `created` (held, dispatched), `cached` / `attached` (served
- * without a run, released), `failed` (pipeline or submit error, released),
- * `completed` (debited), `retry` (a repeated submit or terminal event for the
- * same requestId), `refused` (the old gate refused; the ledger only quoted).
- */
-export type BillingShadowPath = 'created' | 'cached' | 'attached' | 'failed' | 'retry' | 'completed' | 'refused';
-
-export interface BillingShadowDecision {
-  admitted: boolean;
-  charged: boolean;
-}
-
-/**
- * `billingShadow` — the old gate's decision next to the ledger's, one row per
- * requestId (Contract 4). Written by the P1 shadow ledger; nothing writes it
- * since P3.2. The replay harness re-judges the rows, the GDPR cascade erases a
- * user's.
- */
-export interface BillingShadow {
-  _id: string;
-  requestId: string;
-  userId: string;
-  youtubeId: string;
-  path: BillingShadowPath;
-  oldDecision: BillingShadowDecision;
-  newDecision: BillingShadowDecision & { split?: BucketSplit; reason?: string };
-  /** `metadata_unavailable`: the ledger could not get the video's length — never "explained", counted by the gate (W1). */
-  classification: 'agree' | 'policy_delta' | 'disagree' | 'metadata_unavailable';
-  /** The decision that explains a `policy_delta`, e.g. `Q3 one free video per 24 h vs old $1/day`. */
-  policyRef?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
 // ───────────────────────────────────────────────────
 // Views (BillingService admin API — Contract 1)
 // ───────────────────────────────────────────────────
@@ -275,23 +271,20 @@ export interface AccountSnapshot {
   ownerType: BillingOwnerType;
   ownerId: string;
   plan: BillingPlanState;
-  free: {
-    perWindow: number;
-    usedInWindow: number;
-    available: boolean;
-    /** When the next free video opens; null when one is open now or the free video is disabled. */
-    nextFreeAt: string | null;
-    maxVideoMinutes: number;
-  };
-  planMinutes: {
+  planTokens: {
     cycleStart: string | null;
     cycleEnd: string | null;
     granted: number;
     used: number;
     remaining: number;
   };
-  /** Spendable credit minutes (unexpired lots only). */
+  /** Spendable credit tokens (unexpired lots only). */
   credits: { available: number };
+  /** Tokens owed (≥ 0). */
+  debt: number;
+  /** plan remaining + credits − debt; negative while in debt. */
+  balance: number;
+  signupGrantAt: string | null;
   caps: AccountCaps;
   openHolds: number;
   version: number;
@@ -305,8 +298,12 @@ export interface CreditLotView extends Omit<CreditLot, '_id' | 'accountId'> {
 
 export type HoldView = BillingHold;
 
-export interface LedgerEntryView extends Omit<LedgerEntry, '_id' | 'accountId'> {
+/** A ledger row for the admin: `amount` in its `unit` (minute rows are pre-migration history). */
+export interface LedgerEntryView
+  extends Omit<LedgerEntry, '_id' | 'accountId' | 'unit' | 'tokens' | 'minutes'> {
   id: string;
+  unit: LedgerUnit;
+  amount: number;
 }
 
 export interface RecurringGrantView extends Omit<RecurringGrant, '_id' | 'accountId' | 'deletedAt'> {
@@ -322,22 +319,45 @@ export interface AccountDetail {
   recurringGrants: RecurringGrantView[];
 }
 
-/** What a user sees about their own minutes — no dollar field anywhere. */
+/** What a user sees about their own tokens — no dollar field anywhere. */
 export interface UsageSummary {
   plan: { id: PlanId; periodEnd: string | null };
-  free: {
-    available: boolean;
-    nextFreeAt: string | null;
-    maxVideoMinutes: number;
-    /** Free videos per rolling 24 h after admin caps: 1 by default, 0 when an admin turned the free video off. */
-    perWindow: number;
-  };
-  planMinutes: { granted: number; used: number; remaining: number; cycleEnd: string | null };
-  credits: { available: number; lots: Array<{ minutes: number; expiresAt: string | null }> };
-  holds: Array<{ youtubeId: string | null; minutes: number }>;
-  /** Longest video the account can submit with what it has now. */
+  /** What the account can spend now: plan remaining + credits − debt (negative while in debt). */
+  balance: number;
+  /** The Pro cycle; null without one. */
+  planTokens: { granted: number; used: number; remaining: number; cycleEnd: string | null } | null;
+  credits: { available: number; lots: Array<{ tokens: number; expiresAt: string | null }> };
+  /** Tokens owed; every new execution is refused while > 0. */
+  debt: number;
+  /** Estimates held by runs in flight. */
+  holds: Array<{ youtubeId: string | null; tokens: number }>;
+  /** Longest video the account can submit. */
   maxVideoMinutes: number;
   blocked: boolean;
+  /** Tokens the account got at signup (0 when it never got the grant). */
+  signupGrantTokens: number;
+}
+
+/**
+ * What the requesting user's latest run of a video holds or cost
+ * (GET /api/videos/:id `billing`): `held` while it runs (the estimate),
+ * `charged` once settled on its real cost, `released` when it failed (given
+ * back in full), `free` when this user ran nothing (cached, attached).
+ */
+export interface VideoBilling {
+  state: 'held' | 'charged' | 'released' | 'free';
+  estimatedTokens: number;
+  /** null while held. */
+  chargedTokens: number | null;
+}
+
+/** GET /api/videos/estimate — what a submit would hold before it runs. */
+export interface VideoEstimateResponse {
+  youtubeId: string;
+  durationSec: number;
+  /** 0 when the video is served free. */
+  tokens: number;
+  free: boolean;
 }
 
 // ───────────────────────────────────────────────────

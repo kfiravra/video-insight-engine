@@ -208,44 +208,51 @@ acked as `skip_locked`.
 
 ## Cost protection
 
-The gate runs **before** billing (the minutes ledger's quote + hold). A duplicate hit:
+The gate runs **before** billing (the token ledger's quote + hold). A duplicate hit:
 
-- Does NOT hold minutes.
+- Does NOT hold tokens.
 - Does NOT enqueue a job (`queuePublisher.publishVideoJob` not called).
 - Does NOT trigger HTTP summarization (`summarizerClient.triggerSummarization` not called).
 - Returns instantly from a single Mongo read.
 
 This is enforced by integration tests in `api/src/routes/videos.routes.test.ts`.
 
-## Minutes-ledger holds
+## Token-ledger holds
 
-The minutes ledger (`api/src/services/billing/`) is idempotent on its own
-keys, so a submission takes at most one hold however it is retried:
+The token ledger (`api/src/services/billing/`) is idempotent on its own
+keys, so a submission takes at most one hold — and one settle — however it is
+retried:
 
 - **The run id is the server's.** `VideoSubmissionService` generates a fresh
   `billingRunId` (UUID) per submission that passes the request gate above —
   never the client's `X-Request-ID`, which a client may reuse. The hold, the
   dispatch stamp (`videoSummaryCache.billingRunId`, beside `requestId`) and the
-  settle all use it; `requestId` stays the client / Fastify id for logs and is
-  what the summarizer writes on `llm_usage.request_id`, so a settle sums the
-  run's `cost_usd` by the stamped `requestId`. Each playlist item gets its own
-  run id (used as its dispatch `requestId` too).
+  settle all use it: the summarizer reads the stamp and sends it back on
+  `POST /internal/run-cost`, and a stamp that no longer names the hold's run
+  (a newer dispatch replaced it) settles nothing — the repair job settles the
+  old hold from `llm_usage`. `requestId` stays the client / Fastify id for logs
+  and is what the summarizer writes on `llm_usage.request_id`. Each playlist
+  item gets its own run id (used as its dispatch `requestId` too).
 - **An Idempotency-Key replay or an HTTP retry holds nothing:** it returns
   `duplicate` / `in_flight` from the request gate before billing runs.
 - **Ledger keys** (unique `ledgerEntries.idempotencyKey`):
-  `hold:<runId>:free|plan|lot:<lotId>`, `debit:<runId>:…` (a second
-  "completed" — translation — is a no-op), `release:<runId>:…`,
-  `release-expire:<runId>:…`. A hold for a run id that already settled or
+  `hold:<runId>:plan|lot:<lotId>`, `debit:<runId>:…` and
+  `debit:<runId>:extra:…` (a second run-cost callback — a worker retry, a
+  translation — is `already_debited`), `release:<runId>:…`,
+  `release-expire:<runId>:…`. A chat turn / action is debited once per
+  `executionId` (`debit:exec:<executionId>:…`), whatever the assistant's
+  usage callback retries. A hold for a run id that already settled or
   released is refused (`HOLD_FINALIZED`), and an open hold is only ever
   returned for the same user and video (`HOLD_CONFLICT` otherwise) — both
   unreachable from a client now that the id is the server's.
 - **Worker retries** re-run the same dispatch, so the same run id; one hold,
-  one debit.
+  one settle.
 - **No run, no debit.** A dispatch the guard refused (another live run already
   owns the row) returns `attached`, so the hold goes back at once (review I1).
   A run the summarizer answered from its Redis response cache reports
   `completed` with `cacheHit: true` on `POST /internal/status`, and the hold is
-  released as cached instead of settled (I3). A stalled row the API
+  released as cached instead of settled (I3). A plain `completed` settles
+  nothing: the run-cost callback that follows it does. A stalled row the API
   re-dispatches is set back to `pending` with a fresh `updatedAt`, so the
   summarizer's stall sweeper cannot fail the new run as the dead one (I2).
 

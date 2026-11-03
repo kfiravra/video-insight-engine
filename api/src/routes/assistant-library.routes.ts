@@ -26,7 +26,7 @@ const librarySearchBodySchema = z.object({
 });
 
 export async function assistantLibraryRoutes(fastify: FastifyInstance) {
-  const { assistantClient, videoRepository, chatFairUse } = fastify.container;
+  const { assistantClient, videoRepository } = fastify.container;
 
   // POST /api/assistant/library/chat
   // Same 24 h free-account message allowance as the single-video chat, counted in
@@ -43,8 +43,6 @@ export async function assistantLibraryRoutes(fastify: FastifyInstance) {
         message: parsed.error.errors[0]?.message || 'Invalid request body',
       });
     }
-
-    await chatFairUse.consume(req.user.userId);
 
     // Derive owned YouTube ids server-side — never trust a client id list.
     const videos = await videoRepository.getUserVideos(req.user.userId, undefined, {

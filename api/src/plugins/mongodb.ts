@@ -137,7 +137,7 @@ export async function runDedupKeyBackfill(db: Db, log: FastifyInstance['log']): 
 }
 
 /**
- * Indexes for the minutes ledger (billing-roles P1.2). The unique keys are
+ * Indexes for the token ledger (billing-roles P1.2, billing-tokens). The unique keys are
  * what make the ledger idempotent and the account upsert race-safe, so the
  * caller treats a failure here as fatal in production (like dedupKey).
  * Exported so tests can build them on a bare test database.
@@ -156,14 +156,16 @@ export async function createBillingIndexes(db: Db): Promise<void> {
     { key: { accountId: 1, createdAt: -1 } },
     { key: { 'source.ref': 1 } },
   ]);
-  // FIFO spend order; spent lots drop out of the index.
+  // FIFO spend order; spent lots drop out of the index. Key patterns differ
+  // from the minute-era indexes (partial on `minutesRemaining`), which the
+  // token migration drops, so both can exist while it has not run.
   await db.collection('creditLots').createIndexes([
     {
-      key: { accountId: 1, expiresAt: 1, createdAt: 1 },
-      partialFilterExpression: { minutesRemaining: { $gt: 0 } },
+      key: { accountId: 1, expiresAt: 1, createdAt: 1, _id: 1 },
+      partialFilterExpression: { tokensRemaining: { $gt: 0 } },
     },
     // repair job: open lots past their expiry, across accounts
-    { key: { expiresAt: 1 }, partialFilterExpression: { minutesRemaining: { $gt: 0 } } },
+    { key: { expiresAt: 1, accountId: 1 }, partialFilterExpression: { tokensRemaining: { $gt: 0 } } },
   ]);
   await db.collection('recurringGrants').createIndexes([
     { key: { accountId: 1 } },

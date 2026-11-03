@@ -3,13 +3,12 @@ import { ZodError, z } from 'zod';
 import { resolveErrorEnvelope } from './error-envelope.js';
 import {
   AccountBlockedError,
-  ChatLimitReachedError,
-  InsufficientMinutesError,
+  InsufficientTokensError,
   MetadataUnavailableError,
   NotFoundError,
   RateLimitedError,
   TooManyRunsError,
-  VideoTooLongForPlanError,
+  VideoTooLongError,
 } from './errors.js';
 
 describe('resolveErrorEnvelope', () => {
@@ -22,19 +21,6 @@ describe('resolveErrorEnvelope', () => {
     expect(statusCode).toBe(400);
     expect(body).toMatchObject({ error: 'VALIDATION_ERROR', statusCode: 400 });
     expect(body.details?.issues[0]).toEqual({ path: 'url', message: expect.any(String) });
-  });
-
-  it('should carry nextAt for the free chat limit', () => {
-    const { statusCode, body } = resolveErrorEnvelope(
-      new ChatLimitReachedError(50, new Date('2026-11-02T10:00:00Z')),
-    );
-
-    expect(statusCode).toBe(429);
-    expect(body).toMatchObject({
-      error: 'CHAT_LIMIT_REACHED',
-      statusCode: 429,
-      nextAt: '2026-11-02T10:00:00.000Z',
-    });
   });
 
   it('should map AppError subclasses to their status and code', () => {
@@ -117,24 +103,25 @@ describe('resolveErrorEnvelope', () => {
     expect(body).toEqual({ error: 'INTERNAL_ERROR', message: 'kaboom', statusCode: 500 });
   });
 
-  describe('minutes gate', () => {
-    it('should send 402 INSUFFICIENT_MINUTES with needed, available and nextFreeAt', () => {
-      const { statusCode, body } = resolveErrorEnvelope(new InsufficientMinutesError(45, 20, '2026-11-02T10:00:00.000Z'));
+  describe('token gate', () => {
+    it('should send 402 INSUFFICIENT_TOKENS with needed and available', () => {
+      const { statusCode, body } = resolveErrorEnvelope(new InsufficientTokensError(840, 320));
 
       expect(statusCode).toBe(402);
-      expect(body).toMatchObject({ error: 'INSUFFICIENT_MINUTES', needed: 45, available: 20, nextFreeAt: '2026-11-02T10:00:00.000Z' });
-    });
-
-    it('should leave nextFreeAt out when the free video cannot help', () => {
-      const { body } = resolveErrorEnvelope(new InsufficientMinutesError(45, 0, null));
-
+      expect(body).toMatchObject({ error: 'INSUFFICIENT_TOKENS', needed: 840, available: 320 });
       expect(body).not.toHaveProperty('nextFreeAt');
     });
 
-    it('should send 422 VIDEO_TOO_LONG_FOR_PLAN with maxMinutes', () => {
-      const { statusCode, body } = resolveErrorEnvelope(new VideoTooLongForPlanError(180));
+    it('should carry a negative balance for an account in debt', () => {
+      const { body } = resolveErrorEnvelope(new InsufficientTokensError(1, -120));
 
-      expect([statusCode, body.error, body.maxMinutes]).toEqual([422, 'VIDEO_TOO_LONG_FOR_PLAN', 180]);
+      expect([body.needed, body.available]).toEqual([1, -120]);
+    });
+
+    it('should send 422 VIDEO_TOO_LONG with maxMinutes', () => {
+      const { statusCode, body } = resolveErrorEnvelope(new VideoTooLongError(180));
+
+      expect([statusCode, body.error, body.maxMinutes]).toEqual([422, 'VIDEO_TOO_LONG', 180]);
     });
 
     it('should send 403 ACCOUNT_BLOCKED', () => {

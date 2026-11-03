@@ -1,10 +1,10 @@
 import { ObjectId } from 'mongodb';
 import { z } from 'zod';
-import { MIN_MINUTES_PER_VIDEO, PAID_MAX_VIDEO_MINUTES, PLAN_IDS } from '@vie/types';
+import { MAX_VIDEO_MINUTES, PLAN_IDS } from '@vie/types';
 import { NotFoundError, ValidationError } from '../../utils/errors.js';
 import { applyAdjust, applyGrantLot, applySetCaps, applySetPlan, capsAlreadyApplied } from './admin-ops.js';
 import { parseObjectId } from './billing-unit.js';
-import { MAX_ADMIN_MINUTES } from './minutes.js';
+import { MAX_ADMIN_TOKENS } from './tokens.js';
 import { toHoldView, toLedgerView, toLotView, toRecurringGrantView, toSnapshot } from './views.js';
 import type { ClientSession } from 'mongodb';
 import type { AccountCaps, AccountDetail, AccountSnapshot, PlanId } from '@vie/types';
@@ -39,7 +39,7 @@ export interface AccountDetailOptions {
 
 const DEFAULT_LEDGER_LIMIT = 50;
 const ADMIN_LOT_LIMIT = 100;
-const adminMinutes = z.number().int().min(1).max(MAX_ADMIN_MINUTES);
+const adminTokens = z.number().int().min(1).max(MAX_ADMIN_TOKENS);
 
 const contextSchema = z.object({
   actorId: z.string().trim().min(1).max(200),
@@ -47,12 +47,11 @@ const contextSchema = z.object({
   auditId: z.string().regex(/^[0-9a-f]{24}$/i, 'auditId must be a 24-character hex id'),
 });
 const setPlanSchema = z.object({ planId: z.enum(PLAN_IDS), periodEnd: z.date().optional() }).strict();
-const grantLotSchema = z.object({ minutes: adminMinutes, expiresAt: z.date().nullable().optional() }).strict();
-// Caps only tighten (a cap above the paid maximum would change nothing).
+const grantLotSchema = z.object({ tokens: adminTokens, expiresAt: z.date().nullable().optional() }).strict();
+// Caps only tighten (a cap above MAX_VIDEO_MINUTES would change nothing).
 const capsSchema = z
   .object({
-    maxVideoMinutes: z.number().int().min(MIN_MINUTES_PER_VIDEO).max(PAID_MAX_VIDEO_MINUTES).nullable().optional(),
-    freeVideosPerDay: z.number().int().min(0).max(100).nullable().optional(),
+    maxVideoMinutes: z.number().int().min(1).max(MAX_VIDEO_MINUTES).nullable().optional(),
     maxConcurrent: z.number().int().min(1).max(1000).nullable().optional(),
     blocked: z.boolean().nullable().optional(),
   })
@@ -61,10 +60,10 @@ const capsSchema = z
 const adjustSchema = z
   .object({
     bucket: z.enum(['plan', 'credit']),
-    minutes: z.number().int().min(-MAX_ADMIN_MINUTES).max(MAX_ADMIN_MINUTES).refine((m) => m !== 0, 'minutes must not be 0'),
+    tokens: z.number().int().min(-MAX_ADMIN_TOKENS).max(MAX_ADMIN_TOKENS).refine((t) => t !== 0, 'tokens must not be 0'),
   })
   .strict();
-const recurringGrantSchema = z.object({ minutes: adminMinutes, every: z.literal('month'), active: z.boolean() }).strict();
+const recurringGrantSchema = z.object({ tokens: adminTokens, every: z.literal('month'), active: z.boolean() }).strict();
 const detailSchema = z
   .object({ ledgerLimit: z.number().int().min(1).max(200).optional(), ledgerBefore: z.date().optional() })
   .strict();
@@ -127,7 +126,7 @@ export class BillingAdmin {
 
   async grantLot(
     userId: string,
-    input: { minutes: number; expiresAt?: Date | null },
+    input: { tokens: number; expiresAt?: Date | null },
     ctx: AdminMutationContext,
   ): Promise<MutationResult<AccountSnapshot> & { lotId: string }> {
     const grant = parse(grantLotSchema, input);
@@ -150,7 +149,7 @@ export class BillingAdmin {
 
   async adjust(
     userId: string,
-    input: { bucket: 'plan' | 'credit'; minutes: number },
+    input: { bucket: 'plan' | 'credit'; tokens: number },
     ctx: AdminMutationContext,
   ): Promise<MutationResult<AccountSnapshot>> {
     const adjustment = parse(adjustSchema, input);
@@ -161,7 +160,7 @@ export class BillingAdmin {
 
   async createRecurringGrant(
     userId: string,
-    input: { minutes: number; every: 'month'; active: boolean },
+    input: { tokens: number; every: 'month'; active: boolean },
     ctx: AdminMutationContext,
   ): Promise<MutationResult<AccountSnapshot> & { grantId: string }> {
     const spec = parse(recurringGrantSchema, input);
@@ -170,7 +169,7 @@ export class BillingAdmin {
       if (existing) return existing._id;
       const grant: RecurringGrantDocument = {
         _id: new ObjectId(), accountId: draft.accountId, ...spec,
-        // First run on the next repair tick: the account gets its minutes now, then monthly.
+        // First run on the next repair tick: the account gets its tokens now, then monthly.
         nextRunAt: draft.now, lastRunAt: null,
         actorId: audit.actorId, auditId: audit.auditId, reason: audit.reason,
         createdAt: draft.now, updatedAt: draft.now, deletedAt: null,

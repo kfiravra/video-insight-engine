@@ -287,25 +287,6 @@ export class RateLimitedError extends AppError {
   }
 }
 
-/**
- * A free account used its chat messages for the rolling 24 hours (Q7). Not
- * RATE_LIMITED: clients tell "slow down" from "you are out until `nextAt`".
- */
-export class ChatLimitReachedError extends AppError {
-  /** ISO timestamp of the moment the oldest counted message leaves the window. */
-  public readonly nextAt: string;
-
-  constructor(messagesPerWindow: number, nextAt: Date) {
-    super(
-      'CHAT_LIMIT_REACHED',
-      429,
-      `Free accounts can send ${messagesPerWindow} chat messages in 24 hours. More open up as the last 24 hours pass.`,
-    );
-    this.name = 'ChatLimitReachedError';
-    this.nextAt = nextAt.toISOString();
-  }
-}
-
 // External service errors
 export class ServiceTimeoutError extends AppError {
   constructor(service: string) {
@@ -398,34 +379,37 @@ export class MetadataUnavailableError extends AppError {
   }
 }
 
-// ─── Minutes gate (billing-roles) ───────────────────────────────────────
-// Thrown by the minutes ledger on every submit; error-envelope.ts
-// carries the numbers (`needed`, `available`, `nextFreeAt`, `maxMinutes`,
-// `maxConcurrent`) as top-level body fields.
+// ─── Token gate (billing-tokens) ────────────────────────────────────────
+// Thrown by the token ledger on every submit and chat turn; error-envelope.ts
+// carries the numbers (`needed`, `available`, `maxMinutes`, `maxConcurrent`)
+// as top-level body fields.
 
-/** The account cannot pay for the video: `needed` minutes, `available` paid minutes. */
-export class InsufficientMinutesError extends AppError {
+/**
+ * The account cannot start the execution: a video needs its whole estimate
+ * (`needed`) covered and no debt; a chat turn needs a positive balance
+ * (`needed` 1). `available` is the balance, negative while in debt.
+ */
+export class InsufficientTokensError extends AppError {
   constructor(
     public readonly needed: number,
     public readonly available: number,
-    public readonly nextFreeAt: string | null,
   ) {
-    super('INSUFFICIENT_MINUTES', 402, `This video needs ${needed} minutes; ${available} available`);
-    this.name = 'InsufficientMinutesError';
+    super('INSUFFICIENT_TOKENS', 402, `This needs ${needed} tokens; ${available} available`);
+    this.name = 'InsufficientTokensError';
   }
 }
 
-/** Longer than any minutes on this account can pay for (paid 180, free 30, or an admin cap). */
-export class VideoTooLongForPlanError extends AppError {
+/** Longer than any account may submit (MAX_VIDEO_MINUTES, or an admin cap). */
+export class VideoTooLongError extends AppError {
   constructor(public readonly maxMinutes: number) {
-    super('VIDEO_TOO_LONG_FOR_PLAN', 422, `Videos up to ${maxMinutes} minutes are supported on this account`);
-    this.name = 'VideoTooLongForPlanError';
+    super('VIDEO_TOO_LONG', 422, `Videos up to ${maxMinutes} minutes are supported`);
+    this.name = 'VideoTooLongError';
   }
 }
 
 export class AccountBlockedError extends AppError {
   constructor() {
-    super('ACCOUNT_BLOCKED', 403, 'This account cannot start new videos');
+    super('ACCOUNT_BLOCKED', 403, 'This account cannot start new videos or chats');
     this.name = 'AccountBlockedError';
   }
 }
@@ -449,7 +433,7 @@ export class HoldFinalizedError extends ConflictError {
 /** A hold already exists under this run id for another user or video (W3) — never ride on someone else's hold. */
 export class HoldConflictError extends ConflictError {
   constructor() {
-    super('HOLD_CONFLICT', 'This run id is already holding minutes for another video');
+    super('HOLD_CONFLICT', 'This run id is already holding tokens for another video');
     this.name = 'HoldConflictError';
   }
 }

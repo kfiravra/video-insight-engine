@@ -1,33 +1,60 @@
 import { ObjectId } from 'mongodb';
-import { addMonthsUtc, monthsElapsed } from './minutes.js';
+import { SIGNUP_GRANT_TOKENS } from '@vie/types';
+import { repayDebt } from './debt.js';
+import { addMonthsUtc, monthsElapsed } from './tokens.js';
 import type { AccountDraft } from './account-draft.js';
 import type { RecurringGrantDocument } from '../../repositories/billing.repository.js';
 import type { RunState } from '../../repositories/billing-maintenance.repository.js';
 
-// Pure repair-job transitions on an AccountDraft (P1.6). Keys:
-//   expire:lot:<lotId>                  one per lot — a lot expires once; minutes
+// Pure system transitions on an AccountDraft: the repair job's (P1.6) and the
+// signup grant. Keys:
+//   expire:lot:<lotId>                  one per lot — a lot expires once; tokens
 //                                       released into it later expire at once
 //                                       (release-expire), so it never refills
 //   recurring:<grantId>:<runAt ISO>     one lot per grant per month
+//   grant:signup:<userId>               the one-time signup grant (GDPR erasure
+//                                       re-keys it with the tombstone id)
 
 export const lotExpiryKey = (lotId: ObjectId): string => `expire:lot:${lotId.toHexString()}`;
 
-/** Expire what is left of every open lot past its expiry. Returns the minutes expired. */
+export const signupGrantKey = (ownerId: ObjectId): string => `grant:signup:${ownerId.toHexString()}`;
+
+/** Expire what is left of every open lot past its expiry. Returns the tokens expired. */
 export function applyLotExpiry(draft: AccountDraft, alreadyExpired: ReadonlySet<string>): number {
   let expired = 0;
   for (const lot of draft.lots) {
     const due = lot.expiresAt !== null && lot.expiresAt.getTime() <= draft.now.getTime();
     const key = lotExpiryKey(lot._id);
-    if (!due || lot.minutesRemaining <= 0 || alreadyExpired.has(key)) continue;
-    const minutes = lot.minutesRemaining;
-    draft.changeLot(lot, -minutes);
+    if (!due || lot.tokensRemaining <= 0 || alreadyExpired.has(key)) continue;
+    const tokens = lot.tokensRemaining;
+    draft.changeLot(lot, -tokens);
     draft.addEntry({
-      type: 'expire', bucket: 'credit', minutes: -minutes, lotId: lot._id, idempotencyKey: key,
+      type: 'expire', bucket: 'credit', tokens: -tokens, lotId: lot._id, idempotencyKey: key,
       source: { kind: 'system', ref: `lot-expiry:${lot._id.toHexString()}` },
     });
-    expired += minutes;
+    expired += tokens;
   }
   return expired;
+}
+
+/**
+ * The one-time signup grant: a never-expiring lot of SIGNUP_GRANT_TOKENS
+ * (repaying debt first, which only a migrated account could have). The
+ * caller checks `grant:signup:<userId>` is not written yet. Returns the lot id.
+ */
+export function applySignupGrant(draft: AccountDraft): ObjectId {
+  const lotId = new ObjectId();
+  const source = { kind: 'system' as const, ref: 'signup' };
+  const key = signupGrantKey(draft.original.ownerId);
+  draft.addLot({
+    _id: lotId, accountId: draft.accountId, tokensGranted: SIGNUP_GRANT_TOKENS, tokensRemaining: SIGNUP_GRANT_TOKENS,
+    source, expiresAt: null, createdAt: draft.now,
+  });
+  draft.addEntry({ type: 'grant', bucket: 'credit', tokens: SIGNUP_GRANT_TOKENS, lotId, idempotencyKey: key, source });
+  draft.account.signupGrantAt = draft.now;
+  draft.markChanged();
+  repayDebt(draft, key, { source });
+  return lotId;
 }
 
 export interface RecurringRun {
@@ -43,7 +70,7 @@ export interface RecurringRun {
 /**
  * The slot due at `now`; idle months in between grant nothing (like a Pro
  * cycle). `graceMs` keeps the outgoing lot spendable until the repair job's
- * next tick has granted the new one, so there is no gap with no minutes at
+ * next tick has granted the new one, so there is no gap with no tokens at
  * the turn of the month (I3); the old lot is spent first (it expires first).
  */
 export function recurringRunAt(grant: RecurringGrantDocument, now: Date, graceMs = 0): RecurringRun {
@@ -58,18 +85,17 @@ export function recurringRunAt(grant: RecurringGrantDocument, now: Date, graceMs
   };
 }
 
-/** Grant this month's lot of a recurring grant. Returns the new lot's id. */
+/** Grant this month's lot of a recurring grant (repaying debt first). Returns the new lot's id. */
 export function applyRecurringRun(draft: AccountDraft, grant: RecurringGrantDocument, run: RecurringRun): ObjectId {
   const lotId = new ObjectId();
   const source = { kind: 'recurring' as const, ref: grant._id.toHexString() };
+  const context = { source, actorId: grant.actorId, auditId: grant.auditId, reason: grant.reason };
   draft.addLot({
-    _id: lotId, accountId: draft.accountId, minutesGranted: grant.minutes, minutesRemaining: grant.minutes,
+    _id: lotId, accountId: draft.accountId, tokensGranted: grant.tokens, tokensRemaining: grant.tokens,
     source, expiresAt: run.expiresAt, createdAt: draft.now,
   });
-  draft.addEntry({
-    type: 'grant', bucket: 'credit', minutes: grant.minutes, lotId, idempotencyKey: run.idempotencyKey, source,
-    actorId: grant.actorId, auditId: grant.auditId, reason: grant.reason,
-  });
+  draft.addEntry({ type: 'grant', bucket: 'credit', tokens: grant.tokens, lotId, idempotencyKey: run.idempotencyKey, ...context });
+  repayDebt(draft, run.idempotencyKey, context);
   return lotId;
 }
 
@@ -77,8 +103,8 @@ export type StaleHoldAction = 'settle' | 'release' | 'keep';
 
 /**
  * What to do with a hold older than the max age, given the run it paid for:
- * completed by this run → settle (the user got the video; the completion
- * relay was lost); failed / missing / unstamped (no row carries its run id) /
+ * completed by this run → settle on the run's cost (the user got the video;
+ * the run-cost callback was lost); failed / missing / unstamped (no row carries its run id) /
  * stalled (pending or processing with no write for the max age — B13's
  * queue-TTL stuck row) → release; still moving → keep. A row that says
  * `completed` but was last written before the hold was taken is an older

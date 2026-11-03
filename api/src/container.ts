@@ -30,7 +30,6 @@ import { OgImageService } from './services/og-image.service.js';
 import { QueuePublisher, type ChannelSupplier } from './services/queue-publisher.service.js';
 import { IdempotencyService } from './services/idempotency.service.js';
 import { DispatchGuardService, noOpDispatchGuard, type IDispatchGuard } from './services/dispatch-guard.service.js';
-import { ChatFairUseService, noOpChatFairUse, type IChatFairUse } from './services/chat-fair-use.service.js';
 import { UserDeletionService } from './services/user-deletion.service.js';
 import { VideoCascadeService } from './services/video-cascade.service.js';
 import { AuditService } from './services/audit.service.js';
@@ -75,7 +74,6 @@ export interface Container {
   idempotencyService: IdempotencyService;
   dispatchGuardService: IDispatchGuard;
   submitBurstLimiter: ISubmitBurstLimiter;
-  chatFairUse: IChatFairUse;
   userDeletionService: UserDeletionService;
   videoCascadeService: VideoCascadeService;
   auditService: AuditService;
@@ -155,13 +153,9 @@ export function createContainer(
   );
   const folderService = new FolderService(folderRepository, logger);
   const billingService = new BillingService(billingRepository, userRepository, logger);
-  // Chat fair use reads the account plan only; same fail-open stance as the burst limiter.
-  const chatFairUse: IChatFairUse = options.redisClient
-    ? new ChatFairUseService(options.redisClient, billingService, config.CHAT_FREE_MESSAGES_PER_DAY, logger)
-    : noOpChatFairUse;
   const llmUsageRepository = new LlmUsageRepository(db);
   const billingGate = new BillingGate(billingService, summarizerClient);
-  // The minutes ledger is the only gate (P3.2): no per-user dollar cap anywhere.
+  // The token ledger is the only gate (P3.2): no per-user dollar cap anywhere.
   const billingEnforcement = new LedgerEnforcement({
     billing: billingService, gate: billingGate, llmUsage: llmUsageRepository, dispatchStamps: videoRepository, logger,
   });
@@ -234,7 +228,6 @@ export function createContainer(
     idempotencyService,
     dispatchGuardService,
     submitBurstLimiter,
-    chatFairUse,
     userDeletionService,
     videoCascadeService,
     auditService,

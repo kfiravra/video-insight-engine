@@ -1,12 +1,40 @@
 import { describe, it, expect } from 'vitest';
 import { ObjectId } from 'mongodb';
+import { SIGNUP_GRANT_TOKENS } from '@vie/types';
 import { AccountDraft } from '../account-draft.js';
-import { applyLotExpiry, lotExpiryKey, recurringRunAt, staleHoldAction } from '../maintenance-ops.js';
+import {
+  applyLotExpiry,
+  applyRecurringRun,
+  applySignupGrant,
+  lotExpiryKey,
+  recurringRunAt,
+  signupGrantKey,
+  staleHoldAction,
+} from '../maintenance-ops.js';
 import { HOUR_MS, makeAccountDoc, makeLotDoc } from './billing-fixtures.js';
 import type { RecurringGrantDocument } from '../../../repositories/billing.repository.js';
 
 const NOW = new Date('2026-11-01T12:00:00Z');
 const MAX_AGE = 3 * HOUR_MS;
+
+function grant(createdAt: string, tokens = 10_000): RecurringGrantDocument {
+  return {
+    _id: new ObjectId(), accountId: new ObjectId(), tokens, every: 'month', active: true,
+    nextRunAt: new Date(createdAt), lastRunAt: null, actorId: 'a', auditId: new ObjectId(), reason: 'demo',
+    createdAt: new Date(createdAt), updatedAt: new Date(createdAt), deletedAt: null,
+  };
+}
+
+/** An empty account that owes `debt` tokens. */
+function owing(debt: number) {
+  return makeAccountDoc({
+    buckets: {
+      plan: { cycleStart: null, cycleEnd: null, tokensGranted: 0, tokensUsed: 0 },
+      credit: { tokensAvailable: 0 },
+      debt: { tokens: debt },
+    },
+  });
+}
 
 describe('staleHoldAction', () => {
   const run = (status: 'pending' | 'processing' | 'completed' | 'failed', ageMs = 0) => ({
@@ -28,12 +56,6 @@ describe('staleHoldAction', () => {
 });
 
 describe('recurringRunAt', () => {
-  const grant = (createdAt: string): RecurringGrantDocument => ({
-    _id: new ObjectId(), accountId: new ObjectId(), minutes: 300, every: 'month', active: true,
-    nextRunAt: new Date(createdAt), lastRunAt: null, actorId: 'a', auditId: new ObjectId(), reason: 'demo',
-    createdAt: new Date(createdAt), updatedAt: new Date(createdAt), deletedAt: null,
-  });
-
   it('should grant the first lot at creation, expiring one month later', () => {
     const run = recurringRunAt(grant('2026-01-31T00:00:00Z'), new Date('2026-01-31T00:00:00Z'));
 
@@ -53,24 +75,80 @@ describe('recurringRunAt', () => {
   });
 
   it('should skip idle months: one lot for the month containing now', () => {
-    const run = recurringRunAt(grant('2026-01-15T00:00:00Z'), new Date('2026-06-20T00:00:00Z'));
+    const g = grant('2026-01-15T00:00:00Z');
+    const run = recurringRunAt(g, new Date('2026-06-20T00:00:00Z'));
 
     expect([run.runAt.toISOString(), run.expiresAt.toISOString()]).toEqual(['2026-06-15T00:00:00.000Z', '2026-07-15T00:00:00.000Z']);
+    expect(run.idempotencyKey).toBe(`recurring:${g._id.toHexString()}:2026-06-15T00:00:00.000Z`);
+  });
+});
+
+describe('applyRecurringRun', () => {
+  it('should grant the month\'s lot in tokens and repay debt from it first', () => {
+    const account = owing(400);
+    const g = grant('2026-11-01T12:00:00Z');
+    const run = recurringRunAt(g, NOW);
+    const draft = new AccountDraft(account, [], NOW);
+
+    const lotId = applyRecurringRun(draft, g, run);
+
+    expect(draft.newLots).toEqual([expect.objectContaining({ _id: lotId, tokensGranted: 10_000, tokensRemaining: 9_600, expiresAt: run.expiresAt })]);
+    expect(draft.entries.map((e) => [e.type, e.bucket, e.tokens, e.idempotencyKey])).toEqual([
+      ['grant', 'credit', 10_000, run.idempotencyKey],
+      ['repay', 'credit', -400, `repay:${run.idempotencyKey}:lot:${lotId.toHexString()}`],
+      ['repay', 'debt', 400, `repay:${run.idempotencyKey}`],
+    ]);
+    expect([draft.account.buckets.debt.tokens, draft.account.buckets.credit.tokensAvailable]).toEqual([0, 9_600]);
+  });
+});
+
+describe('applySignupGrant', () => {
+  it('should write one never-expiring lot of SIGNUP_GRANT_TOKENS keyed by the owner and stamp the account', () => {
+    const account = makeAccountDoc();
+    const draft = new AccountDraft(account, [], NOW);
+
+    const lotId = applySignupGrant(draft);
+
+    expect(SIGNUP_GRANT_TOKENS).toBe(1000);
+    expect(draft.newLots).toEqual([expect.objectContaining({
+      _id: lotId, tokensGranted: 1000, tokensRemaining: 1000, expiresAt: null, source: { kind: 'system', ref: 'signup' },
+    })]);
+    expect(draft.entries).toEqual([expect.objectContaining({
+      type: 'grant', bucket: 'credit', unit: 'tokens', tokens: 1000, lotId,
+      idempotencyKey: signupGrantKey(account.ownerId), source: { kind: 'system', ref: 'signup' },
+    })]);
+    expect(signupGrantKey(account.ownerId)).toBe(`grant:signup:${account.ownerId.toHexString()}`);
+    expect([draft.account.signupGrantAt, draft.account.buckets.credit.tokensAvailable]).toEqual([NOW, 1000]);
+  });
+
+  it('should repay debt first on an account that owes (a migrated one)', () => {
+    const draft = new AccountDraft(owing(250), [], NOW);
+
+    applySignupGrant(draft);
+
+    expect(draft.account.buckets.debt.tokens).toBe(0);
+    expect(draft.newLots[0].tokensRemaining).toBe(750);
   });
 });
 
 describe('applyLotExpiry', () => {
   it('should expire only open lots past their expiry, and none already expired', () => {
-    const account = makeAccountDoc({ buckets: { free: { recentFreeVideoAt: [] }, plan: { cycleStart: null, cycleEnd: null, minutesGranted: 0, minutesUsed: 0 }, credit: { minutesAvailable: 90 } } });
-    const due = makeLotDoc(account._id, { minutesRemaining: 40, expiresAt: new Date(NOW.getTime() - 1) });
-    const done = makeLotDoc(account._id, { minutesRemaining: 20, expiresAt: new Date(NOW.getTime() - 1) });
-    const live = makeLotDoc(account._id, { minutesRemaining: 30, expiresAt: new Date(NOW.getTime() + HOUR_MS) });
+    const account = makeAccountDoc({
+      buckets: {
+        plan: { cycleStart: null, cycleEnd: null, tokensGranted: 0, tokensUsed: 0 },
+        credit: { tokensAvailable: 900 },
+        debt: { tokens: 0 },
+      },
+    });
+    const due = makeLotDoc(account._id, { tokensRemaining: 400, expiresAt: new Date(NOW.getTime() - 1) });
+    const done = makeLotDoc(account._id, { tokensRemaining: 200, expiresAt: new Date(NOW.getTime() - 1) });
+    const live = makeLotDoc(account._id, { tokensRemaining: 300, expiresAt: new Date(NOW.getTime() + HOUR_MS) });
     const draft = new AccountDraft(account, [due, done, live], NOW);
 
     const expired = applyLotExpiry(draft, new Set([lotExpiryKey(done._id)]));
 
-    expect(expired).toBe(40);
-    expect(draft.entries.map((e) => [e.type, e.minutes, e.idempotencyKey])).toEqual([['expire', -40, lotExpiryKey(due._id)]]);
-    expect(draft.account.buckets.credit.minutesAvailable).toBe(50);
+    expect(expired).toBe(400);
+    expect(draft.entries.map((e) => [e.type, e.tokens, e.idempotencyKey])).toEqual([['expire', -400, lotExpiryKey(due._id)]]);
+    expect(draft.account.buckets.credit.tokensAvailable).toBe(500);
   });
 });
