@@ -11,7 +11,8 @@ from llm_common.observability.ids import resolve_user_id, trace_id_for_run
 
 # One pinned vector: the api computes the same id in TypeScript (P0b).
 RUN_ID = "6f1c2d3e-4a5b-4c6d-8e7f-001122334455"
-RUN_TRACE_ID = hashlib.sha256(RUN_ID.encode()).hexdigest()[:32]
+# The api pins the same literal (api/src/utils/trace-id.test.ts).
+RUN_TRACE_ID = "9374a382c89f81a18612f80075e88270"
 
 
 def test_trace_id_for_run_should_be_the_truncated_sha256_when_given_a_run_id():

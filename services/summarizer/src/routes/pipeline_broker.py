@@ -24,6 +24,7 @@ from src.config import settings
 from src.models.schemas import ErrorCode
 from src.repositories.mongodb_repository import MongoDBVideoRepository
 from src.routes.pipeline_runner import stream_summarization
+from src.services.pipeline.run_registry import RunDispatch
 from src.services.cache.pipeline_event_stream import pipeline_event_stream
 from src.services.llm import LLMService
 from src.services.pipeline.pipeline_helpers import sse_event
@@ -82,6 +83,7 @@ async def produce_to_broker(
     owner: str,
     force_refresh: bool = False,
     run_path: str = "sse",
+    dispatch: RunDispatch | None = None,
 ) -> None:
     """Run the pipeline and republish each SSE chunk through the broker.
 
@@ -95,7 +97,8 @@ async def produce_to_broker(
     fast path — the whole point of a version bump is a fresh pipeline run, and
     the Redis cache is keyed by youtubeId, not version, so without this the
     new run is instantly re-fed the stale payload. ``run_path`` (``worker`` or
-    ``sse``) tags the run's trace with the path that started it.
+    ``sse``) tags the run's trace with the path that started it; ``dispatch``
+    carries the queue message's run id (P0b).
 
     ``stream_summarization`` already catches every pipeline-level error and
     yields a structured error event, so the only exception classes that
@@ -127,6 +130,7 @@ async def produce_to_broker(
             llm_service,
             force_refresh=force_refresh,
             run_path=run_path,
+            dispatch=dispatch,
         ):
             try:
                 await pipeline_event_stream.publish(video_summary_id, chunk)

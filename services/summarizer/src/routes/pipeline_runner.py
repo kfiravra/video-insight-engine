@@ -36,10 +36,18 @@ from src.routes.pipeline_orchestration import run_pipeline_phases
 from src.services.cache.response_cache import response_cache
 from src.services.llm import LLMService
 from src.services.media.hires_prefetch import LocalHiresSource, LocalLowresSource
+from src.services.pipeline.run_registry import (
+    RunDispatch,
+    RunIdentity,
+    resolve_run,
+    run_entry,
+    run_tags,
+)
 from src.services.observability import run_trace
 from src.services.override_state import clear_override
 from src.services.pipeline.context import PipelineContext
 from src.services.pipeline.pipeline_helpers import PipelineTimer, sse_event
+from src.services.run_context import bind_run_id
 from src.services.status_callback import send_video_status
 
 logger = logging.getLogger(__name__)
@@ -116,22 +124,31 @@ def _run_trace_args(
     user_id: str | None,
     request_id: str | None,
     run_path: str,
+    run: RunIdentity,
+    bypass: bool,
 ) -> dict[str, Any]:
-    """The Langfuse trace of one run: name, session, tags and metadata.
+    """The Langfuse trace of one attempt: id, name, session, tags and metadata (D4).
 
-    One session per video row (``pipeline-<videoSummaryId>``) groups its runs
-    (first run, bypass, regenerate, retries). ``requestId`` is only added when
-    present, so ``null`` never pollutes dashboards; the user id goes through
-    the ``LANGFUSE_USER_ID_MODE`` policy and is never copied into metadata.
+    The trace id is seeded from the run id (``trace_id_for_run``), so vie-api and
+    the admin can link to it without asking Langfuse. One session per video row
+    (``pipeline-<videoSummaryId>``) groups its attempts (first run, bypass,
+    regenerate, retries). ``requestId`` is only added when present, so ``null``
+    never pollutes dashboards; the user id goes through the
+    ``LANGFUSE_USER_ID_MODE`` policy and is never copied into metadata.
     """
+    pipeline_version = settings.PIPELINE_VERSION
     tags = [
         f"youtubeId:{youtube_id}",
         f"videoSummaryId:{video_summary_id}",
         f"path:{run_path}",
+        *run_tags(run, pipeline_version=pipeline_version, bypass=bypass),
     ]
     metadata: dict[str, Any] = {
         "youtubeId": youtube_id,
         "videoSummaryId": video_summary_id,
+        "runId": run.run_id,
+        "attempt": run.attempt,
+        "pipelineVersion": pipeline_version,
         "language": entry.get("language"),
         "path": run_path,
     }
@@ -145,13 +162,39 @@ def _run_trace_args(
     if entry.get("coldMedia"):
         metadata["coldMedia"] = True
     return {
-        "name": f"pipeline:{video_summary_id}",
+        "trace_id": run.trace_id,
+        "name": f"pipeline:{youtube_id}",
         "session_id": f"pipeline-{video_summary_id}",
         "user_id": user_id,
         "tags": tags,
         "metadata": metadata,
-        "input": {"youtubeId": youtube_id, "videoSummaryId": video_summary_id},
+        "input": {"youtubeId": youtube_id, "videoSummaryId": video_summary_id, "runId": run.run_id},
     }
+
+
+async def _register_run(
+    repository: MongoDBVideoRepository,
+    video_summary_id: str,
+    run: RunIdentity,
+    *,
+    request_id: str | None,
+    run_path: str,
+    bypass: bool,
+) -> None:
+    """Mark the attempt's ``runs[]`` entry running (P-2). Best-effort: never aborts a run."""
+    doc = run_entry(
+        run,
+        request_id=request_id,
+        path=run_path,
+        bypass=bypass,
+        pipeline_version=settings.PIPELINE_VERSION,
+    )
+    try:
+        await asyncio.to_thread(
+            repository.start_run, video_summary_id, doc, take_over=run.dispatched_entry
+        )
+    except Exception as exc:  # noqa: BLE001 — observability bookkeeping only
+        logger.warning("[pipeline] run registration failed for %s: %s", video_summary_id, exc)
 
 
 def _resolve_run_attribution(
@@ -192,6 +235,7 @@ async def stream_summarization(
     llm_service: LLMService,
     force_refresh: bool = False,
     run_path: str = "sse",
+    dispatch: RunDispatch | None = None,
 ) -> AsyncGenerator[str, None]:
     """One pipeline run: metadata -> text branch (transcript -> tier probe -> plan ∥
     memory) ∥ frames [∥ field groups] -> extraction -> quiz ∥ synthesis -> assembly ->
@@ -210,9 +254,13 @@ async def stream_summarization(
 
     ``run_path`` names the entry path on the trace: ``worker`` (queue),
     ``sse`` (the stream's own producer) or ``dev`` (dev-tools override).
+    ``dispatch`` is what the queue message says about the attempt (its run id);
+    the SSE and dev paths read the row's ``currentRunId`` (``resolve_run``).
     """
     timer = PipelineTimer()
     force_refresh = force_refresh or bool(entry.get("forceRefresh"))
+    # A context reused across runs must never report the previous run's id.
+    bind_run_id(None)
 
     try:
         youtube_id = entry.get("youtubeId") or entry.get("youtube_id")
@@ -239,6 +287,12 @@ async def stream_summarization(
         if request_id:
             llm_request_id_var.set(request_id)
 
+        # The attempt's run id, before the cache check: a cache hit's status
+        # callback closes the api's entry too (as cache_hit). Registered below,
+        # only when the pipeline runs.
+        run = resolve_run(entry, dispatch)
+        bind_run_id(run.run_id)
+
         # Redis fast path (same YouTube video = instant serve). It runs BEFORE
         # the trace opens: a cache hit is no pipeline run and opens no trace.
         if settings.REDIS_ENABLED and not force_refresh:
@@ -256,6 +310,14 @@ async def stream_summarization(
 
         eval_run = bool(entry.get("evalRun"))
         cold_media = bool(entry.get("coldMedia"))
+        await _register_run(
+            repository,
+            video_summary_id,
+            run,
+            request_id=request_id,
+            run_path=run_path,
+            bypass=force_refresh,
+        )
         trace_args = _run_trace_args(
             entry,
             youtube_id=youtube_id,
@@ -263,6 +325,8 @@ async def stream_summarization(
             user_id=user_id,
             request_id=request_id,
             run_path=run_path,
+            run=run,
+            bypass=force_refresh,
         )
         async with run_trace(**trace_args):
             await asyncio.to_thread(

@@ -354,13 +354,13 @@ A video one extraction batch can't cover (over `MAX_MINUTES_PER_BATCH`, 40 min, 
 
 ## Observability Layer
 
-Every pipeline run is wrapped in a [Langfuse](https://langfuse.com) trace named `pipeline:{videoSummaryId}` so each LLM call surfaces as a generation span with input/output/cost/latency. The layer is **optional**: every helper no-ops when `LANGFUSE_PUBLIC_KEY`/`SECRET_KEY` are unset.
+Every pipeline run is wrapped in a [Langfuse](https://langfuse.com) trace named `pipeline:{youtubeId}` (one per attempt; its id is seeded from the attempt's `runId`) so each LLM call surfaces as a generation span with input/output/cost/latency. The layer is **optional**: every helper no-ops when `LANGFUSE_PUBLIC_KEY`/`SECRET_KEY` are unset.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  Pipeline run                                                    │
 │  ┌──────────────────────────────────────────────────────────┐   │
-│  │ Langfuse trace (pipeline:{videoSummaryId})              │   │
+│  │ Langfuse trace (pipeline:{youtubeId}, id from runId)    │   │
 │  │   ├── generation: description_analysis, tier_probe       │   │
 │  │   ├── generation: plan ∥ memory                          │   │
 │  │   ├── generation: frame_vision (× batches)               │   │

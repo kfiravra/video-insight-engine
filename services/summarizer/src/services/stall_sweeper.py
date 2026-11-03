@@ -137,7 +137,9 @@ class StallSweeper:
             int(stalled_for.total_seconds() // 60),
         )
         # Best-effort side channels: the row flip above is the source of truth.
-        await self._notify_status(video_summary_id, None, "failed", error=message)
+        await self._notify_status(
+            video_summary_id, None, "failed", error=message, run_id=row.get("currentRunId")
+        )
         alert = build_stall_alert(row, stalled_for, now)
         try:
             # insert_one mutates its argument (adds ``_id``); keep the webhook body clean.
