@@ -117,19 +117,24 @@ export function VideoPlayerProvider({ children }: { children: ReactNode }) {
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [isPlayerOpen, pauseAndClose]);
 
-  const openPlayer = useCallback(() => {
+  // Opening starts playback: the player mounts collapsed with the hero and
+  // closing pauses it, so a bare "show" would reveal a paused frame — the
+  // Watch control is a play button, not a curtain. Before the player is
+  // ready the call is a no-op and the user presses play in the frame.
+  const openAndPlay = useCallback(() => {
     setHasEngaged(true);
     setIsPlayerOpen(true);
+    playerRef.current?.playVideo();
   }, []);
+  const openPlayer = openAndPlay;
   const closePlayer = pauseAndClose;
   const togglePlayer = useCallback(() => {
     if (isPlayerOpenRef.current) {
       pauseAndClose();
       return;
     }
-    setHasEngaged(true);
-    setIsPlayerOpen(true);
-  }, [pauseAndClose]);
+    openAndPlay();
+  }, [pauseAndClose, openAndPlay]);
 
   const registerPlayerAnchor = useCallback((el: HTMLElement | null) => {
     anchorRef.current = el;

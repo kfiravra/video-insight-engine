@@ -463,15 +463,35 @@ describe('MomentTrack', () => {
       expect(document.querySelectorAll('[data-slot="moment-media"]')).toHaveLength(1);
     });
 
-    it('opens the frame preview after a hover delay and fills its 16:9 frame edge to edge', () => {
+    it('grows the frame preview only on click, and shrinks it on the next click', () => {
+      const withFrame: MomentItem[] = [
+        { time: '1:00', seconds: 60, label: 'Framed', thumbnailUrl: 'https://example.com/f.jpg' },
+      ];
+      renderTimeline(<MomentTrack items={withFrame} currentTime={60} />);
+      const media = document.querySelector('[data-slot="moment-media"]') as HTMLElement;
+      // At rest: base width, no hover / scroll / playback-driven grow classes.
+      expect(media.className).not.toContain('w-full');
+      expect(media.className).not.toMatch(/group-hover|group-data-\[focus|group-focus-within/);
+      expect(media.dataset.expanded).toBeUndefined();
+
+      const toggle = screen.getByTestId('timeline-toggle-0');
+      expect(toggle).toHaveAttribute('aria-expanded', 'false');
+      fireEvent.click(toggle);
+      expect(media.className).toContain('w-full');
+      expect(media.dataset.expanded).toBe('true');
+      expect(toggle).toHaveAttribute('aria-expanded', 'true');
+
+      fireEvent.click(toggle);
+      expect(media.className).not.toContain('w-full');
+      expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    });
+
+    it('fills the fixed 16:9 frame edge to edge', () => {
       const withFrame: MomentItem[] = [
         { time: '1:00', seconds: 60, label: 'Framed', thumbnailUrl: 'https://example.com/f.jpg' },
       ];
       renderTimeline(<MomentTrack items={withFrame} />);
       const media = document.querySelector('[data-slot="moment-media"]') as HTMLElement;
-      // Hover grow waits ~300 ms; the delay class is hover-scoped so hover-out shrinks at once.
-      expect(media.className).toContain('group-hover/row:delay-300');
-      expect(media.className).toContain('group-hover/row:w-full');
       const img = media.querySelector('img') as HTMLImageElement;
       expect(img.className).toContain('object-cover');
       expect(img.className).toContain('absolute');
@@ -490,11 +510,6 @@ describe('MomentTrack', () => {
       // Global test setup defaults prefers-reduced-motion to true.
       renderTimeline(<MomentTrack items={onlyMoments} currentTime={0} />);
       expect(document.querySelectorAll('.animate-pulse-once').length).toBe(0);
-    });
-
-    it('never marks a row focused under the default (inert) IntersectionObserver', () => {
-      renderTimeline(<MomentTrack items={mixedItems} />);
-      expect(document.querySelector('[data-focus]')).toBeNull();
     });
   });
 });

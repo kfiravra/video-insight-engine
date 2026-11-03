@@ -1,4 +1,4 @@
-import { memo, useCallback } from 'react';
+import { memo, useState } from 'react';
 import { Check, Clock, Maximize2, Play, Share2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -28,24 +28,20 @@ interface MomentTimelineRowProps {
   /** Open this moment's image full-size (lightbox). */
   onExpand?: (originalIndex: number) => void;
   onShare: (item: MomentItem, index: number) => void;
-  /** Focus-band registrar — rows re-register on filter changes because the
-   *  key (originalIndex) is stable across filters. */
-  setFocusRef?: (index: number, el: HTMLElement | null) => void;
 }
 
 /**
  * One timeline row: spine marker + card with the moment text LEADING and the
  * media column TRAILING (end side). The media column exists only when the
  * moment has a frame — a frameless row is text alone, no empty plate. The
- * frame sits at a 10rem base width and grows to full width when the row
- * enters the scroll focus band (`li[data-focus="true"]`), is hovered (after a
- * short delay, so a pointer passing over the list does not open previews) or
- * focused, or is the playback-active row — grown media wraps to its own line
- * beneath the text, so the row top never moves. The image always fills its
- * fixed 16:9 frame (object-fit cover). Clicking the image shows it full-size
- * (lightbox); seeking is only via the timestamp chip and the explicit
- * Jump/Play action. LLM frame metadata (caption/OCR/scene type) never
- * renders — internal signal only.
+ * frame sits at a 10rem base width and grows to full width only when the
+ * user clicks it (click again to shrink) — never on hover, scroll position or
+ * playback, so nothing pops open while reading. Grown media wraps to its own
+ * line beneath the text, so the row top never moves. The image always fills
+ * its fixed 16:9 frame (object-fit cover). The corner button shows it
+ * full-size (lightbox); seeking is only via the timestamp chip and the
+ * explicit Jump/Play action. LLM frame metadata (caption/OCR/scene type)
+ * never renders — internal signal only.
  */
 export const MomentTimelineRow = memo(function MomentTimelineRow({
   item,
@@ -60,14 +56,9 @@ export const MomentTimelineRow = memo(function MomentTimelineRow({
   onSeek,
   onExpand,
   onShare,
-  setFocusRef,
 }: MomentTimelineRowProps) {
-  // Stable callback ref — a fresh inline arrow would make React re-invoke the
-  // ref (null → el) on every row re-render, churning the focus-band observer.
-  const registerFocusRef = useCallback(
-    (el: HTMLElement | null): void => setFocusRef?.(originalIndex, el),
-    [setFocusRef, originalIndex],
-  );
+  // Frame preview size — the user's choice alone, per row.
+  const [expanded, setExpanded] = useState(false);
 
   const t = useLabels();
   const clip = isClip(item);
@@ -104,11 +95,10 @@ export const MomentTimelineRow = memo(function MomentTimelineRow({
 
   return (
     <li
-      ref={registerFocusRef}
       data-kind={clip ? 'clip' : 'moment'}
       data-active={isActive ? 'true' : undefined}
       // contain-intrinsic-size gives skipped off-screen rows a height estimate
-      // so the scrollbar doesn't jump as rows materialize under the focus band.
+      // so the scrollbar doesn't jump as rows materialize while scrolling.
       className="group/row relative [contain:layout_paint_style] [content-visibility:auto] [contain-intrinsic-size:auto_180px]"
     >
       <FadeIn index={index}>
@@ -202,10 +192,10 @@ export const MomentTimelineRow = memo(function MomentTimelineRow({
               </div>
 
               {/* Text leads, media trails (end side). The media column exists
-                  only for framed moments, at 10rem base width; the focus band,
-                  hover (after ~300 ms), focus-within, or playback-active state
-                  grow it to full width — the grown figure wraps onto its own
-                  line BELOW the text, so the row top stays put. */}
+                  only for framed moments, at 10rem base width; a click on the
+                  frame grows it to full width (and back) — the grown figure
+                  wraps onto its own line BELOW the text, so the row top stays
+                  put. */}
               <div className="flex flex-wrap items-start gap-3">
                 <div className="flex-1 basis-56 min-w-0 space-y-1.5">
                   {/* No clamp: in this view the label IS the substance for
@@ -241,13 +231,11 @@ export const MomentTimelineRow = memo(function MomentTimelineRow({
                 {item.thumbnailUrl && (
                   <figure
                     data-slot="moment-media"
+                    data-expanded={expanded ? 'true' : undefined}
                     className={cn(
-                      'w-40 md:w-48 shrink-0',
-                      'transition-[width] duration-[420ms] ease-[var(--ease-out-quint)] motion-reduce:transition-none',
-                      // The delay applies only while hovered: hover-in waits, hover-out shrinks at once.
-                      'group-hover/row:delay-300',
-                      'group-data-[focus=true]/row:w-full group-hover/row:w-full group-focus-within/row:w-full',
-                      isActive && 'w-full',
+                      'shrink-0 transition-[width] duration-[420ms] ease-[var(--ease-out-quint)] motion-reduce:transition-none',
+                      // Exclusive widths: a responsive `md:w-48` would outrank a bare `w-full`.
+                      expanded ? 'w-full' : 'w-40 md:w-48',
                     )}
                   >
                     <EvidenceImage
@@ -257,17 +245,27 @@ export const MomentTimelineRow = memo(function MomentTimelineRow({
                       // Pinned to the 16:9 box so any thumbnail ratio fills it edge to edge.
                       imgClassName="absolute inset-0"
                     >
+                      {/* The whole frame toggles its size; the corner button opens the lightbox. */}
+                      <button
+                        type="button"
+                        onClick={() => setExpanded((v) => !v)}
+                        aria-expanded={expanded}
+                        aria-label={`${expanded ? 'Shrink' : 'Enlarge'} frame: ${label}`}
+                        data-testid={`timeline-toggle-${originalIndex}`}
+                        className={cn(
+                          'absolute inset-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--vie-accent)]/60',
+                          expanded ? 'cursor-zoom-out' : 'cursor-zoom-in',
+                        )}
+                      />
                       {onExpand && (
                         <button
                           type="button"
                           onClick={() => onExpand(originalIndex)}
                           aria-label={`View image: ${label}`}
                           data-testid={`timeline-expand-${originalIndex}`}
-                          className="group absolute inset-0 flex items-end justify-end p-1.5 cursor-zoom-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--vie-accent)]/60"
+                          className="absolute bottom-1.5 end-1.5 z-10 inline-flex items-center rounded-md bg-background/80 p-1 text-foreground/80 backdrop-blur transition-colors hover:bg-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--vie-accent)]/60"
                         >
-                          <span className="inline-flex items-center rounded-md bg-background/80 p-1 text-foreground/80 backdrop-blur transition-colors group-hover:bg-background">
-                            <Maximize2 className="h-3 w-3 shrink-0" aria-hidden="true" />
-                          </span>
+                          <Maximize2 className="h-3 w-3 shrink-0" aria-hidden="true" />
                         </button>
                       )}
                     </EvidenceImage>
