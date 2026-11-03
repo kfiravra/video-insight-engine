@@ -316,6 +316,9 @@ tokenizers==0.22.2
     # via
     #   litellm
     #   transformers
+# Regenerate with the header command PLUS `--extra-index-url https://download.pytorch.org/whl/cpu`
+# (uv leaves index URLs out of the header), or torch leaves the +cpu build and pulls CUDA;
+# then re-add this note.
 torch==2.12.1+cpu
     # via sentence-transformers
 tqdm==4.68.3

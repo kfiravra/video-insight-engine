@@ -4,7 +4,7 @@ For test suites only (the services' ``langfuse_capture`` fixtures).
 :func:`start_capture` initialises the shared client with an in-memory span
 exporter and a recording ``create_score``, so a test asserts on what Langfuse
 would ingest: observations with their model, usage, cost, metadata and parent
-span, and the scores sent. :func:`stop_capture` resets the client and the SDK.
+span, and the scores sent. :func:`stop_capture` shuts the SDK client down and resets it.
 """
 
 from __future__ import annotations
@@ -135,7 +135,8 @@ def start_capture() -> LangfuseCapture:
 
 
 def stop_capture() -> None:
-    from langfuse._client.resource_manager import LangfuseResourceManager
-
+    """Stop the SDK's export threads (public ``shutdown``) and reset the shared client."""
+    client = shared_client.get_client()
+    if client is not None:
+        client.shutdown()
     shared_client._reset_for_tests()
-    LangfuseResourceManager.reset()

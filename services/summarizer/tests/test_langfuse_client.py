@@ -27,14 +27,16 @@ from llm_common.observability.testing import LangfuseCapture
 # ─── init_langfuse ──────────────────────────────────────────────────────
 
 
-def test_init_returns_none_when_keys_missing(monkeypatch: pytest.MonkeyPatch):
+def test_init_should_return_none_when_keys_are_missing(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(settings, "LANGFUSE_PUBLIC_KEY", None)
     monkeypatch.setattr(settings, "LANGFUSE_SECRET_KEY", None)
     assert observability.init_langfuse() is None
     assert observability.is_enabled() is False
 
 
-def test_init_builds_the_client_from_summarizer_settings(monkeypatch: pytest.MonkeyPatch):
+def test_init_should_build_the_client_from_summarizer_settings_when_keys_are_set(
+    monkeypatch: pytest.MonkeyPatch,
+):
     sdk = MagicMock(name="Langfuse")
     monkeypatch.setattr(shared_client, "_load_sdk", lambda: (sdk, MagicMock()))
     monkeypatch.setattr(settings, "LANGFUSE_PUBLIC_KEY", "pk_test")
@@ -52,7 +54,7 @@ def test_init_builds_the_client_from_summarizer_settings(monkeypatch: pytest.Mon
 
 
 @pytest.mark.parametrize("name", observability.__all__)
-def test_package_re_exports_the_shared_helpers(name: str):
+def test_package_should_re_export_the_shared_helper_when_imported(name: str):
     if name == "init_langfuse":
         pytest.skip("bound to the summarizer's settings")
     assert getattr(observability, name) is getattr(shared, name)
@@ -61,7 +63,7 @@ def test_package_re_exports_the_shared_helpers(name: str):
 # ─── Trace attributes ───────────────────────────────────────────────────
 
 
-def test_run_trace_args_name_the_run_and_its_session():
+def test_run_trace_args_should_name_the_run_and_its_session_when_given_a_row():
     args = pipeline_runner._run_trace_args(
         {"language": "en", "userId": "u1"},
         youtube_id="yt1",
@@ -85,7 +87,7 @@ def test_run_trace_args_name_the_run_and_its_session():
     assert args["metadata"]["requestId"] == "req-1"
 
 
-def test_run_trace_args_leave_out_absent_request_and_flags():
+def test_run_trace_args_should_leave_out_request_and_flags_when_absent():
     args = pipeline_runner._run_trace_args(
         {}, youtube_id="yt1", video_summary_id="v", user_id=None, request_id=None, run_path="sse"
     )
@@ -123,7 +125,7 @@ async def _one_phase(*_args: object):
     yield "data: phases\n\n"
 
 
-async def test_a_run_opens_one_trace_in_the_rows_session(
+async def test_runner_should_open_one_trace_in_the_rows_session_when_the_pipeline_runs(
     monkeypatch: pytest.MonkeyPatch, langfuse_capture: LangfuseCapture
 ):
     monkeypatch.setattr(pipeline_runner.settings, "REDIS_ENABLED", False)
@@ -137,7 +139,7 @@ async def test_a_run_opens_one_trace_in_the_rows_session(
     assert "path:worker" in root.attributes["langfuse.trace.tags"]
 
 
-async def test_a_redis_cache_hit_opens_no_trace(
+async def test_runner_should_open_no_trace_when_redis_serves_the_video(
     monkeypatch: pytest.MonkeyPatch, langfuse_capture: LangfuseCapture
 ):
     monkeypatch.setattr(pipeline_runner.settings, "REDIS_ENABLED", True)
@@ -161,7 +163,7 @@ async def test_a_redis_cache_hit_opens_no_trace(
     complete.assert_awaited_once()
 
 
-async def test_a_failed_run_marks_its_trace_failed(
+async def test_runner_should_mark_the_trace_failed_when_the_run_fails(
     monkeypatch: pytest.MonkeyPatch, langfuse_capture: LangfuseCapture
 ):
     monkeypatch.setattr(pipeline_runner.settings, "REDIS_ENABLED", False)

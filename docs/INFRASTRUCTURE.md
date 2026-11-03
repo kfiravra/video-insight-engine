@@ -420,6 +420,7 @@ The per-stage defaults are the pipeline-1min 4.0d model A/B picks, rounds 1 + 2 
 | `LANGFUSE_BASE_URL` | `https://cloud.langfuse.com` | Langfuse host |
 | `LANGFUSE_FAITHFULNESS_SAMPLE_RATE` | `0.2` | Share of extracted items the faithfulness judge checks; `0` disables the judge |
 | `LANGFUSE_USER_ID_MODE` / `LANGFUSE_USER_ID_HASH_SALT` | `identity` / `hash`; blank salt | How user ids reach traces (`identity`, `hash` = salted SHA-256, `omit`) and the salt of the hash mode |
+| `LANGFUSE_TRACING_ENVIRONMENT` | dev only: `development` | Langfuse environment of the summarizer's and assistant's traces when `ENVIRONMENT` is blank (dev); prod's `ENVIRONMENT=production` sets it instead (read natively by SDK v4) |
 | `PROMPT_SOURCE` | `registry` | Where prompt templates load from: `registry` (the Langfuse `production` label wins over the local `.txt` whenever keys are set) or `disk` (always the local `.txt`, re-read on every call — dev-only, for prompt edits without re-registering or restarting; honoured only when `ENVIRONMENT` is `""`/`development`/`dev`/`test`/`local`, ignored otherwise; traces carry no `promptVersions`) |
 | `SENTRY_DSN` / `SENTRY_ENVIRONMENT` / `SENTRY_RELEASE` | empty (`SENTRY_ENVIRONMENT`: empty / `production`) | Optional Sentry error reporting (see [OBSERVABILITY.md](./OBSERVABILITY.md)) |
 | `SENTRY_TRACES_SAMPLE_RATE` | `0.1` | Share of transactions Sentry traces; `0` disables tracing (errors still report) |

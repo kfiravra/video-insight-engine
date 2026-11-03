@@ -67,7 +67,7 @@ LITELLM_CALLBACK_LISTS = (
 
 @pytest.fixture
 def langfuse_capture():
-    """The real Langfuse v4 SDK exporting to memory; see ``tests/langfuse_capture.py``."""
+    """The real Langfuse v4 SDK exporting to memory (``llm_common.observability.testing``)."""
     from llm_common.observability.testing import start_capture, stop_capture
 
     capture = start_capture()

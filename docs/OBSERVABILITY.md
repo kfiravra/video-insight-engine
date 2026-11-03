@@ -4,7 +4,7 @@ LLM observability is the project's debugging story for "this video came out wron
 
 Everything is **best-effort**: every Langfuse call is wrapped in try/except, all helpers no-op when keys are unset (the SDK is not even imported then), and the current span lives in a contextvar so concurrent pipeline runs don't contaminate each other's traces. A failed observability layer must not bring down the pipeline.
 
-The services use the Langfuse **Python SDK v4** (`langfuse>=4.7,<5`, OpenTelemetry underneath) through one shared client, `packages/llm-common/src/llm_common/observability/`; each service's `src/services/observability` re-exports it bound to its settings. `ENVIRONMENT` (lowercased) becomes the Langfuse environment, so `production` / `development` filter apart even inside one project.
+The services use the Langfuse **Python SDK v4** (`langfuse>=4.7,<5`, OpenTelemetry underneath) through one shared client, `packages/llm-common/src/llm_common/observability/`; each service's `src/services/observability` re-exports it bound to its settings. `ENVIRONMENT` (lowercased) becomes the Langfuse environment in prod (`production`); dev leaves `ENVIRONMENT` blank and compose sets `LANGFUSE_TRACING_ENVIRONMENT=development` instead, so the two filter apart even inside one project.
 
 ## Quick start
 
@@ -235,7 +235,7 @@ Committed metric baselines live in `dev/golden-dataset/baseline.json` — retrie
 - **User-id propagation**: by default the internal user id is forwarded on the trace (helpful for support debugging). Set `LANGFUSE_USER_ID_MODE=hash` to forward a deterministic 16-char SHA-256 derivative instead (combine with `LANGFUSE_USER_ID_HASH_SALT` so a leaked trace export isn't trivially correlatable), or `LANGFUSE_USER_ID_MODE=omit` to strip the id entirely.
 - **Payload size**: prompts/outputs are truncated at 50KB before upload (`truncate_payload`). The truncation marker is a fixed string — the original length is deliberately not encoded so a downstream viewer can't infer pre-redaction size from the trace.
 - **Free-tier ceiling**: 50K observations/month covers ~500 pipeline runs/month at current span density. If you exceed it, either drop to per-stage tracing (skip per-batch extraction spans) or upgrade to a paid tier.
-- **SDK absent**: `import langfuse` failures are tolerated — the layer silently no-ops. This keeps trimmed CI images functional without the heavy SDK.
+- **SDK absent**: `langfuse` is a hard dependency of llm-common, so every install has it; an `import langfuse` failure is still tolerated (the layer no-ops) and a process without keys never imports it.
 - **Async lifecycle**: the SDK exports on its own thread; `flush()` (end of every run) and `shutdown()` (process exit) run inside `asyncio.to_thread` to avoid blocking the event loop. Don't replace this with a direct sync call.
 - **Cache hits**: a Redis-served fast path opens no trace; the api's request logs and the admin count them.
 - **`mark_step` sub-steps** (`frames.scene_detect`, `frames.upload`, …) are recorded after the fact, so they live in `pipeline.timing` only; v4 cannot backdate a span.

@@ -47,6 +47,15 @@ def open_transcription_generation(*, provider: str, model: str) -> Any | None:
         return None
 
 
+def cancel_transcription_generation(handle: Any | None) -> None:
+    """End a transcription call's generation that was cancelled (e.g. the fetcher's timeout).
+
+    ``CancelledError`` is no ``Exception``, so the callers' failure path never sees
+    it; without this the open generation is never exported. Nothing is billed.
+    """
+    finish_generation(handle, level="WARNING", status_message="cancelled")
+
+
 def emit_transcription_usage(
     *,
     provider: str,

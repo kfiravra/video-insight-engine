@@ -217,7 +217,7 @@ class TestStreamWithMessagesObservability:
 class TestCompletionObservability:
     """The non-streamed paths record their generation the same way."""
 
-    async def test_complete_with_messages_records_usage_and_cost(
+    async def test_should_record_usage_and_cost_when_a_completion_succeeds(
         self, monkeypatch, langfuse_capture: LangfuseCapture
     ):
         async def _fake_acompletion(**_kwargs):
@@ -240,7 +240,7 @@ class TestCompletionObservability:
             {"total": 0.0021},
         )
 
-    async def test_complete_with_tools_records_the_tool_call_count(
+    async def test_should_record_the_tool_call_count_when_the_model_calls_tools(
         self, monkeypatch, langfuse_capture: LangfuseCapture
     ):
         call = SimpleNamespace(
@@ -263,7 +263,7 @@ class TestCompletionObservability:
         (gen,) = langfuse_capture.generations("library_agent")
         assert gen.metadata["toolCallCount"] == 1
 
-    async def test_failed_completion_ends_its_generation_as_error(
+    async def test_should_end_the_generation_as_error_when_the_completion_fails(
         self, monkeypatch, langfuse_capture: LangfuseCapture
     ):
         async def _fake_acompletion(**_kwargs):
@@ -282,7 +282,7 @@ class TestCompletionObservability:
         assert gen.level == "ERROR"
         assert gen.attr("status_message").startswith("RateLimitError: ")
 
-    async def test_records_nothing_outside_a_turn(self, monkeypatch, langfuse_capture):
+    async def test_should_record_nothing_when_outside_a_turn(self, monkeypatch, langfuse_capture):
         async def _fake_acompletion(**_kwargs):
             return _completion("answer")
 

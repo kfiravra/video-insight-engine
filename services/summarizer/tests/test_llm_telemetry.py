@@ -106,7 +106,7 @@ def test_preserves_extra_metadata_alongside_cache_fields():
     assert metadata["cacheReadTokens"] == 5000
 
 
-def test_finishes_the_generation_with_usage_and_cost():
+def test_should_finish_the_generation_with_usage_and_cost_when_the_call_succeeds():
     response = _build_response(prompt_tokens=2000, completion_tokens=300, cache_read=1500)
     handle = MagicMock(name="generation")
     with (
@@ -124,8 +124,9 @@ def test_finishes_the_generation_with_usage_and_cost():
         )
     assert mock_finish.call_args.args == (handle,)
     kwargs = mock_finish.call_args.kwargs
+    # LiteLLM's prompt_tokens include the cache reads: input is the uncached 500.
     assert kwargs["usage"] == {
-        "input": 2000,
+        "input": 500,
         "output": 300,
         "total": 2300,
         "cache_read_input_tokens": 1500,
@@ -134,7 +135,7 @@ def test_finishes_the_generation_with_usage_and_cost():
     assert kwargs["metadata"]["latencyMs"] == 10
 
 
-def test_skips_a_call_without_a_generation():
+def test_should_skip_the_record_when_the_call_has_no_generation():
     with patch("src.services.llm_telemetry.finish_generation") as mock_finish:
         llm_telemetry.record_generation(
             handle=None,
@@ -148,7 +149,7 @@ def test_skips_a_call_without_a_generation():
     mock_finish.assert_not_called()
 
 
-def test_marks_a_failed_call_as_error_and_a_cancelled_one_as_warning():
+def test_should_mark_error_or_warning_when_the_call_fails_or_is_cancelled():
     import asyncio
 
     with patch("src.services.llm_telemetry.finish_generation") as mock_finish:

@@ -6,11 +6,10 @@ with built-in fallbacks, retries, and streaming support.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import time
-from collections.abc import AsyncGenerator, Iterator
-from contextlib import aclosing, contextmanager
+from collections.abc import AsyncGenerator
+from contextlib import aclosing
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -26,7 +25,7 @@ from litellm.exceptions import (
 from src.config import settings
 from src.exceptions import LLMError
 from src.logging_config import get_logger
-from src.services.observability import error_status, finish_generation, generation, usage_details
+from src.services.llm_generation import CallGeneration, call_generation
 
 logger = get_logger(__name__)
 
@@ -43,49 +42,6 @@ class ToolCompletion:
 
     content: str | None = None
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
-
-
-class _CallGeneration:
-    """The Langfuse generation of one named LLM call, finished once with its outcome."""
-
-    def __init__(self, handle: Any | None) -> None:
-        self.handle = handle
-        self.done = False
-
-    def succeed(
-        self,
-        *,
-        content: str,
-        input_tokens: int,
-        output_tokens: int,
-        cost_usd: float,
-        latency_ms: int,
-        finish_reason: str | None,
-        extra_metadata: dict[str, Any] | None,
-    ) -> None:
-        self.done = True
-        finish_generation(
-            self.handle,
-            output=content,
-            usage=usage_details(input_tokens, output_tokens),
-            cost_usd=cost_usd,
-            metadata={
-                "finishReason": finish_reason,
-                "latencyMs": latency_ms,
-                **(extra_metadata or {}),
-            },
-        )
-
-    def fail(self, error: BaseException) -> None:
-        if self.done:
-            return
-        self.done = True
-        # A stream the client walked away from (generator closed, task
-        # cancelled) is a warning, not a provider failure.
-        if isinstance(error, (GeneratorExit, asyncio.CancelledError)):
-            finish_generation(self.handle, level="WARNING", status_message="client disconnected")
-        else:
-            finish_generation(self.handle, level="ERROR", status_message=error_status(error))
 
 
 class LLMProvider:
@@ -114,34 +70,6 @@ class LLMProvider:
     def _extract_provider(self, model: str) -> str:
         """Extract provider from model string."""
         return model.split("/")[0] if "/" in model else "unknown"
-
-    @contextmanager
-    def _call_generation(
-        self,
-        span_name: str | None,
-        messages: list[dict],
-        span_metadata: dict[str, Any] | None,
-    ) -> Iterator[_CallGeneration]:
-        """Open the call's generation before the request (only for a named span).
-
-        Its start/end are the call's. A raise (cancellation and a closed stream
-        included) ends it as failed; leaving the block without ``succeed`` ends it
-        without an outcome. Best-effort: observability never breaks the call.
-        """
-        handle = (
-            generation(span_name, model=self._model, input=messages, metadata=span_metadata)
-            if span_name
-            else None
-        )
-        call = _CallGeneration(handle)
-        try:
-            yield call
-        except BaseException as exc:
-            call.fail(exc)
-            raise
-        finally:
-            if not call.done:
-                finish_generation(handle)
 
     async def complete_with_messages(
         self,
@@ -177,7 +105,7 @@ class LLMProvider:
             kwargs["fallbacks"] = self._fallback_models
 
         try:
-            with self._call_generation(span_name, messages, span_metadata) as call:
+            with call_generation(self._model, span_name, messages, span_metadata) as call:
                 start_monotonic = time.monotonic()
                 # litellm types this as ModelResponse | CustomStreamWrapper; with
                 # stream unset it's always a ModelResponse — Any avoids the union.
@@ -261,7 +189,7 @@ class LLMProvider:
             kwargs["fallbacks"] = self._fallback_models
 
         try:
-            with self._call_generation(span_name, messages, span_metadata) as call:
+            with call_generation(self._model, span_name, messages, span_metadata) as call:
                 start_monotonic = time.monotonic()
                 # litellm types this as ModelResponse | CustomStreamWrapper; with
                 # stream unset it's always a ModelResponse — Any avoids the union.
@@ -349,7 +277,7 @@ class LLMProvider:
         if span_name:
             kwargs["stream_options"] = {"include_usage": True}
 
-        with self._call_generation(span_name, messages, span_metadata) as call:
+        with call_generation(self._model, span_name, messages, span_metadata) as call:
             # ``aclosing``: a client that stops reading closes the provider stream now.
             async with aclosing(
                 self._stream_tokens(kwargs, span_name, span_metadata, call)
@@ -362,7 +290,7 @@ class LLMProvider:
         kwargs: dict[str, Any],
         span_name: str | None,
         span_metadata: dict[str, Any] | None,
-        call: _CallGeneration,
+        call: CallGeneration,
     ) -> AsyncGenerator[str, None]:
         """The stream behind :meth:`stream_with_messages`; finishes ``call`` on the last chunk."""
         start_monotonic = time.monotonic()

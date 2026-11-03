@@ -361,12 +361,14 @@ def usage_details(
 ) -> dict[str, int]:
     """Token usage as Langfuse ``usage_details``: ``input``/``output``/``total`` plus cache keys.
 
-    ``input`` is the provider's prompt-token count as LiteLLM reports it; the cache
-    keys break it down and are left out at 0. ``total`` is set explicitly so
-    Langfuse does not add the cache keys to it a second time.
+    ``input_tokens`` is the whole prompt as LiteLLM reports it: its Anthropic
+    ``prompt_tokens`` already includes the cache reads and writes. Langfuse counts
+    each usage key as its own type, so ``input`` here is the uncached part and the
+    cache keys (left out at 0) carry the rest; ``total`` stays prompt + output.
     """
+    cached = max(int(cache_read_tokens), 0) + max(int(cache_creation_tokens), 0)
     usage = {
-        "input": int(input_tokens),
+        "input": max(int(input_tokens) - cached, 0),
         "output": int(output_tokens),
         "total": int(input_tokens) + int(output_tokens),
     }

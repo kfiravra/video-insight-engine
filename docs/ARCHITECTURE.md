@@ -377,7 +377,7 @@ Every pipeline run is wrapped in a [Langfuse](https://langfuse.com) trace named 
 - **Generation spans**: opened by `LLMProvider._ask` just before the request whenever a caller passes `span_name` (real start/end; a failed or cancelled attempt ends `ERROR`/`WARNING`), nested under the `phase:<name>` span of the step that ran it (`timed_step`). `call_llm_with_retry` threads its `stage_name` through automatically, so every stage gets per-attempt visibility for free.
 - **Prompts**: synced via `scripts/register_prompts.py`. Call sites can opt into registry-first loading with `load_prompt_with_fallback`.
 - **Faithfulness judge**: `services/pipeline/faithfulness.py` runs as a fire-and-forget task after extraction. Sampling rate is `LANGFUSE_FAITHFULNESS_SAMPLE_RATE` (default 0.2). After assembly two more background calls score the hero's takeaways and the quiz (`faithfulness_hero`, `faithfulness_quiz`; `faithfulness_hero_quiz.py`).
-- **Assistant**: separate trace per chat session (`chat:{videoId}`); tool calls attach as named spans.
+- **Assistant**: one trace per chat turn (`chat:{videoId}`, `chat:library` for library chat), grouped by the session `chat-<X-Session-Id>`; tool calls nest as `tool` observations.
 
 See [OBSERVABILITY.md](./OBSERVABILITY.md) for the full guide.
 

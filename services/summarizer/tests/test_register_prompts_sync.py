@@ -146,7 +146,7 @@ class TestMissingSdk:
 class TestClientConstructor:
     """SDK v4 takes ``base_url``; ``host`` is deprecated (P0.3b)."""
 
-    def test_should_build_the_v4_client_with_base_url(
+    def test_should_pass_base_url_when_building_the_v4_client(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
@@ -164,7 +164,7 @@ class TestClientConstructor:
             "base_url": "https://eu.example",
         }
 
-    def test_should_build_against_the_installed_v4_sdk(
+    def test_should_find_the_used_methods_when_the_v4_sdk_is_installed(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         import inspect

@@ -20,7 +20,6 @@ from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
-from langfuse._client.resource_manager import LangfuseResourceManager
 from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
@@ -48,8 +47,10 @@ def _settings(**overrides: Any) -> SimpleNamespace:
 def _reset_state():
     lc._reset_for_tests()
     yield
+    client = lc.get_client()
+    if client is not None and not isinstance(client, MagicMock):
+        client.shutdown()  # stop the SDK's export threads (public API only)
     lc._reset_for_tests()
-    LangfuseResourceManager.reset()
 
 
 @pytest.fixture
@@ -77,29 +78,29 @@ def _parent_id(span: ReadableSpan) -> int | None:
 # ─── Disabled ───────────────────────────────────────────────────────────
 
 
-def test_init_returns_none_without_keys():
+def test_init_should_return_none_when_keys_are_missing():
     settings = _settings(LANGFUSE_PUBLIC_KEY=None, LANGFUSE_SECRET_KEY=None)
     assert lc.init_langfuse(settings) is None
     assert lc.is_enabled() is False
 
 
-def test_init_returns_none_when_sdk_missing(monkeypatch):
+def test_init_should_return_none_when_the_sdk_is_missing(monkeypatch):
     monkeypatch.setattr(lc, "_load_sdk", lambda: None)
     assert lc.init_langfuse(_settings()) is None
 
 
-def test_init_swallows_sdk_constructor_errors(monkeypatch):
+def test_init_should_return_none_when_the_sdk_constructor_raises(monkeypatch):
     boom = MagicMock(side_effect=RuntimeError("bad config"))
     monkeypatch.setattr(lc, "_load_sdk", lambda: (boom, MagicMock()))
     assert lc.init_langfuse(_settings()) is None
 
 
-def test_init_is_idempotent(exporter):
+def test_init_should_return_the_same_client_when_called_twice(exporter):
     first = lc.get_client()
     assert lc.init_langfuse(_settings()) is first
 
 
-def test_init_passes_base_url_and_environment(monkeypatch):
+def test_init_should_pass_base_url_and_environment_when_settings_have_them(monkeypatch):
     sdk = MagicMock()
     monkeypatch.setattr(lc, "_load_sdk", lambda: (sdk, MagicMock()))
     lc.init_langfuse(_settings(LANGFUSE_BASE_URL="https://eu.example", ENVIRONMENT="Production"))
@@ -109,7 +110,7 @@ def test_init_passes_base_url_and_environment(monkeypatch):
     assert "host" not in kwargs
 
 
-def test_init_leaves_out_an_environment_langfuse_would_reject(monkeypatch):
+def test_init_should_leave_out_the_environment_when_it_is_blank(monkeypatch):
     sdk = MagicMock()
     monkeypatch.setattr(lc, "_load_sdk", lambda: (sdk, MagicMock()))
     lc.init_langfuse(_settings(ENVIRONMENT=""))
@@ -120,11 +121,11 @@ def test_init_leaves_out_an_environment_langfuse_would_reject(monkeypatch):
     ("raw", "expected"),
     [("Production", "production"), ("dev-2", "dev-2"), ("", None), ("langfuse-x", None)],
 )
-def test_langfuse_environment(raw, expected):
+def test_langfuse_environment_should_map_environment_names_when_valid(raw, expected):
     assert lc.langfuse_environment(raw) == expected
 
 
-def test_init_warns_when_hash_mode_has_no_salt(monkeypatch, caplog):
+def test_init_should_warn_when_hash_mode_has_no_salt(monkeypatch, caplog):
     monkeypatch.setattr(lc, "_load_sdk", lambda: (MagicMock(), MagicMock()))
     with caplog.at_level("WARNING"):
         lc.init_langfuse(_settings(LANGFUSE_USER_ID_MODE="hash"))
@@ -132,7 +133,7 @@ def test_init_warns_when_hash_mode_has_no_salt(monkeypatch, caplog):
 
 
 @pytest.mark.asyncio
-async def test_every_helper_no_ops_when_disabled():
+async def test_every_helper_should_no_op_when_disabled():
     async with lc.run_trace(name="pipeline:x") as root:
         assert root is None
         with lc.span("phase:a") as s:
@@ -150,7 +151,7 @@ async def test_every_helper_no_ops_when_disabled():
 
 
 @pytest.mark.asyncio
-async def test_run_trace_opens_a_root_span_with_propagated_attributes(exporter):
+async def test_run_trace_should_open_a_root_span_with_propagated_attributes_when_enabled(exporter):
     async with lc.run_trace(
         name="pipeline:vsid1",
         session_id="pipeline-vsid1",
@@ -180,7 +181,7 @@ async def test_run_trace_opens_a_root_span_with_propagated_attributes(exporter):
 
 
 @pytest.mark.asyncio
-async def test_run_trace_uses_a_pinned_trace_id(exporter):
+async def test_run_trace_should_use_the_trace_id_when_one_is_pinned(exporter):
     pinned = "ab" * 16
     async with lc.run_trace(name="pipeline:x", trace_id=pinned) as root:
         assert root.trace_id == pinned
@@ -188,7 +189,7 @@ async def test_run_trace_uses_a_pinned_trace_id(exporter):
 
 
 @pytest.mark.asyncio
-async def test_run_trace_drops_metadata_values_over_the_propagation_limit(exporter):
+async def test_run_trace_should_drop_metadata_values_when_over_the_propagation_limit(exporter):
     async with lc.run_trace(name="pipeline:x", metadata={"short": "ok", "long": "x" * 201}):
         pass
     root_span = _spans(exporter)["pipeline:x"]
@@ -197,7 +198,7 @@ async def test_run_trace_drops_metadata_values_over_the_propagation_limit(export
 
 
 @pytest.mark.asyncio
-async def test_run_trace_marks_the_root_failed_and_reraises(exporter):
+async def test_run_trace_should_mark_the_root_failed_and_reraise_when_the_body_raises(exporter):
     with pytest.raises(ValueError, match="phase blew up"):
         async with lc.run_trace(name="pipeline:x"):
             raise ValueError("phase blew up")
@@ -207,7 +208,7 @@ async def test_run_trace_marks_the_root_failed_and_reraises(exporter):
 
 
 @pytest.mark.asyncio
-async def test_run_trace_yields_none_when_the_sdk_fails(exporter, monkeypatch):
+async def test_run_trace_should_yield_none_when_the_sdk_fails(exporter, monkeypatch):
     client = lc.get_client()
     monkeypatch.setattr(
         client, "start_as_current_observation", MagicMock(side_effect=RuntimeError("sdk"))
@@ -218,7 +219,7 @@ async def test_run_trace_yields_none_when_the_sdk_fails(exporter, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_user_id_omit_mode_sends_no_user():
+async def test_run_trace_should_send_no_user_when_the_mode_is_omit():
     exp = InMemorySpanExporter()
     lc.init_langfuse(_settings(LANGFUSE_USER_ID_MODE="omit"), span_exporter=exp)
     async with lc.run_trace(name="pipeline:x", user_id="user-1"):
@@ -227,7 +228,7 @@ async def test_user_id_omit_mode_sends_no_user():
 
 
 @pytest.mark.asyncio
-async def test_user_id_hash_mode_sends_the_salted_digest():
+async def test_run_trace_should_send_the_salted_digest_when_the_mode_is_hash():
     exp = InMemorySpanExporter()
     lc.init_langfuse(
         _settings(LANGFUSE_USER_ID_MODE="hash", LANGFUSE_USER_ID_HASH_SALT="pepper"),
@@ -244,7 +245,9 @@ async def test_user_id_hash_mode_sends_the_salted_digest():
 
 
 @pytest.mark.asyncio
-async def test_generation_nests_in_a_phase_span_across_tasks_and_threads(exporter):
+async def test_generation_should_nest_in_the_phase_span_when_started_from_a_task_or_thread(
+    exporter,
+):
     def threaded_generation() -> None:
         handle = lc.generation("vision", model="m-fast", input="frame")
         lc.finish_generation(handle, output="ok")
@@ -271,7 +274,7 @@ async def test_generation_nests_in_a_phase_span_across_tasks_and_threads(exporte
 
 
 @pytest.mark.asyncio
-async def test_span_works_with_async_with_and_records_failures(exporter):
+async def test_span_should_record_the_failure_when_used_with_async_with(exporter):
     async with lc.run_trace(name="pipeline:x"):
         with pytest.raises(KeyError):
             async with lc.span("tool:quiz", as_type="tool", metadata={"k": "v"}) as handle:
@@ -284,7 +287,7 @@ async def test_span_works_with_async_with_and_records_failures(exporter):
 
 
 @pytest.mark.asyncio
-async def test_span_and_generation_record_nothing_outside_a_trace(exporter):
+async def test_span_and_generation_should_record_nothing_when_outside_a_trace(exporter):
     with lc.span("phase:orphan") as handle:
         assert handle is None
     assert lc.generation("orphan", model="m") is None
@@ -292,7 +295,9 @@ async def test_span_and_generation_record_nothing_outside_a_trace(exporter):
 
 
 @pytest.mark.asyncio
-async def test_work_spawned_in_the_trace_still_lands_in_it_after_the_root_ended(exporter):
+async def test_generation_should_land_in_the_trace_when_spawned_in_it_and_run_after_its_end(
+    exporter,
+):
     gate = asyncio.Event()
 
     async def judge() -> None:
@@ -311,7 +316,9 @@ async def test_work_spawned_in_the_trace_still_lands_in_it_after_the_root_ended(
 
 
 @pytest.mark.asyncio
-async def test_finish_generation_records_usage_cost_output_and_metadata(exporter):
+async def test_finish_generation_should_record_usage_cost_and_output_when_the_call_succeeded(
+    exporter,
+):
     async with lc.run_trace(name="pipeline:x"):
         handle = lc.generation(
             "extraction",
@@ -330,8 +337,9 @@ async def test_finish_generation_records_usage_cost_output_and_metadata(exporter
     gen = _spans(exporter)["extraction"]
     assert _attr(gen, "langfuse.observation.type") == "generation"
     assert _attr(gen, "langfuse.observation.model.name") == "anthropic/claude"
+    # LiteLLM's 100 prompt tokens include the 80 cache reads: input is the uncached 20.
     assert json.loads(_attr(gen, "langfuse.observation.usage_details")) == {
-        "input": 100,
+        "input": 20,
         "output": 20,
         "total": 120,
         "cache_read_input_tokens": 80,
@@ -346,7 +354,7 @@ async def test_finish_generation_records_usage_cost_output_and_metadata(exporter
 
 
 @pytest.mark.asyncio
-async def test_finish_generation_marks_a_failed_call(exporter):
+async def test_finish_generation_should_mark_error_when_the_call_failed(exporter):
     async with lc.run_trace(name="pipeline:x"):
         handle = lc.generation("plan", model="m")
         lc.finish_generation(
@@ -358,7 +366,7 @@ async def test_finish_generation_marks_a_failed_call(exporter):
 
 
 @pytest.mark.asyncio
-async def test_generation_carries_the_active_prompt_versions(exporter):
+async def test_generation_should_carry_the_prompt_versions_when_prompts_were_recorded(exporter):
     async with lc.run_trace(name="pipeline:x"):
         lc.record_active_prompt("summarizer:plan", "7")
         lc.finish_generation(lc.generation("plan", model="m"))
@@ -367,7 +375,9 @@ async def test_generation_carries_the_active_prompt_versions(exporter):
 
 
 @pytest.mark.asyncio
-async def test_generation_and_finish_swallow_sdk_errors(exporter, monkeypatch):
+async def test_generation_and_finish_should_swallow_errors_when_the_sdk_fails(
+    exporter, monkeypatch
+):
     client = lc.get_client()
     monkeypatch.setattr(client, "start_observation", MagicMock(side_effect=RuntimeError("sdk")))
     async with lc.run_trace(name="pipeline:x"):
@@ -379,16 +389,21 @@ async def test_generation_and_finish_swallow_sdk_errors(exporter, monkeypatch):
     broken.end.assert_called_once()
 
 
-def test_usage_details_leaves_out_zero_cache_keys():
+def test_usage_details_should_leave_out_cache_keys_when_they_are_zero():
     assert lc.usage_details(3, 4) == {"input": 3, "output": 4, "total": 7}
-    assert lc.usage_details(3, 4, cache_creation_tokens=2)["cache_creation_input_tokens"] == 2
+    assert lc.usage_details(3, 4, cache_creation_tokens=2) == {
+        "input": 1,
+        "output": 4,
+        "total": 7,
+        "cache_creation_input_tokens": 2,
+    }
 
 
 # ─── Scores and root metadata ───────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_score_defaults_to_the_current_trace(exporter, monkeypatch):
+async def test_score_should_target_the_current_trace_when_none_is_given(exporter, monkeypatch):
     create_score = MagicMock()
     monkeypatch.setattr(lc.get_client(), "create_score", create_score)
     async with lc.run_trace(name="pipeline:x") as root:
@@ -399,7 +414,9 @@ async def test_score_defaults_to_the_current_trace(exporter, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_score_targets_an_explicit_trace_and_swallows_errors(exporter, monkeypatch):
+async def test_score_should_target_the_given_trace_and_swallow_errors_when_ingestion_fails(
+    exporter, monkeypatch
+):
     create_score = MagicMock(side_effect=RuntimeError("ingestion down"))
     monkeypatch.setattr(lc.get_client(), "create_score", create_score)
     lc.score("faithfulness", 1, trace_id="cd" * 16)  # must not raise
@@ -410,7 +427,7 @@ async def test_score_targets_an_explicit_trace_and_swallows_errors(exporter, mon
 
 
 @pytest.mark.asyncio
-async def test_update_root_metadata_lands_on_the_root_span(exporter):
+async def test_update_root_metadata_should_land_on_the_root_span_when_called_from_a_child(exporter):
     async with lc.run_trace(name="pipeline:x"):
         with lc.span("phase:transcript"):
             lc.update_root_metadata({"transcriptSource": "captions", "timing": {"wallMs": 5}})
@@ -425,11 +442,11 @@ async def test_update_root_metadata_lands_on_the_root_span(exporter):
 # ─── Prompts through the client ─────────────────────────────────────────
 
 
-def test_fetch_prompt_with_obj_no_ops_when_disabled():
+def test_fetch_prompt_with_obj_should_return_none_when_disabled():
     assert lc.fetch_prompt_with_obj("summarizer:plan") is None
 
 
-def test_fetch_prompt_with_obj_asks_the_sdk(exporter, monkeypatch):
+def test_fetch_prompt_with_obj_should_return_the_sdk_prompt_when_found(exporter, monkeypatch):
     found = MagicMock(prompt="TEXT", version=3)
     monkeypatch.setattr(lc.get_client(), "get_prompt", MagicMock(return_value=found))
     assert lc.fetch_prompt_with_obj("summarizer:plan") is found
@@ -437,7 +454,7 @@ def test_fetch_prompt_with_obj_asks_the_sdk(exporter, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_flush_and_shutdown_swallow_sdk_errors(exporter, monkeypatch):
+async def test_flush_and_shutdown_should_swallow_errors_when_the_sdk_fails(exporter, monkeypatch):
     client = lc.get_client()
     monkeypatch.setattr(client, "flush", MagicMock(side_effect=RuntimeError("net")))
     monkeypatch.setattr(client, "shutdown", MagicMock(side_effect=RuntimeError("net")))

@@ -72,7 +72,9 @@ async def test_complete_with_messages_records_generation_when_span_name_set(
 
 
 @pytest.mark.asyncio
-async def test_generation_nests_under_the_phase_span_it_ran_in(langfuse_capture: LangfuseCapture):
+async def test_should_nest_the_generation_under_the_phase_span_when_called_inside_a_step(
+    langfuse_capture: LangfuseCapture,
+):
     provider = lp.LLMProvider(model="anthropic/claude-sonnet-4-6")
 
     with (
@@ -150,7 +152,9 @@ async def test_no_trace_active_no_span_logged(langfuse_capture: LangfuseCapture)
 
 
 @pytest.mark.asyncio
-async def test_failed_call_ends_its_generation_as_error(langfuse_capture: LangfuseCapture):
+async def test_should_end_the_generation_as_error_when_the_call_fails(
+    langfuse_capture: LangfuseCapture,
+):
     provider = lp.LLMProvider(model="anthropic/claude-sonnet-4-6")
     error = BadRequestError(
         message="prompt too long", model="claude-sonnet-4-6", llm_provider="anthropic"

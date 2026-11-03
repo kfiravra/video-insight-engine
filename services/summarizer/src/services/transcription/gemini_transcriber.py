@@ -31,6 +31,7 @@ from src.services.llm_telemetry import stopwatch_ms_since
 from src.services.media.download_utils import download_youtube_audio
 from src.services.pipeline.download_timing import record_download
 from src.services.transcription.usage import (
+    cancel_transcription_generation,
     emit_transcription_usage,
     open_transcription_generation,
 )
@@ -586,6 +587,9 @@ async def transcribe_with_gemini(
             language=detected_language,
         )
 
+    except asyncio.CancelledError:
+        cancel_transcription_generation(handle)
+        raise
     except Exception as exc:
         emit_transcription_usage(
             provider="google",

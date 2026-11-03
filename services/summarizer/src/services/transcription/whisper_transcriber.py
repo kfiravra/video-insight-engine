@@ -29,6 +29,7 @@ from src.services.llm_telemetry import stopwatch_ms_since
 from src.services.media.download_utils import download_youtube_audio
 from src.services.pipeline.download_timing import record_download
 from src.services.transcription.usage import (
+    cancel_transcription_generation,
     emit_transcription_usage,
     open_transcription_generation,
 )
@@ -535,6 +536,9 @@ async def translate_audio_to_english(
             len(result["text"]),
         )
         return result["text"]
+    except asyncio.CancelledError:
+        cancel_transcription_generation(handle)
+        raise
     except Exception as e:
         logger.warning("Whisper translate failed for %s: %s", video_id, e)
         emit_transcription_usage(
@@ -672,6 +676,9 @@ async def transcribe_with_whisper(
             language=detected_language,
         )
 
+    except asyncio.CancelledError:
+        cancel_transcription_generation(handle)
+        raise
     except Exception as exc:
         emit_transcription_usage(
             provider="openai",
