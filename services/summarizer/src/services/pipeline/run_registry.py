@@ -5,7 +5,7 @@ row. The summarizer also starts runs the api never dispatched (worker retries,
 DLQ replays, ``POST /regenerate``, legacy messages), so the rule is: an id is
 used by one attempt only. A ``dispatched`` entry is taken over; a missing id, or
 one whose entry already ran (``running`` or terminal), gets a fresh uuid with
-``retryOf`` naming the previous attempt. One attempt = one runId = one trace.
+``retryOf`` naming the row's newest attempt. One attempt = one runId = one trace.
 """
 
 from __future__ import annotations
@@ -47,23 +47,40 @@ class RunIdentity:
     chat_session_id: str | None = None
     # True when the row already has a ``dispatched`` entry for ``run_id``.
     dispatched_entry: bool = False
+    # An earlier attempt left ``dispatched`` / ``running`` (a crash, a redelivery):
+    # this attempt replaces it, so registration closes it as ``failed``.
+    superseded: str | None = None
 
 
 # ─── Resolution ─────────────────────────────────────────────────────────
-def _entries(entry: dict[str, Any]) -> list[dict[str, Any]]:
+def entries_of(entry: dict[str, Any]) -> list[dict[str, Any]]:
+    """The row's ``runs[]`` entries, oldest first (tolerates a missing / malformed field)."""
     runs = entry.get("runs")
     return [r for r in runs if isinstance(r, dict)] if isinstance(runs, list) else []
 
 
-def _fresh(previous: dict[str, Any] | None, retry_of: str | None, attempt: int) -> RunIdentity:
+def fresh_run(
+    runs: list[dict[str, Any]], attempt: int, chat_session_id: str | None = None
+) -> RunIdentity:
+    """A new attempt after the row's newest one: ``retryOf`` names it, attempts count on.
+
+    The newest entry, not the message's original id, is what this attempt follows
+    (a redelivered crash, then the runner's retry, then a DLQ replay all chain).
+    An entry the newest attempt left open is reported as ``superseded``.
+    """
     run_id = str(uuid.uuid4())
-    prev_attempt = int(previous.get("attempt") or 0) if previous else 0
+    newest = runs[-1] if runs else None
+    prev_attempt = int(newest.get("attempt") or 0) if newest else 0
+    open_statuses = {DISPATCHED, RUNNING}
     return RunIdentity(
         run_id=run_id,
         trace_id=trace_id_for_run(run_id),
         attempt=max(attempt, prev_attempt + 1),
-        retry_of=retry_of,
-        chat_session_id=(previous or {}).get("chatSessionId"),
+        retry_of=newest.get("runId") if newest else None,
+        chat_session_id=chat_session_id or (newest or {}).get("chatSessionId"),
+        superseded=newest.get("runId")
+        if newest and newest.get("status") in open_statuses
+        else None,
     )
 
 
@@ -76,10 +93,9 @@ def resolve_run(entry: dict[str, Any], dispatch: RunDispatch | None = None) -> R
     """
     dispatch = dispatch or RunDispatch()
     candidate = dispatch.run_id or entry.get("currentRunId")
-    runs = _entries(entry)
+    runs = entries_of(entry)
     if not candidate:
-        last = runs[-1] if runs else None
-        return _fresh(last, last.get("runId") if last else None, dispatch.attempt)
+        return fresh_run(runs, dispatch.attempt, dispatch.chat_session_id)
     existing = next((r for r in reversed(runs) if r.get("runId") == candidate), None)
     if existing is None:
         # A legacy row, an entry capped out of ``runs``, or an HTTP-only stamp:
@@ -91,7 +107,7 @@ def resolve_run(entry: dict[str, Any], dispatch: RunDispatch | None = None) -> R
             chat_session_id=dispatch.chat_session_id,
         )
     if existing.get("status") != DISPATCHED:
-        return _fresh(existing, candidate, dispatch.attempt)
+        return fresh_run(runs, dispatch.attempt, existing.get("chatSessionId"))
     stored_trace = existing.get("traceId")
     trace_id = trace_id_for_run(candidate)
     if stored_trace and stored_trace != trace_id:
@@ -112,6 +128,7 @@ def run_entry(
     run: RunIdentity,
     *,
     request_id: str | None,
+    user_id: str | None = None,
     path: str,
     bypass: bool,
     pipeline_version: str,
@@ -130,6 +147,9 @@ def run_entry(
     }
     if request_id:
         doc["requestId"] = request_id
+    if user_id:
+        # Only so the GDPR cascade can strip this entry's ids (vie-api, user-deletion).
+        doc["userId"] = user_id
     if run.chat_session_id:
         doc["chatSessionId"] = run.chat_session_id
     if run.retry_of:

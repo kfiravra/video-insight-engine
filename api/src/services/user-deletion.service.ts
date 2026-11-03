@@ -415,15 +415,17 @@ export class UserDeletionService {
    * users share it — and only the dispatcher's identity is unset. Idempotent:
    * a re-run matches nothing.
    *
-   * The `runs` entries (P0b) carry the dispatch's request and chat-session ids;
-   * they go first, in their own update, because `runs.$[]` fails on a row that
-   * has no `runs` array. `currentRunId` goes with the dispatcher's identity.
+   * The `runs` entries (P0b) carry the dispatching user and its request and
+   * chat-session ids: every entry this user dispatched loses them, on any row
+   * (a later dispatcher may own the row by now), the run and trace ids stay.
+   * `currentRunId` goes with the dispatcher's identity.
    */
   private async clearVideoCacheDispatchContext(userId: string): Promise<number> {
     const cache = this.db.collection('videoSummaryCache');
     await cache.updateMany(
-      { userId, runs: { $type: 'array' } },
-      { $unset: { 'runs.$[].requestId': '', 'runs.$[].chatSessionId': '' } },
+      { 'runs.userId': userId },
+      { $unset: { 'runs.$[mine].userId': '', 'runs.$[mine].requestId': '', 'runs.$[mine].chatSessionId': '' } },
+      { arrayFilters: [{ 'mine.userId': userId }] },
     );
     const result = await cache.updateMany(
       { userId },

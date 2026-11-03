@@ -263,6 +263,16 @@ describe('internal routes', () => {
           expect(mockContainer.videoRepository.closeRun).toHaveBeenCalledWith(videoSummaryId, 'run-1', closed);
         });
 
+        it('should broadcast the status without the runId when a run reports', async () => {
+          const videoSummaryId = new ObjectId().toHexString();
+
+          await post({ videoSummaryId, status: 'processing', runId: 'run-x' });
+
+          const [, sent] = (app.broadcast as ReturnType<typeof vi.fn>).mock.calls[0];
+          expect(sent.payload).not.toHaveProperty('runId');
+          expect(sent.payload.status).toBe('processing');
+        });
+
         it('should close nothing when the status has no runId or is not terminal', async () => {
           await post({ videoSummaryId: new ObjectId().toHexString(), status: 'completed' });
           await post({ videoSummaryId: new ObjectId().toHexString(), status: 'processing', runId: 'run-2' });

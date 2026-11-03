@@ -121,6 +121,10 @@ export async function internalRoutes(fastify: FastifyInstance) {
     if (event.type === 'video.status') {
       // Update userVideos status to match
       const { videoSummaryId, status, userId, cacheHit, runId } = event.payload;
+      // The run id is bookkeeping for the cache row (P0b), never broadcast:
+      // users attached to a shared row must not see another dispatcher's run.
+      const { runId: _runId, ...publicPayload } = event.payload;
+      const publicEvent = { ...event, payload: publicPayload };
 
       await fastify.mongo.db.collection('userVideos').updateMany(
         { videoSummaryId: new ObjectId(videoSummaryId) },
@@ -129,7 +133,7 @@ export async function internalRoutes(fastify: FastifyInstance) {
 
       // If we have userId, broadcast to that user
       if (userId) {
-        fastify.broadcast(userId, event);
+        fastify.broadcast(userId, publicEvent);
       } else {
         // Find all users with this video and broadcast to each
         const userVideos = await fastify.mongo.db
@@ -140,9 +144,9 @@ export async function internalRoutes(fastify: FastifyInstance) {
         for (const uv of userVideos) {
           const userIdStr = uv.userId.toHexString();
           fastify.broadcast(userIdStr, {
-            ...event,
+            ...publicEvent,
             payload: {
-              ...event.payload,
+              ...publicPayload,
               userVideoId: uv._id.toHexString(),
             },
           });

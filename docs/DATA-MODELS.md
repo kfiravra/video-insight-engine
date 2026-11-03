@@ -591,6 +591,7 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
     runId: string,                  // one attempt = one runId = one Langfuse trace
     traceId: string,                // sha256(runId) hex, first 32 chars (traceIdForRun / trace_id_for_run)
     requestId?: string,             // the dispatching request ($unset by the GDPR cascade)
+    userId?: string,                // who dispatched it, only so the GDPR cascade finds the entry
     attempt: number,                // 1 at dispatch; a retry's fresh entry counts up
     pipelineVersion?: string,
     bypass: boolean,                // the dispatch's bypassCache

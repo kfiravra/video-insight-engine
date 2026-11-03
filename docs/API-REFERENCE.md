@@ -371,7 +371,7 @@ Get video with summary.
 
 The same `sourceLanguage` block is included on the public share endpoint (`GET /share/:slug`) and is consumed by `apps/web/src/api/share.ts` + `apps/web/src/api/videos.ts`.
 
-`runId` / `traceId` (P0b) name the row's latest attempt (`videoSummaryCache.currentRunId`) and its Langfuse trace (`sha256(runId)` hex, first 32 chars); absent on rows dispatched before P0b.
+`runId` / `traceId` (P0b) name the row's latest attempt (`videoSummaryCache.currentRunId`) and its Langfuse trace (`sha256(runId)` hex, first 32 chars), only for the user who dispatched that attempt; absent for users attached to a shared row and on rows dispatched before P0b.
 
 `processingStartedAt` (ISO 8601) is present only while `status` is `pending` or `processing`: when the run that owns the row was dispatched (re-stamped on retry and stall redispatch). The web client counts its elapsed clock from it, so a refresh mid-run shows the real wait. Absent once the run has settled.
 
@@ -1004,7 +1004,7 @@ Video processing status update.
 }
 ```
 
-The summarizer's `POST /internal/status` body that produces this event may also carry `cacheHit` (a `completed` served from the response cache) and `runId` (P0b): a terminal status with a `runId` closes that attempt's `runs[]` entry (`completed`, `failed`, or `cache_hit`). Billing ignores `runId`.
+The summarizer's `POST /internal/status` body that produces this event may also carry `cacheHit` (a `completed` served from the response cache) and `runId` (P0b): a terminal status with a `runId` closes that attempt's `runs[]` entry (`completed`, `failed`, or `cache_hit`). Billing ignores `runId`, and the WebSocket event never carries it.
 
 **Status flow:**
 

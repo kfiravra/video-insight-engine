@@ -325,7 +325,7 @@ describe('VideoRepository', () => {
       expect(row?.currentRunId).toBe('r1');
       expect(row?.runs).toEqual([
         expect.objectContaining({
-          runId: 'r1', traceId: 't-r1', requestId: 'req-a', attempt: 1,
+          runId: 'r1', traceId: 't-r1', requestId: 'req-a', userId: 'user-a', attempt: 1,
           pipelineVersion: 'v11', bypass: false, status: 'dispatched', dispatchedAt: expect.any(Date),
         }),
       ]);

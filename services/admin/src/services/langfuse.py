@@ -18,11 +18,6 @@ from typing import Any
 from src.config import settings
 
 
-def is_enabled() -> bool:
-    """True when links can be built (``LANGFUSE_PROJECT_ID`` is set)."""
-    return bool(settings.LANGFUSE_PROJECT_ID)
-
-
 def _project_url() -> str | None:
     if not settings.LANGFUSE_PROJECT_ID:
         return None

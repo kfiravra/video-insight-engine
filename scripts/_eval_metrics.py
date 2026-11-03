@@ -27,8 +27,8 @@ Faithfulness (higher is better)
 -------------------------------
 The pipeline's own LLM judge (``faithfulness.py``) scores a deterministic
 sample of extracted claims against the transcript and logs the fraction
-grounded as the ``faithfulness`` score on the run's Langfuse trace
-(``pipeline:<videoSummaryId>``). It is not persisted in Mongo nor returned by
+grounded as the ``faithfulness`` score on the run's Langfuse trace (id
+``traceId`` from the submit, P0b). It is not persisted in Mongo nor returned by
 the API, so the Langfuse trace is the only source. The sample rate is
 per-claim (prod 0.2 → round(n*0.2) claims, min 1, capped at 6), so every
 run with extracted claims gets a score. The run metric is the mean over the

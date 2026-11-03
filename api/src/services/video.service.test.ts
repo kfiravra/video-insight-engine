@@ -197,7 +197,7 @@ describe('VideoService', () => {
       expect(result).not.toHaveProperty('synthesis');
     });
 
-    it('should return the current run id and its trace id when the row has one', async () => {
+    const runRow = (dispatcher: string) => {
       mockVideoRepository.findUserVideo.mockResolvedValue({
         _id: { toString: () => 'vid123' },
         videoSummaryId: { toString: () => 'summary123' },
@@ -209,11 +209,25 @@ describe('VideoService', () => {
         youtubeId: 'abc123',
         status: 'completed',
         currentRunId: 'run-abc',
+        userId: dispatcher,
       });
+    };
+
+    it('should return the current run id and its trace id when the user dispatched it', async () => {
+      runRow('user123');
 
       const result = await videoService.getVideo('user123', 'vid123');
 
       expect([result.runId, result.traceId]).toEqual(['run-abc', traceIdForRun('run-abc')]);
+    });
+
+    it('should hide the run ids when another user dispatched the shared row', async () => {
+      runRow('someone-else');
+
+      const result = await videoService.getVideo('user123', 'vid123');
+
+      expect(result).not.toHaveProperty('runId');
+      expect(result).not.toHaveProperty('traceId');
     });
 
     it('should expose the run start time while the summary is still processing', async () => {

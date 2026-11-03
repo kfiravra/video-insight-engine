@@ -344,12 +344,10 @@ VIE_ASSISTANT_URL=http://vie-assistant:8001
 ALERT_COST_THRESHOLD_USD=0.50
 # Global spend alarm: daily_global_cost alert once per UTC day at this total (USD). <= 0 disables.
 ALERT_DAILY_COST_THRESHOLD_USD=20
-# Langfuse — read-only, only to build "Open in Langfuse" run deep-links.
-# Project id auto-resolved from the keys when LANGFUSE_PROJECT_ID is blank.
-# All optional: unset → /usage/by-run simply returns langfuse_url=null.
+# Langfuse — only to build "Open in Langfuse" run deep-links from the trace ids
+# stored on videoSummaryCache.runs[] (no Langfuse API call, no keys).
+# LANGFUSE_PROJECT_ID is required for links: blank → /usage/by-run returns langfuse_url=null.
 LANGFUSE_BASE_URL=https://cloud.langfuse.com
-LANGFUSE_PUBLIC_KEY=
-LANGFUSE_SECRET_KEY=
 LANGFUSE_PROJECT_ID=
 ```
 

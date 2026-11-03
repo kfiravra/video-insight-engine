@@ -207,9 +207,10 @@ def to_output(data: dict[str, Any], submission: Submission) -> dict[str, Any]:
         "youtubeId": data.get("youtubeId"),
         "videoSummaryId": data.get("videoSummaryId") or submission.video_summary_id,
         "submittedAt": submission.submitted_at.isoformat(),
-        # The submit's own run first; the doc's current run (GET /api/videos/:id) else.
-        "runId": submission.run_id or data.get("runId"),
-        "traceId": submission.trace_id or data.get("traceId"),
+        # The doc's current run first: a worker retry re-runs the row under a fresh
+        # run id, and the completed doc names the attempt that produced it.
+        "runId": data.get("runId") or submission.run_id,
+        "traceId": data.get("traceId") or submission.trace_id,
     }
 
 

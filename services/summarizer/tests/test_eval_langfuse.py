@@ -72,9 +72,13 @@ class FakeLangfuse:
 
     async def _observations(self, **kw: Any) -> SimpleNamespace:
         self.reads.append({"what": "observations", **kw})
-        if "name" in kw:
-            trace = self.roots.get(kw["name"])
-            return SimpleNamespace(data=[_Model(trace_id=trace)] if trace else [])
+        if "filter" in kw:
+            conditions = json.loads(kw["filter"])
+            name = next(c["value"] for c in conditions if c["column"] == "traceName")
+            self.reads[-1]["trace_name"] = name
+            trace = self.roots.get(name)
+            found = [_Model(trace_id=trace, start_time="2026-10-07T10:00:00Z")] if trace else []
+            return SimpleNamespace(data=found)
         return SimpleNamespace(data=[_PROBE])
 
     async def _scores(self, **kw: Any) -> SimpleNamespace:
@@ -114,7 +118,7 @@ class TestLangfuse:
         )
         assert (scores["trace_id"], scores["name"]) == ("tr1", "faithfulness")
 
-    async def test_should_find_the_trace_by_root_name_when_the_report_predates_trace_ids(
+    async def test_should_find_the_trace_by_trace_name_when_the_report_predates_trace_ids(
         self,
     ) -> None:
         fake = FakeLangfuse(roots={"pipeline:vs1": "tr-old"})
@@ -122,8 +126,9 @@ class TestLangfuse:
 
         signals = await collect_signals(fake, {"g1": target}, rounds=1, sleep=_no_sleep)
 
-        lookup = fake.reads[0]
-        assert (lookup["name"], lookup["is_root_observation"]) == ("pipeline:vs1", True)
+        conditions = json.loads(fake.reads[0]["filter"])
+        assert [c["column"] for c in conditions] == ["traceName", "startTime"]
+        assert fake.reads[0]["trace_name"] == "pipeline:vs1"
         assert signals["g1"].trace_id == "tr-old"
 
     async def test_should_omit_the_video_when_no_trace_matches(self) -> None:
@@ -154,6 +159,36 @@ class TestLangfuse:
         assert [(s["trace_id"], s["name"], s["value"]) for s in fake.created_scores] == [
             ("tr1", "golden.quality", 0.9)
         ]
+
+
+class TestMakeClient:
+    async def test_should_flush_and_never_shut_down_when_used_twice_in_one_process(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The SDK reuses one resource manager per key: a shutdown would kill the next client."""
+        import langfuse as sdk
+        from _eval_langfuse import make_client
+
+        calls: list[str] = []
+
+        class _Sdk:
+            def __init__(self, **kw: Any) -> None:
+                calls.append(f"init:{kw['base_url']}")
+
+            def flush(self) -> None:
+                calls.append("flush")
+
+            def shutdown(self) -> None:
+                calls.append("shutdown")
+
+        monkeypatch.setattr(sdk, "Langfuse", _Sdk)
+        config = LangfuseConfig("http://lf.test", "pk", "sk")
+
+        for _ in range(2):
+            async with make_client(config):
+                pass
+
+        assert calls == ["init:http://lf.test", "flush", "init:http://lf.test", "flush"]
 
 
 # ─── Read pacing + retry ───────────────────────────────────────────────
@@ -325,9 +360,7 @@ class TestRefresh:
         self, report: Path, langfuse: FakeLangfuse
     ) -> None:
         await _refresh(report)
-        assert [r["name"] for r in langfuse.reads if "is_root_observation" in r] == [
-            "pipeline:vs-a"
-        ]
+        assert [r["trace_name"] for r in langfuse.reads if "trace_name" in r] == ["pipeline:vs-a"]
 
     async def test_should_never_write_when_refreshing(
         self, report: Path, langfuse: FakeLangfuse

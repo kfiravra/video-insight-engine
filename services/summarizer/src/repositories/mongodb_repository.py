@@ -286,23 +286,48 @@ class MongoDBVideoRepository:
             update["$unset"] = absent
         self._collection.update_one({"_id": ObjectId(video_summary_id)}, update)
 
-    def start_run(self, video_summary_id: str, run: dict[str, Any], *, take_over: bool) -> None:
+    def start_run(
+        self,
+        video_summary_id: str,
+        run: dict[str, Any],
+        *,
+        take_over: bool,
+        superseded: str | None = None,
+    ) -> bool:
         """Mark this attempt's ``runs[]`` entry running and make it ``currentRunId`` (P-2).
 
         ``take_over``: the api pushed a ``dispatched`` entry for ``run["runId"]``;
-        its status, start time, path and trace id are set in place. Otherwise
-        (an attempt the api never dispatched, or the entry is gone) the entry is
-        pushed, keeping the newest ``RUNS_KEPT``. No ``updatedAt`` bump.
+        its status, start time, path and trace id are set in place, only while it
+        is still ``dispatched`` (``False`` back when another attempt took it, so
+        the caller mints a fresh id). Otherwise the entry is pushed, keeping the
+        newest ``RUNS_KEPT``. ``superseded``: an earlier attempt still open
+        (``dispatched`` / ``running`` after a crash) is closed as ``failed``.
+        No ``updatedAt`` bump.
         """
         oid = ObjectId(video_summary_id)
+        if superseded:
+            self._collection.update_one(
+                {
+                    "_id": oid,
+                    "runs": {
+                        "$elemMatch": {
+                            "runId": superseded,
+                            "status": {"$in": ["dispatched", "running"]},
+                        }
+                    },
+                },
+                {"$set": {"runs.$.status": "failed", "runs.$.endedAt": run.get("startedAt")}},
+            )
         if take_over:
             fields = {f"runs.$.{key}": value for key, value in run.items() if key != "runId"}
             result = self._collection.update_one(
-                {"_id": oid, "runs.runId": run["runId"]},
+                {
+                    "_id": oid,
+                    "runs": {"$elemMatch": {"runId": run["runId"], "status": "dispatched"}},
+                },
                 {"$set": {"currentRunId": run["runId"], **fields}},
             )
-            if result.matched_count == 1:
-                return
+            return result.matched_count == 1
         self._collection.update_one(
             {"_id": oid},
             {
@@ -310,3 +335,4 @@ class MongoDBVideoRepository:
                 "$push": {"runs": {"$each": [run], "$slice": -RUNS_KEPT}},
             },
         )
+        return True

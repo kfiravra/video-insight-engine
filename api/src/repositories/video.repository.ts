@@ -51,6 +51,8 @@ export interface RunEntry {
   runId: string;
   traceId: string;
   requestId?: string;
+  /** Who dispatched it: only so the GDPR cascade can strip this entry's ids. */
+  userId?: string;
   attempt: number;
   pipelineVersion?: string;
   bypass: boolean;
@@ -779,6 +781,7 @@ export class VideoRepository {
         bypass: run.bypass,
         status: 'dispatched',
         dispatchedAt: new Date(),
+        userId,
         ...(requestId ? { requestId } : {}),
         ...(run.chatSessionId ? { chatSessionId: run.chatSessionId } : {}),
       };

@@ -73,6 +73,30 @@ class TestResolveRun:
         assert run.run_id != "a"
         assert (run.retry_of, run.attempt, run.dispatched_entry) == ("a", 2, False)
         assert run.trace_id == trace_id_for_run(run.run_id)
+        # A crashed attempt left ``running`` is closed by this one's registration.
+        assert run.superseded == ("a" if status == "running" else None)
+
+    def test_should_chain_to_the_newest_attempt_when_the_runner_retries_after_a_redelivery(
+        self,
+    ) -> None:
+        entry = _entry(
+            {"runId": "a", "status": "running", "attempt": 1},
+            {"runId": "b", "status": "failed", "attempt": 2, "retryOf": "a"},
+            current="b",
+        )
+
+        run = resolve_run(entry, RunDispatch(run_id="a", attempt=2))
+
+        assert (run.retry_of, run.attempt, run.superseded) == ("b", 3, None)
+
+    def test_should_count_on_from_the_newest_attempt_when_a_dlq_replay_resets_the_attempt(
+        self,
+    ) -> None:
+        entry = _entry({"runId": "a", "status": "failed", "attempt": 3}, current="a")
+
+        run = resolve_run(entry, RunDispatch(run_id="a", attempt=1))
+
+        assert (run.retry_of, run.attempt) == ("a", 4)
 
     def test_should_mint_and_point_at_the_last_attempt_when_no_id_arrives(self) -> None:
         run = resolve_run(_entry({"runId": "last", "status": "failed", "attempt": 3}))
@@ -101,7 +125,13 @@ class TestEntryAndTags:
         now = datetime(2026, 11, 3, tzinfo=UTC)
 
         doc = run_entry(
-            run, request_id="req", path="worker", bypass=True, pipeline_version="v11", now=now
+            run,
+            request_id="req",
+            user_id="u1",
+            path="worker",
+            bypass=True,
+            pipeline_version="v11",
+            now=now,
         )
 
         assert doc == {
@@ -114,6 +144,7 @@ class TestEntryAndTags:
             "status": "running",
             "startedAt": now,
             "requestId": "req",
+            "userId": "u1",
             "chatSessionId": "s",
             "retryOf": "p",
         }
@@ -141,25 +172,39 @@ class TestStartRun:
         repo, collection = _repo()
         collection.update_one.return_value = MagicMock(matched_count=1)
 
-        repo.start_run(_VSID, {"runId": "a", "status": "running", "path": "sse"}, take_over=True)
+        taken = repo.start_run(
+            _VSID, {"runId": "a", "status": "running", "path": "sse"}, take_over=True
+        )
 
         query, update = collection.update_one.call_args.args
-        assert query == {"_id": ObjectId(_VSID), "runs.runId": "a"}
+        assert query == {
+            "_id": ObjectId(_VSID),
+            "runs": {"$elemMatch": {"runId": "a", "status": "dispatched"}},
+        }
         assert update == {
             "$set": {"currentRunId": "a", "runs.$.status": "running", "runs.$.path": "sse"}
         }
+        assert taken is True
 
-    def test_should_push_the_entry_when_the_api_entry_is_gone(self) -> None:
+    def test_should_report_a_miss_when_another_attempt_took_the_entry(self) -> None:
         repo, collection = _repo()
-        collection.update_one.side_effect = [MagicMock(matched_count=0), MagicMock(matched_count=1)]
+        collection.update_one.return_value = MagicMock(matched_count=0)
 
-        repo.start_run(_VSID, {"runId": "a", "status": "running"}, take_over=True)
+        assert repo.start_run(_VSID, {"runId": "a", "status": "running"}, take_over=True) is False
+        collection.update_one.assert_called_once()
 
-        _, update = collection.update_one.call_args_list[1].args
-        assert update["$push"] == {
-            "runs": {"$each": [{"runId": "a", "status": "running"}], "$slice": -RUNS_KEPT}
+    def test_should_close_the_superseded_attempt_as_failed_when_given_one(self) -> None:
+        repo, collection = _repo()
+        started = datetime(2026, 11, 3, tzinfo=UTC)
+
+        repo.start_run(_VSID, {"runId": "b", "startedAt": started}, take_over=False, superseded="a")
+
+        query, update = collection.update_one.call_args_list[0].args
+        assert query["runs"] == {
+            "$elemMatch": {"runId": "a", "status": {"$in": ["dispatched", "running"]}}
         }
-        assert update["$set"] == {"currentRunId": "a"}
+        assert update == {"$set": {"runs.$.status": "failed", "runs.$.endedAt": started}}
+        assert "$push" in collection.update_one.call_args_list[1].args[1]
 
     def test_should_push_without_a_lookup_when_the_attempt_is_new(self) -> None:
         repo, collection = _repo()
@@ -247,7 +292,7 @@ class TestRunnerBindsTheRun:
 
         start = repository.start_run.call_args
         assert start.args[1]["runId"] == "a" and start.args[1]["status"] == "running"
-        assert start.kwargs == {"take_over": True}
+        assert start.kwargs == {"take_over": True, "superseded": None}
         assert '"runId": "a"' in events[0]
 
     async def test_should_report_the_dispatched_run_and_register_nothing_when_redis_serves_it(
@@ -287,6 +332,44 @@ class TestRunnerBindsTheRun:
 
         repository.start_run.assert_not_called()
         assert seen == ["a"]
+
+
+class TestRunnerEdgeCases:
+    async def test_should_register_a_fresh_id_when_the_dispatched_entry_was_taken(
+        self, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(pipeline_runner.settings, "REDIS_ENABLED", False)
+        repository = MagicMock()
+        repository.start_run.side_effect = [False, True]
+        entry = _entry({"runId": "a", "status": "dispatched", "attempt": 1}, current="a")
+        with (
+            patch.object(pipeline_runner, "run_pipeline_phases", _phases),
+            patch.object(pipeline_runner, "send_video_status", AsyncMock()),
+            patch.object(pipeline_runner, "clear_override", MagicMock()),
+        ):
+            events = [
+                ev
+                async for ev in pipeline_runner.stream_summarization(
+                    _VSID, entry, repository, MagicMock()
+                )
+            ]
+
+        fresh = repository.start_run.call_args_list[1]
+        assert fresh.args[1]["runId"] != "a" and fresh.args[1]["retryOf"] == "a"
+        assert fresh.kwargs == {"take_over": False}
+        assert fresh.args[1]["runId"] in events[0]
+
+    async def test_should_clear_a_stale_run_id_when_a_run_cannot_start(self) -> None:
+        bind_run_id("stale")
+        with patch.object(pipeline_runner, "clear_override", MagicMock()):
+            _ = [
+                ev
+                async for ev in pipeline_runner.stream_summarization(
+                    _VSID, {}, MagicMock(), MagicMock()
+                )
+            ]
+
+        assert current_run_id() is None
 
 
 class TestWorkerAndSweeper:

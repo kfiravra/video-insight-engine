@@ -66,10 +66,8 @@ class Settings(BaseSettings):
     BACKUP_MAX_AGE_HOURS: float = 26.0
 
     # Langfuse — used only to build "Open in Langfuse" deep-links for pipeline
-    # runs. The project id is resolved from the keys at runtime when left blank.
+    # runs from stored trace ids; LANGFUSE_PROJECT_ID is required (blank = no links).
     LANGFUSE_BASE_URL: str = "https://cloud.langfuse.com"
-    LANGFUSE_PUBLIC_KEY: str = ""
-    LANGFUSE_SECRET_KEY: str = ""
     LANGFUSE_PROJECT_ID: str = ""
 
     # Sentry — empty DSN → init no-ops (dev/CI run without a Sentry project).

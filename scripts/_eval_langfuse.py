@@ -4,8 +4,9 @@ Reads: per video, its pipeline trace, then the trace's ``faithfulness`` score
 and its ``tier_probe`` generation output (for the ``expectedFormat``
 assertion). The trace id comes from the submit response (``traceId`` =
 ``sha256(runId)`` hex, first 32 chars, P0b); a report from before P0b only has
-the videoSummaryId, so its trace is found by the root observation's name
-``pipeline:<videoSummaryId>``. Reads use the non-deprecated endpoints only:
+the videoSummaryId, so its trace is found by the trace name
+``pipeline:<videoSummaryId>`` (SDK v2 and P0a traces alike). Reads use the
+non-deprecated endpoints only:
 ``api.observations.get_many`` (v2 observations) and
 ``api.scores_v3.get_many_v3`` (v3 scores). Every read goes through
 ``ReadPacer``: Langfuse Cloud throttles the public read API hard (2026-10-07:
@@ -24,6 +25,7 @@ The SDK is imported lazily, so ``--dry-run`` imports this module without it.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import time
@@ -109,10 +111,14 @@ def _api_error() -> type[Exception]:
 
 @asynccontextmanager
 async def make_client(config: LangfuseConfig) -> AsyncIterator[Any]:
-    """The v4 SDK client; on exit ``shutdown`` sends the queued ``golden.*`` scores.
+    """The v4 SDK client; on exit ``flush`` sends the queued ``golden.*`` scores.
 
     Tracing stays enabled: the SDK drops ``create_score`` calls otherwise. The
-    eval opens no spans of its own.
+    eval opens no spans of its own. Never ``shutdown`` here: the SDK keeps one
+    resource manager per public key and hands the same (dead) one to the next
+    client, so the eval's second ``make_client`` (``--publish-run`` after the
+    reads) would queue scores nothing sends and hang on exit. The SDK shuts
+    itself down at interpreter exit (``atexit``).
     """
     from langfuse import Langfuse
 
@@ -122,7 +128,7 @@ async def make_client(config: LangfuseConfig) -> AsyncIterator[Any]:
     try:
         yield client
     finally:
-        await asyncio.to_thread(client.shutdown)
+        await asyncio.to_thread(client.flush)
 
 
 # ─── Read pacing ───────────────────────────────────────────────────────
@@ -210,20 +216,42 @@ def _as_json(model: Any) -> dict[str, Any]:
     return dict(model)
 
 
+def _trace_name_filter(target: TraceTarget) -> str:
+    """v2 ``filter``: observations of the trace named ``pipeline:<videoSummaryId>``.
+
+    Filters on the trace name, not on a root observation: an SDK v2 trace (before
+    the P0a deploy) has no root observation of that name.
+    """
+    conditions: list[dict[str, Any]] = [
+        {
+            "type": "string",
+            "column": "traceName",
+            "operator": "=",
+            "value": f"pipeline:{target.video_summary_id}",
+        }
+    ]
+    if target.submitted_at is not None:
+        since = (target.submitted_at - _SINCE_SKEW).isoformat().replace("+00:00", "Z")
+        conditions.append(
+            {"type": "datetime", "column": "startTime", "operator": ">=", "value": since}
+        )
+    return json.dumps(conditions)
+
+
 async def _find_trace_id(client: Any, target: TraceTarget, pacer: ReadPacer) -> str | None:
-    """Pre-P0b reports only: the trace whose root observation is ``pipeline:<videoSummaryId>``."""
-    since = target.submitted_at - _SINCE_SKEW if target.submitted_at is not None else None
+    """Pre-P0b reports only: the trace named ``pipeline:<videoSummaryId>`` (newest wins)."""
     page = await pacer.call(
         lambda: client.async_api.observations.get_many(
-            name=f"pipeline:{target.video_summary_id}",
-            is_root_observation=True,
-            from_start_time=since,
+            filter=_trace_name_filter(target),
             fields="core",
-            limit=1,
+            limit=50,
             request_options=_NO_SDK_RETRY,
         )
     )
-    return page.data[0].trace_id if page.data else None
+    if not page.data:
+        return None
+    newest = max(page.data, key=lambda o: str(getattr(o, "start_time", "") or ""))
+    return newest.trace_id
 
 
 async def fetch_signals(

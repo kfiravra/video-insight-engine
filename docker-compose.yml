@@ -586,8 +586,6 @@ services:
       # Langfuse — only to build "Open in Langfuse" deep-links from stored trace
       # ids; LANGFUSE_PROJECT_ID is required for them (blank = no links).
       LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-https://cloud.langfuse.com}
-      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
-      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
       LANGFUSE_PROJECT_ID: ${LANGFUSE_PROJECT_ID:-}
       # Sentry — empty DSN = SDK no-ops
       SENTRY_DSN: ${SENTRY_DSN:-}

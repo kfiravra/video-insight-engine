@@ -14,11 +14,6 @@ def project(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "LANGFUSE_PROJECT_ID", "proj-9")
 
 
-def test_is_enabled_should_be_false_when_the_project_id_is_unset(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(settings, "LANGFUSE_PROJECT_ID", "")
-    assert langfuse.is_enabled() is False
-
-
 def test_trace_url_should_build_the_trace_page_when_the_project_is_set(project: None):
     assert (
         langfuse.trace_url("ab" * 16)

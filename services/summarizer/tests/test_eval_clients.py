@@ -110,7 +110,7 @@ class TestRunPipeline:
         out = await _eval_api.run_pipeline(_API, _URL, "t")
         assert (out["videoSummaryId"], out["duration"], len(out["tabs"])) == ("vs1", 300, 1)
 
-    async def test_should_keep_the_submits_run_and_trace_ids_when_the_api_returns_them(
+    async def test_should_keep_the_submits_run_and_trace_ids_when_the_doc_has_none(
         self, mount
     ) -> None:
         api = FakeApi()
@@ -121,14 +121,14 @@ class TestRunPipeline:
 
         assert (out["runId"], out["traceId"]) == ("run-1", "tr-1")
 
-    async def test_should_fall_back_to_the_docs_run_ids_when_the_submit_had_none(
-        self, mount
-    ) -> None:
-        mount(FakeApi(doc={**_DOC, "runId": "run-doc", "traceId": "tr-doc"}))
+    async def test_should_prefer_the_docs_run_ids_when_a_retry_re_ran_the_row(self, mount) -> None:
+        api = FakeApi(doc={**_DOC, "runId": "run-retry", "traceId": "tr-retry"})
+        api.run_ids = {"runId": "run-1", "traceId": "tr-1"}
+        mount(api)
 
         out = await _eval_api.run_pipeline(_API, _URL, "t")
 
-        assert (out["runId"], out["traceId"]) == ("run-doc", "tr-doc")
+        assert (out["runId"], out["traceId"]) == ("run-retry", "tr-retry")
 
     async def test_should_raise_when_doc_reports_failure(self, mount) -> None:
         mount(FakeApi(doc={"status": "failed", "error": "boom"}))

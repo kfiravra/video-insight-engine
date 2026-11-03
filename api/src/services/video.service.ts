@@ -211,11 +211,13 @@ export class VideoService {
         try {
           // `bypassCache` IS consumed downstream: the worker maps it to
           // force_refresh (worker/pipeline.py), telling the summarizer to
-          // skip its youtubeId-keyed Redis response cache. The HTTP/SSE
-          // fallback path can't carry the flag, so the same semantic is
+          // skip its youtubeId-keyed Redis response cache. The SSE producer
+          // can run before any dispatch is read, so the same semantic is
           // also stamped on the cache row as `forceRefresh` (see
           // createVideo's bypassCache branch) — pipeline_runner reads
-          // whichever signal arrives. Keep BOTH channels in sync.
+          // whichever signal arrives. Keep BOTH channels in sync. (The HTTP
+          // body carries `bypassCache` too since P0b; the summarizer still
+          // reads the row flag, since the SSE producer may run first.)
           await this.queuePublisher.publishVideoJob({
             videoSummaryId: payload.videoSummaryId,
             youtubeId: payload.youtubeId,
@@ -845,9 +847,10 @@ export class VideoService {
       meta,
       tabs,
       ...(processingStartedAt ? { processingStartedAt } : {}),
-      // The row's latest attempt and its Langfuse trace (P-5): the eval resume
-      // path finds its trace by id instead of by name.
-      ...(summary?.currentRunId
+      // The row's latest attempt and its Langfuse trace (P-5), for the user who
+      // dispatched it only (the eval resume path finds its trace by id): users
+      // attached to a shared row do not see another dispatcher's run.
+      ...(summary?.currentRunId && summary.userId === userId
         ? { runId: summary.currentRunId, traceId: traceIdForRun(summary.currentRunId) }
         : {}),
       // sourceLanguage is conditional — omitted entirely for English-source
