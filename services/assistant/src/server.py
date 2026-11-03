@@ -29,7 +29,7 @@ from src.models.requests import (
 )
 from src.models.responses import ActionResponse
 from src.services.assistant import AssistantService
-from src.services.observability import session_trace, span
+from src.services.observability import chat_trace, span
 from src.services.rag import RAGService
 
 # Trackers are imported alongside their check functions so tests can clear the
@@ -282,8 +282,8 @@ def create_app() -> FastAPI:
         llm_request_id_var.set(request_id)
 
         trace_id = uuid4().hex[:12]
-        async with session_trace(
-            video_id=request.video_id or "",
+        async with chat_trace(
+            video_id=request.video_id,
             user_id=user_id,
             tags=["action", f"action:{request.action}"],
             metadata={"action": request.action, "traceId": trace_id},

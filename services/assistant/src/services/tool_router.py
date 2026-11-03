@@ -195,7 +195,7 @@ class ActionDispatcher:
         # restore the previous value so nothing after dispatch is mislabelled.
         token = llm_feature_var.set(f"assistant:tool:{tool_name}")
         try:
-            async with span(f"tool:{tool_name}"):
+            async with span(f"tool:{tool_name}", as_type="tool"):
                 return await tool.execute(tool_params, context)
         finally:
             llm_feature_var.reset(token)

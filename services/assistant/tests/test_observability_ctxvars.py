@@ -5,7 +5,7 @@ Verifies that:
   llm_user_id_var / llm_request_id_var at request time.
 - Concurrent requests do not leak ctxvar state into each other.
 - The action dispatcher sets llm_feature_var before executing a tool.
-- The /action endpoint opens a session_trace + span (best-effort).
+- The /action endpoint opens a chat_trace + span (best-effort).
 """
 
 from __future__ import annotations

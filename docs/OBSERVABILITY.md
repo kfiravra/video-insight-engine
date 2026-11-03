@@ -61,7 +61,7 @@ Trace: pipeline:{videoSummaryId}
 └── (assembly itself makes no LLM call — pure code; the hero rewrite's wait (`phase:synthesis`), the quiz and moment fill run inside its `phase:assembly` wall)
 ```
 
-For the assistant, one chat session = one trace named `chat:{videoId}` keyed by `userId`/`sessionId`. Tool runs attach as named spans (`tool:concept_explain`, `tool:quiz_generator`, …); the agentic loop's LLM calls are `library_generation` (answer) and `library_agent` (tool-selection) spans/generations — the same names for single-video RAG chat and library chat, since both run `run_agentic_loop`. Query translation logs as `query_translate`. `/action` dispatch opens its own session trace with an `action:{action}` span. The tool router owns the per-tool `llm_feature_var` (`assistant:tool:<name>`, set/reset around dispatch so siblings aren't mislabelled); endpoints set `assistant:rag_chat` / `assistant:library_chat` / `assistant:action:<action>` plus `user_id` / `video_id` / `request_id` so assistant `llm_usage` rows are attributable.
+For the assistant, one chat turn = one trace named `chat:{videoId}` (`chat:library` for library chat), tagged `videoId:<id>`; the turns of one chat share the session `chat-<X-Session-Id>` when the caller sends that header. The user id follows `LANGFUSE_USER_ID_MODE` and is never a tag. Tool runs are `tool`-type observations nested under the loop span that called them (`tool:concept_explain`, `tool:quiz_generator`, …); the agentic loop's LLM calls are `library_generation` (answer) and `library_agent` (tool-selection) spans/generations — the same names for single-video RAG chat and library chat, since both run `run_agentic_loop`. Query translation logs as `query_translate`. `/action` dispatch opens its own trace (tags `action`, `action:{action}`) with an `action:{action}` span. Each named LLM call is a generation opened before the request; a provider failure ends it `ERROR`, a stream the client abandons ends it `WARNING` (`client disconnected`). The tool router owns the per-tool `llm_feature_var` (`assistant:tool:<name>`, set/reset around dispatch so siblings aren't mislabelled); endpoints set `assistant:rag_chat` / `assistant:library_chat` / `assistant:action:<action>` plus `user_id` / `video_id` / `request_id` so assistant `llm_usage` rows are attributable.
 
 ### Admin "Open in Langfuse" deep-link
 
@@ -254,8 +254,8 @@ services/summarizer/src/services/observability/__init__.py   # re-exports, init_
 services/summarizer/src/services/llm_telemetry.py            # open/finish a provider call's generation
 
 services/assistant/src/services/observability/
-├── __init__.py              # public API (adds session_trace, span)
-└── langfuse_client.py       # mirror of summarizer's client + assistant-specific helpers
+├── __init__.py              # re-exports, init_langfuse() bound to settings
+└── traces.py                # chat_trace: the trace of one chat turn
 
 services/summarizer/src/services/pipeline/faithfulness.py   # LLM-as-Judge (the extraction sample)
 services/summarizer/src/services/pipeline/faithfulness_context.py      # claim-localized transcript windows

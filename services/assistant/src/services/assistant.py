@@ -26,7 +26,7 @@ from src.services.agent_loop import (  # noqa: F401 — re-exported budgets
 from src.services.confirmation import ConfirmationGate
 from src.services.context_builder import ContextBuilder
 from src.services.llm_provider import LLMProvider
-from src.services.observability import session_trace
+from src.services.observability import chat_trace
 from src.services.rag import RAGService
 from src.services.tool_router import ActionDispatcher, ToolRouter
 from src.tools.base import BaseTool
@@ -173,7 +173,7 @@ class AssistantService:
             history_len=len(history),
         )
 
-        async with session_trace(
+        async with chat_trace(
             video_id=video_id,
             user_id=user_id,
             session_id=session_id,
@@ -225,8 +225,8 @@ class AssistantService:
             history_len=len(history),
         )
 
-        async with session_trace(
-            video_id="",
+        async with chat_trace(
+            video_id=None,
             user_id=user_id,
             session_id=session_id,
             tags=["library"],

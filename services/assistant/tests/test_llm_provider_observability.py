@@ -1,19 +1,24 @@
 """Tests for the Langfuse instrumentation wired into LLMProvider.
 
-Covers the symmetry between ``complete_with_messages`` and
-``stream_with_messages``: both must emit a generation log when called with
-``span_name`` and both must swallow Langfuse failures.
+Runs the real Langfuse v4 SDK against memory (``langfuse_capture``). Covers the
+symmetry between ``complete_with_messages``, ``complete_with_tools`` and
+``stream_with_messages``: each named call is one generation under the turn's
+trace, finished with usage and metadata, ended ``ERROR`` when the provider
+fails and ``WARNING`` when the client walks away from a stream.
 """
 
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 import pytest
 
+from llm_common.observability.testing import LangfuseCapture
+
+from src.exceptions import LLMError
 from src.services import llm_provider as lp
 from src.services.llm_provider import LLMProvider, _safe_completion_cost
+from src.services.observability import chat_trace
 
 
 def _make_stream_response(chunks):
@@ -36,10 +41,12 @@ def _make_stream_response(chunks):
 
 def _delta_chunk(content: str, finish_reason: str | None = None):
     return SimpleNamespace(
-        choices=[SimpleNamespace(
-            delta=SimpleNamespace(content=content),
-            finish_reason=finish_reason,
-        )],
+        choices=[
+            SimpleNamespace(
+                delta=SimpleNamespace(content=content),
+                finish_reason=finish_reason,
+            )
+        ],
         usage=None,
     )
 
@@ -66,107 +73,225 @@ class TestSafeCompletionCost:
 
         monkeypatch.setattr(lp, "completion_cost", _boom)
         result = _safe_completion_cost(
-            model="anthropic/unknown", prompt_tokens=10, completion_tokens=5,
+            model="anthropic/unknown",
+            prompt_tokens=10,
+            completion_tokens=5,
         )
         assert result == 0.0
 
     def test_should_return_numeric_cost_when_litellm_returns_one(self, monkeypatch):
         monkeypatch.setattr(lp, "completion_cost", lambda **_kw: 0.0042)
         result = _safe_completion_cost(
-            model="anthropic/x", prompt_tokens=10, completion_tokens=5,
+            model="anthropic/x",
+            prompt_tokens=10,
+            completion_tokens=5,
         )
         assert result == pytest.approx(0.0042)
 
     def test_should_return_zero_when_litellm_returns_none(self, monkeypatch):
         monkeypatch.setattr(lp, "completion_cost", lambda **_kw: None)
         result = _safe_completion_cost(
-            model="anthropic/x", prompt_tokens=10, completion_tokens=5,
+            model="anthropic/x",
+            prompt_tokens=10,
+            completion_tokens=5,
         )
         assert result == 0.0
 
 
-class TestStreamWithMessagesObservability:
-    """stream_with_messages must emit a generation log on success."""
+def _rate_limited():
+    from litellm.exceptions import RateLimitError
 
-    @pytest.mark.asyncio
-    async def test_should_record_generation_when_span_name_set(self, monkeypatch):
+    return RateLimitError(
+        message="rate limited", model="anthropic/claude-sonnet-4-6", llm_provider="anthropic"
+    )
+
+
+def _completion(content: str = "answer", tool_calls=None):
+    message = SimpleNamespace(content=content, tool_calls=tool_calls)
+    return SimpleNamespace(
+        choices=[SimpleNamespace(message=message, finish_reason="stop")],
+        usage=SimpleNamespace(prompt_tokens=20, completion_tokens=4),
+    )
+
+
+class TestStreamWithMessagesObservability:
+    """stream_with_messages records one generation, finished when the stream ends."""
+
+    async def test_should_record_generation_when_span_name_set(
+        self, monkeypatch, langfuse_capture: LangfuseCapture
+    ):
         captured_kwargs: dict = {}
 
         async def _fake_acompletion(**kwargs):
             captured_kwargs.update(kwargs)
-            return _make_stream_response([
-                _delta_chunk("Hello", finish_reason=None),
-                _delta_chunk(" world", finish_reason="stop"),
-                _usage_chunk(prompt_tokens=12, completion_tokens=3),
-            ])
+            return _make_stream_response(
+                [
+                    _delta_chunk("Hello", finish_reason=None),
+                    _delta_chunk(" world", finish_reason="stop"),
+                    _usage_chunk(prompt_tokens=12, completion_tokens=3),
+                ]
+            )
 
-        log_mock = MagicMock()
         monkeypatch.setattr(lp, "acompletion", _fake_acompletion)
-        monkeypatch.setattr(lp, "log_generation", log_mock)
         monkeypatch.setattr(lp, "completion_cost", lambda **_kw: 0.0)
 
         provider = LLMProvider(model="anthropic/claude-sonnet-4-6")
         tokens: list[str] = []
-        async for tok in provider.stream_with_messages(
-            messages=[{"role": "user", "content": "hi"}],
-            span_name="rag_generation",
-            span_metadata={"sourcesCount": 2},
-        ):
-            tokens.append(tok)
+        async with chat_trace(video_id="yt1"):
+            async for tok in provider.stream_with_messages(
+                messages=[{"role": "user", "content": "hi"}],
+                span_name="rag_generation",
+                span_metadata={"sourcesCount": 2},
+            ):
+                tokens.append(tok)
 
         assert tokens == ["Hello", " world"]
         # OpenAI/compatible providers need this flag for usage in the final chunk
         assert captured_kwargs.get("stream_options") == {"include_usage": True}
-        log_mock.assert_called_once()
-        kw = log_mock.call_args.kwargs
-        assert kw["name"] == "rag_generation"
-        assert kw["input_tokens"] == 12
-        assert kw["output_tokens"] == 3
-        assert kw["output_payload"] == "Hello world"
-        assert kw["metadata"]["streamed"] is True
-        assert kw["metadata"]["sourcesCount"] == 2
-        assert kw["metadata"]["finishReason"] == "stop"
+        (gen,) = langfuse_capture.generations("rag_generation")
+        assert gen.parent == "chat:yt1"
+        assert gen.usage == {"input": 12, "output": 3, "total": 15}
+        assert gen.attr("output") == "Hello world"
+        assert gen.metadata["streamed"] is True
+        assert gen.metadata["sourcesCount"] == 2
+        assert gen.metadata["finishReason"] == "stop"
 
-    @pytest.mark.asyncio
-    async def test_should_skip_logging_when_no_span_name(self, monkeypatch):
+    async def test_should_skip_logging_when_no_span_name(
+        self, monkeypatch, langfuse_capture: LangfuseCapture
+    ):
         async def _fake_acompletion(**_kwargs):
             return _make_stream_response([_delta_chunk("ok", finish_reason="stop")])
 
-        log_mock = MagicMock()
         monkeypatch.setattr(lp, "acompletion", _fake_acompletion)
-        monkeypatch.setattr(lp, "log_generation", log_mock)
 
         provider = LLMProvider(model="anthropic/claude-sonnet-4-6")
-        async for _ in provider.stream_with_messages(
-            messages=[{"role": "user", "content": "hi"}],
-        ):
-            pass
-
-        log_mock.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_should_skip_logging_when_stream_raises(self, monkeypatch):
-        from litellm.exceptions import RateLimitError
-
-        async def _fake_acompletion(**_kwargs):
-            raise RateLimitError(
-                message="rate limited",
-                model="anthropic/claude-sonnet-4-6",
-                llm_provider="anthropic",
-            )
-
-        log_mock = MagicMock()
-        monkeypatch.setattr(lp, "acompletion", _fake_acompletion)
-        monkeypatch.setattr(lp, "log_generation", log_mock)
-
-        provider = LLMProvider(model="anthropic/claude-sonnet-4-6")
-        from src.exceptions import LLMError
-
-        with pytest.raises(LLMError):
+        async with chat_trace(video_id="yt1"):
             async for _ in provider.stream_with_messages(
                 messages=[{"role": "user", "content": "hi"}],
-                span_name="rag_generation",
             ):
                 pass
 
-        log_mock.assert_not_called()
+        assert langfuse_capture.generations() == []
+
+    async def test_should_end_the_generation_as_error_when_the_stream_raises(
+        self, monkeypatch, langfuse_capture: LangfuseCapture
+    ):
+        async def _fake_acompletion(**_kwargs):
+            raise _rate_limited()
+
+        monkeypatch.setattr(lp, "acompletion", _fake_acompletion)
+
+        provider = LLMProvider(model="anthropic/claude-sonnet-4-6")
+        async with chat_trace(video_id="yt1"):
+            with pytest.raises(LLMError):
+                async for _ in provider.stream_with_messages(
+                    messages=[{"role": "user", "content": "hi"}],
+                    span_name="rag_generation",
+                ):
+                    pass
+
+        (gen,) = langfuse_capture.generations("rag_generation")
+        assert gen.level == "ERROR"
+        assert gen.attr("status_message").startswith("LLMError: ")
+
+    async def test_should_end_the_generation_as_a_warning_when_the_client_disconnects(
+        self, monkeypatch, langfuse_capture: LangfuseCapture
+    ):
+        async def _fake_acompletion(**_kwargs):
+            return _make_stream_response([_delta_chunk("a"), _delta_chunk("b")])
+
+        monkeypatch.setattr(lp, "acompletion", _fake_acompletion)
+
+        provider = LLMProvider(model="anthropic/claude-sonnet-4-6")
+        async with chat_trace(video_id="yt1"):
+            stream = provider.stream_with_messages(
+                messages=[{"role": "user", "content": "hi"}], span_name="rag_generation"
+            )
+            assert await stream.__anext__() == "a"
+            await stream.aclose()
+
+        (gen,) = langfuse_capture.generations("rag_generation")
+        assert (gen.level, gen.attr("status_message")) == ("WARNING", "client disconnected")
+
+
+class TestCompletionObservability:
+    """The non-streamed paths record their generation the same way."""
+
+    async def test_complete_with_messages_records_usage_and_cost(
+        self, monkeypatch, langfuse_capture: LangfuseCapture
+    ):
+        async def _fake_acompletion(**_kwargs):
+            return _completion("answer")
+
+        monkeypatch.setattr(lp, "acompletion", _fake_acompletion)
+        monkeypatch.setattr(lp, "completion_cost", lambda **_kw: 0.0021)
+
+        provider = LLMProvider(model="anthropic/claude-sonnet-4-6")
+        async with chat_trace(video_id="yt1"):
+            out = await provider.complete_with_messages(
+                [{"role": "user", "content": "hi"}], span_name="query_translate"
+            )
+
+        assert out == "answer"
+        (gen,) = langfuse_capture.generations("query_translate")
+        assert (gen.model, gen.usage, gen.cost) == (
+            "anthropic/claude-sonnet-4-6",
+            {"input": 20, "output": 4, "total": 24},
+            {"total": 0.0021},
+        )
+
+    async def test_complete_with_tools_records_the_tool_call_count(
+        self, monkeypatch, langfuse_capture: LangfuseCapture
+    ):
+        call = SimpleNamespace(
+            id="c1", function=SimpleNamespace(name="quiz_generator", arguments="{}")
+        )
+
+        async def _fake_acompletion(**_kwargs):
+            return _completion(None, tool_calls=[call])
+
+        monkeypatch.setattr(lp, "acompletion", _fake_acompletion)
+        monkeypatch.setattr(lp, "completion_cost", lambda **_kw: 0.0)
+
+        provider = LLMProvider(model="anthropic/claude-sonnet-4-6")
+        async with chat_trace(video_id="yt1"):
+            result = await provider.complete_with_tools(
+                [{"role": "user", "content": "quiz me"}], tools=[], span_name="library_agent"
+            )
+
+        assert [c["name"] for c in result.tool_calls] == ["quiz_generator"]
+        (gen,) = langfuse_capture.generations("library_agent")
+        assert gen.metadata["toolCallCount"] == 1
+
+    async def test_failed_completion_ends_its_generation_as_error(
+        self, monkeypatch, langfuse_capture: LangfuseCapture
+    ):
+        async def _fake_acompletion(**_kwargs):
+            raise _rate_limited()
+
+        monkeypatch.setattr(lp, "acompletion", _fake_acompletion)
+
+        provider = LLMProvider(model="anthropic/claude-sonnet-4-6")
+        async with chat_trace(video_id="yt1"):
+            with pytest.raises(LLMError):
+                await provider.complete_with_messages(
+                    [{"role": "user", "content": "hi"}], span_name="query_translate"
+                )
+
+        (gen,) = langfuse_capture.generations("query_translate")
+        assert gen.level == "ERROR"
+        assert gen.attr("status_message").startswith("RateLimitError: ")
+
+    async def test_records_nothing_outside_a_turn(self, monkeypatch, langfuse_capture):
+        async def _fake_acompletion(**_kwargs):
+            return _completion("answer")
+
+        monkeypatch.setattr(lp, "acompletion", _fake_acompletion)
+        monkeypatch.setattr(lp, "completion_cost", lambda **_kw: 0.0)
+
+        provider = LLMProvider(model="anthropic/claude-sonnet-4-6")
+        await provider.complete_with_messages(
+            [{"role": "user", "content": "hi"}], span_name="query_translate"
+        )
+
+        assert langfuse_capture.observations() == []
