@@ -3,7 +3,6 @@ import { Check, Clock, LayoutGrid, List } from 'lucide-react';
 
 import { Lightbox } from '@/components/vie';
 import { useTabState } from '@/features/video-output/contexts/TabStateContext';
-import { useFocusBand } from '@/features/video-output/hooks/use-focus-band';
 import { cn } from '@/lib/utils';
 import { usePrefersReducedMotion } from '@/hooks/use-prefers-reduced-motion';
 
@@ -149,13 +148,6 @@ export const MomentTrack = memo(function MomentTrack({
     }
     return max || 1;
   }, [items]);
-
-  // Scroll focus band (timeline only). Playback position OVERRIDES scroll
-  // focus: while an active row exists the observer is torn down and the
-  // active row holds the grown state instead.
-  const focusBandEnabled =
-    view === 'timeline' && !reducedMotion && activeIndex < 0 && filtered.length >= 3;
-  const { setRef } = useFocusBand({ enabled: focusBandEnabled, count: filtered.length });
 
   const handleViewChange = (next: MomentView): void => {
     setChosenView(next);
@@ -372,13 +364,10 @@ export const MomentTrack = memo(function MomentTrack({
                   onSeek={onSeek}
                   onExpand={handleExpand}
                   onShare={handleShare}
-                  setFocusRef={focusBandEnabled ? setRef : undefined}
                 />
               ))}
             </ol>
           </div>
-          {/* Trailing room so the last rows can still reach the focus band. */}
-          {focusBandEnabled && <div aria-hidden="true" className="h-[30vh]" />}
         </>
       )}
 

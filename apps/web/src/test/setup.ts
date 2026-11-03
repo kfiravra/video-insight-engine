@@ -93,7 +93,7 @@ class IntersectionObserverMock {
   takeRecords = vi.fn().mockReturnValue([]);
 }
 
-// writable+configurable so individual tests (e.g. use-focus-band) can swap in
+// writable+configurable so individual tests can swap in
 // a controllable observer and restore this inert default afterwards.
 Object.defineProperty(window, "IntersectionObserver", {
   writable: true,
