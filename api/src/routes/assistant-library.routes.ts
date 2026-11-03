@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { RateLimitedError } from '../utils/errors.js';
 import { disableSocketInactivityTimeout } from '../utils/sse.js';
+import { readSessionId } from '../plugins/request-id.js';
 
 // How many owned videos to fold into a single library-mode query. Bounded so a
 // power user's library can't balloon the assistant request body unboundedly.
@@ -87,6 +88,7 @@ export async function assistantLibraryRoutes(fastify: FastifyInstance) {
         confirmToken: parsed.data.confirmToken,
         userId: req.user.userId,
         requestId: req.id,
+        sessionId: readSessionId(req.headers),
         signal: upstreamAbort.signal,
       });
 
@@ -179,6 +181,7 @@ export async function assistantLibraryRoutes(fastify: FastifyInstance) {
         sources: parsed.data.sources,
         userId: req.user.userId,
         requestId: req.id,
+        sessionId: readSessionId(req.headers),
       });
 
       return reply.status(status).send(body);

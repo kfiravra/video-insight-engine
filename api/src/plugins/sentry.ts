@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import fp from 'fastify-plugin';
 import { ZodError } from 'zod';
 import { AppError } from '../utils/errors.js';
+import { readSessionId } from './request-id.js';
 
 /**
  * Shape of the subset of the Sentry event envelope we inspect in `beforeSend`.
@@ -236,6 +237,8 @@ async function sentryFastifySetup(fastify: FastifyInstance): Promise<void> {
 
     Sentry.withScope((scope) => {
       scope.setTag('requestId', request.id);
+      const sessionId = readSessionId(request.headers);
+      if (sessionId) scope.setTag('sessionId', sessionId);
       scope.setTag('method', request.method);
       // Prefer the route template (`/api/videos/:id`); fall back to the raw
       // URL with query string scrubbed of credentials.

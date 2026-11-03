@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { RateLimitedError, VideoNotFoundError } from '../utils/errors.js';
 import { disableSocketInactivityTimeout } from '../utils/sse.js';
 import { actionParamsSchema } from '../schemas/assistant.schema.js';
+import { readSessionId } from '../plugins/request-id.js';
 import type { AssistantAction } from '../services/assistant-client.js';
 
 const chatBodySchema = z.object({
@@ -73,6 +74,7 @@ export async function assistantRoutes(fastify: FastifyInstance) {
         conversationHistory: parsed.data.conversationHistory,
         confirmToken: parsed.data.confirmToken,
         requestId: req.id,
+        sessionId: readSessionId(req.headers),
         signal: upstreamAbort.signal,
       });
 
@@ -160,6 +162,7 @@ export async function assistantRoutes(fastify: FastifyInstance) {
         action: parsed.data.action satisfies AssistantAction,
         params: parsed.data.params,
         requestId: req.id,
+        sessionId: readSessionId(req.headers),
       });
 
       return reply.status(status).send(body);

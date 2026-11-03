@@ -32,6 +32,8 @@ export interface SubmitVideoInput {
   clientKey?: string;
   /** Originating request id, propagated into the pipeline and log context. */
   requestId?: string;
+  /** The chat session that asked for the video (the assistant's generate tool, D8). */
+  chatSessionId?: string;
 }
 
 /** Snapshot of an already-created video returned on a duplicate submission. */
@@ -150,6 +152,7 @@ export class VideoSubmissionService {
         queuePlan: billing.queuePlan,
         requestId: input.requestId,
         billingRunId: billing.run?.requestId,
+        chatSessionId: input.chatSessionId,
         ...(serveOnly && { serveOnly }),
       });
     } catch (err) {

@@ -212,6 +212,30 @@ describe('assistant routes', () => {
       expect(arg.requestId).toBe(incoming);
     });
 
+    it('should forward a valid X-Session-Id as the assistant sessionId', async () => {
+      mockContainer.videoRepository.userHasAccessToSummary.mockResolvedValue(true);
+
+      const encoder = new TextEncoder();
+      const mockStream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode('data: {"type":"done"}\n\n'));
+          controller.close();
+        },
+      });
+      mockContainer.assistantClient.chat.mockResolvedValue(mockStream);
+
+      const incoming = 'chat-session-abcdef12';
+      await app.inject({
+        method: 'POST',
+        url: `/api/videos/${validVideoSummaryId}/chat`,
+        headers: { authorization: authHeader, 'x-session-id': incoming },
+        payload: { message: 'hi' },
+      });
+
+      const arg = mockContainer.assistantClient.chat.mock.calls[0][0];
+      expect(arg.sessionId).toBe(incoming);
+    });
+
     it('should pass an abort signal tied to the request to the assistant client', async () => {
       mockContainer.videoRepository.userHasAccessToSummary.mockResolvedValue(true);
 

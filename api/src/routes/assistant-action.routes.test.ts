@@ -81,6 +81,24 @@ describe('assistant action proxy route', () => {
     );
   });
 
+  it('should forward the chat session header as sessionId', async () => {
+    mockContainer.assistantClient.action.mockResolvedValue({
+      status: 200,
+      body: { type: 'organized', message: 'done', trace_id: 't1' },
+    });
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/assistant/action',
+      headers: { authorization: authHeader, 'x-session-id': 'chat-session-abcdef12' },
+      payload: { action: 'organize_library' },
+    });
+
+    expect(mockContainer.assistantClient.action).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'chat-session-abcdef12' }),
+    );
+  });
+
   it('should forward video_id for a video-scoped action', async () => {
     mockContainer.assistantClient.action.mockResolvedValue({
       status: 200,
