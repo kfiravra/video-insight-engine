@@ -1,6 +1,6 @@
 """Pipeline entry for the summarizer service.
 
-Opens the Langfuse parent trace, serves the Redis response-cache fast path,
+Serves the Redis response-cache fast path, opens the Langfuse run trace,
 builds the run's context and hands it to the phase orchestration
 (:mod:`src.routes.pipeline_orchestration`, which also spawns the
 fire-and-forget faithfulness judge). The broker fan-out (which republishes
@@ -36,7 +36,7 @@ from src.routes.pipeline_orchestration import run_pipeline_phases
 from src.services.cache.response_cache import response_cache
 from src.services.llm import LLMService
 from src.services.media.hires_prefetch import LocalHiresSource, LocalLowresSource
-from src.services.observability import pipeline_trace, update_trace_metadata
+from src.services.observability import run_trace
 from src.services.override_state import clear_override
 from src.services.pipeline.context import PipelineContext
 from src.services.pipeline.pipeline_helpers import PipelineTimer, sse_event
@@ -77,6 +77,83 @@ async def _complete_from_cache(
     )
 
 
+def _valid_cached_payload(cached: Any, youtube_id: str) -> bool:
+    """A Redis payload is served only when it is a completed, intact response."""
+    if not isinstance(cached, dict):
+        return False
+    cached_meta = cached.get("meta", {})
+    tabs = cached.get("tabs")
+    return (
+        cached.get("status") == ProcessingStatus.COMPLETED.value
+        and cached.get("youtubeId") == youtube_id  # Verify cache integrity
+        and isinstance(tabs, list)  # Required field present
+        and len(tabs) > 0  # Reject empty tab lists
+        and isinstance(tabs[0], dict)  # Spot-check first tab
+        and isinstance(cached_meta, dict)
+        and len(cached_meta) > 0  # Reject empty meta
+    )
+
+
+def _spawn_cache_completion(
+    repository: MongoDBVideoRepository, video_summary_id: str, cached: dict[str, Any]
+) -> None:
+    """Fire-and-forget DB save + completed status, so the fast path never waits on it."""
+    task = asyncio.create_task(_complete_from_cache(repository, video_summary_id, cached))
+    task.add_done_callback(
+        lambda t, vid=video_summary_id: (
+            logger.error("Cache-hit DB save failed for %s: %s", vid, t.exception())
+            if t.exception()
+            else None
+        )
+    )
+
+
+def _run_trace_args(
+    entry: dict[str, Any],
+    *,
+    youtube_id: str,
+    video_summary_id: str,
+    user_id: str | None,
+    request_id: str | None,
+    run_path: str,
+) -> dict[str, Any]:
+    """The Langfuse trace of one run: name, session, tags and metadata.
+
+    One session per video row (``pipeline-<videoSummaryId>``) groups its runs
+    (first run, bypass, regenerate, retries). ``requestId`` is only added when
+    present, so ``null`` never pollutes dashboards; the user id goes through
+    the ``LANGFUSE_USER_ID_MODE`` policy and is never copied into metadata.
+    """
+    tags = [
+        f"youtubeId:{youtube_id}",
+        f"videoSummaryId:{video_summary_id}",
+        f"path:{run_path}",
+    ]
+    metadata: dict[str, Any] = {
+        "youtubeId": youtube_id,
+        "videoSummaryId": video_summary_id,
+        "language": entry.get("language"),
+        "path": run_path,
+    }
+    if request_id:
+        tags.append(f"requestId:{request_id}")
+        metadata["requestId"] = request_id
+    # D25: the API stamps eval-user rows; their results stay private.
+    if entry.get("evalRun"):
+        metadata["evalRun"] = True
+    # 1a.7: the API stamps admin/eval benchmark rows that must measure cold media.
+    if entry.get("coldMedia"):
+        metadata["coldMedia"] = True
+    return {
+        "name": f"pipeline:{video_summary_id}",
+        "session_id": f"pipeline-{video_summary_id}",
+        "user_id": user_id,
+        "tags": tags,
+        "metadata": metadata,
+        "input": {"youtubeId": youtube_id, "videoSummaryId": video_summary_id},
+    }
+
+
 def _resolve_run_attribution(
     entry: dict[str, Any], ctxvars: dict[str, Any]
 ) -> tuple[str | None, str | None]:
@@ -114,6 +191,7 @@ async def stream_summarization(
     repository: MongoDBVideoRepository,
     llm_service: LLMService,
     force_refresh: bool = False,
+    run_path: str = "sse",
 ) -> AsyncGenerator[str, None]:
     """One pipeline run: metadata -> text branch (transcript -> tier probe -> plan ∥
     memory) ∥ frames [∥ field groups] -> extraction -> quiz ∥ synthesis -> assembly ->
@@ -129,6 +207,9 @@ async def stream_summarization(
     (via the worker payload OR the ``forceRefresh`` flag the API stamps on
     the fresh cache row — the row flag covers the case where an SSE client
     wins the producer lock before the worker).
+
+    ``run_path`` names the entry path on the trace: ``worker`` (queue),
+    ``sse`` (the stream's own producer) or ``dev`` (dev-tools override).
     """
     timer = PipelineTimer()
     force_refresh = force_refresh or bool(entry.get("forceRefresh"))
@@ -139,16 +220,10 @@ async def stream_summarization(
             yield sse_event("error", {"message": "YouTube ID not found"})
             return
 
-        # Open the Langfuse parent trace BEFORE the cache lookup so cache
-        # hits are observable too. Without this, the Redis-hit fast path
-        # produced zero spans and dashboards under-counted the actual
-        # request volume. ``cacheHit`` is set via ``update_trace_metadata``
-        # once the cache lookup resolves.
         # ``requestId`` comes from the worker's contextvars on the queue path and
         # from the dispatching ``POST /summarize`` (stamped on the row) on the
         # SSE path, so Sentry events, log lines, and Langfuse traces share the
-        # api's correlation id. Only added when present — we don't want
-        # ``null`` polluting Langfuse dashboards.
+        # api's correlation id.
         user_id, request_id = _resolve_run_attribution(
             entry, structlog.contextvars.get_contextvars()
         )
@@ -164,74 +239,32 @@ async def stream_summarization(
         if request_id:
             llm_request_id_var.set(request_id)
 
-        trace_tags = [f"youtubeId:{youtube_id}", f"videoSummaryId:{video_summary_id}"]
-        trace_metadata: dict[str, Any] = {
-            "youtubeId": youtube_id,
-            "videoSummaryId": video_summary_id,
-            "userId": user_id,
-            "language": entry.get("language"),
-        }
-        if request_id:
-            trace_tags.append(f"requestId:{request_id}")
-            trace_metadata["requestId"] = request_id
-        # D25: the API stamps eval-user rows; their results stay private.
+        # Redis fast path (same YouTube video = instant serve). It runs BEFORE
+        # the trace opens: a cache hit is no pipeline run and opens no trace.
+        if settings.REDIS_ENABLED and not force_refresh:
+            try:
+                cached = await response_cache.get_response(youtube_id)
+                if cached is not None and _valid_cached_payload(cached, youtube_id):
+                    logger.info("[pipeline] Redis cache HIT for youtube_id=%s", youtube_id)
+                    if entry.get("status") != ProcessingStatus.COMPLETED.value:
+                        _spawn_cache_completion(repository, video_summary_id, cached)
+                    async for event in _stream_cached_structured(video_summary_id, cached):
+                        yield event
+                    return
+            except (OSError, redis_exceptions.ConnectionError) as e:
+                logger.debug("Redis cache check failed (non-critical): %s", e)
+
         eval_run = bool(entry.get("evalRun"))
-        if eval_run:
-            trace_metadata["evalRun"] = True
-        # 1a.7: the API stamps admin/eval benchmark rows that must measure cold media.
         cold_media = bool(entry.get("coldMedia"))
-        if cold_media:
-            trace_metadata["coldMedia"] = True
-        async with pipeline_trace(
-            video_summary_id,
-            tags=trace_tags,
-            metadata=trace_metadata,
+        trace_args = _run_trace_args(
+            entry,
+            youtube_id=youtube_id,
+            video_summary_id=video_summary_id,
             user_id=user_id,
-        ):
-            # Check Redis cache first (same YouTube video = instant serve)
-            if settings.REDIS_ENABLED and not force_refresh:
-                try:
-                    cached = await response_cache.get_response(youtube_id)
-                    cached_meta = cached.get("meta", {}) if isinstance(cached, dict) else {}
-                    if (
-                        cached
-                        and isinstance(cached, dict)
-                        and cached.get("status") == ProcessingStatus.COMPLETED.value
-                        and cached.get("youtubeId") == youtube_id  # Verify cache integrity
-                        and isinstance(cached.get("tabs"), list)  # Required field present
-                        and len(cached["tabs"]) > 0  # Reject empty tab lists
-                        and isinstance(cached["tabs"][0], dict)  # Spot-check first tab
-                        and isinstance(cached_meta, dict)
-                        and len(cached_meta) > 0  # Reject empty meta
-                    ):
-                        logger.info("[pipeline] Redis cache HIT for youtube_id=%s", youtube_id)
-                        update_trace_metadata({"cacheHit": True, "cacheSource": "redis"})
-                        # Fire-and-forget DB save + completed status — don't block
-                        # the cache-hit fast path
-                        if entry.get("status") != ProcessingStatus.COMPLETED.value:
-                            _vid_id = video_summary_id  # capture for lambda
-                            task = asyncio.create_task(
-                                _complete_from_cache(repository, video_summary_id, cached)
-                            )
-                            task.add_done_callback(
-                                lambda t, vid=_vid_id: (
-                                    logger.error(
-                                        "Cache-hit DB save failed for %s: %s",
-                                        vid,
-                                        t.exception(),
-                                    )
-                                    if t.exception()
-                                    else None
-                                )
-                            )
-                        async for event in _stream_cached_structured(video_summary_id, cached):
-                            yield event
-                        return
-                except (OSError, redis_exceptions.ConnectionError) as e:
-                    logger.debug("Redis cache check failed (non-critical): %s", e)
-
-            update_trace_metadata({"cacheHit": False})
-
+            request_id=request_id,
+            run_path=run_path,
+        )
+        async with run_trace(**trace_args):
             await asyncio.to_thread(
                 repository.update_status, video_summary_id, ProcessingStatus.PROCESSING
             )

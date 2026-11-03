@@ -52,7 +52,12 @@ from src.services.llm_model_rules import (
     request_for_model,
 )
 from src.services.llm_streaming import stream_completion
-from src.services.llm_telemetry import record_generation, stopwatch_ms_since
+from src.services.llm_telemetry import (
+    open_generation,
+    record_generation,
+    record_generation_failure,
+    stopwatch_ms_since,
+)
 from src.services.pipeline.pipeline_timing import record_llm_call, record_llm_failure
 
 logger = logging.getLogger(__name__)
@@ -194,20 +199,39 @@ class LLMProvider:
         return streamed.response, streamed.ttft_ms
 
     async def _ask(self, call: ProviderCall, model: str) -> ModelAnswer:
-        """Send ``call`` to ``model``, shaped by that model's request rules."""
+        """Send ``call`` to ``model``, shaped by that model's request rules.
+
+        A named span opens its Langfuse generation here, before the send, so the
+        generation's start/end are the call's; a failed or cancelled send ends it.
+        """
         sent = request_for_model(
             {**call.request, "model": model}, temperature=call.temperature, effort=call.effort
         )
-        start_monotonic = time.monotonic()
-        response, ttft_ms = await self._send(
-            sent,
-            call.on_first_chunk,
-            context=call.context,
-            span_name=call.span_name,
-            attempt=call.attempt,
+        generation = (
+            open_generation(
+                span_name=call.span_name,
+                model=model,
+                msg_dicts=sent["messages"],
+                model_parameters=model_parameters(sent),
+                metadata=call.span_metadata,
+            )
+            if call.span_name
+            else None
         )
+        start_monotonic = time.monotonic()
+        try:
+            response, ttft_ms = await self._send(
+                sent,
+                call.on_first_chunk,
+                context=call.context,
+                span_name=call.span_name,
+                attempt=call.attempt,
+            )
+        except BaseException as exc:
+            record_generation_failure(generation, exc)
+            raise
         latency_ms = stopwatch_ms_since(start_monotonic)
-        return ModelAnswer(model, sent, response, start_monotonic, latency_ms, ttft_ms)
+        return ModelAnswer(model, sent, response, start_monotonic, latency_ms, ttft_ms, generation)
 
     def _log_generation(
         self,
@@ -216,20 +240,18 @@ class LLMProvider:
         content: str,
         extra: dict[str, Any] | None = None,
     ) -> None:
-        """The Langfuse generation of one answer (only for a named span)."""
+        """Finish the answer's Langfuse generation (only a named span has one)."""
         if not call.span_name:
             return
         metadata = {**(call.span_metadata or {}), **extra} if extra else call.span_metadata
         record_generation(
+            handle=answer.generation,
             span_name=call.span_name,
-            model=answer.model,
-            msg_dicts=answer.sent["messages"],
-            content=content,
             response=answer.response,
+            content=content,
             latency_ms=answer.latency_ms,
             finish_reason=answer.response.choices[0].finish_reason,
             extra_metadata=metadata,
-            model_parameters=model_parameters(answer.sent),
         )
 
     def _accept(

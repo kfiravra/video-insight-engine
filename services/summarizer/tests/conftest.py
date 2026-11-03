@@ -66,6 +66,26 @@ LITELLM_CALLBACK_LISTS = (
 
 
 @pytest.fixture
+def langfuse_capture():
+    """The real Langfuse v4 SDK exporting to memory; see ``tests/langfuse_capture.py``."""
+    from llm_common.observability.testing import start_capture, stop_capture
+
+    capture = start_capture()
+    yield capture
+    stop_capture()
+
+
+@pytest.fixture(autouse=True)
+def _langfuse_disabled():
+    """Every test starts and ends with the shared Langfuse client disabled."""
+    from llm_common.observability import client as shared_client
+
+    shared_client._reset_for_tests()
+    yield
+    shared_client._reset_for_tests()
+
+
+@pytest.fixture
 def fresh_litellm_callbacks(monkeypatch):
     """Empty LiteLLM callback lists for one test, restored afterwards — a logger a
     test registers never leaks into another test's calls."""

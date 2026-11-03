@@ -54,10 +54,9 @@ The producer calls **`stream_summarization()`** (`routes/pipeline_runner.py`), w
 
 1. Reads `youtubeId` + `userId` + `requestId` from the Mongo `entry` and structlog contextvars; `evalRun` (eval-user row, D25) and `coldMedia` (admin/eval benchmark: skip the S3 transcript + scene-frame caches) from the row.
 2. Sets LLM cost-tracking contextvars (`llm_video_id_var`, `llm_user_id_var`, `llm_request_id_var`, `llm_video_summary_id_var`) — so every `llm_usage` row this run writes is attributable to user/video/run/request.
-3. Opens the **Langfuse parent trace** (`pipeline_trace`) — opened *before* the cache lookup so even cache hits are observable.
-4. **Redis cache check**: if `response_cache.get_response(youtube_id)` returns a completed payload → stream it instantly (`$0.00`, the "same video = instant serve") and return. (Skipped when `force_refresh=True` — set by the dev provider-override flow, by `bypassCache=true` submissions via the worker payload, or by the `forceRefresh` flag the api stamps on the version row.)
-5. On miss → sets Mongo status `PROCESSING`, clears any stale `transcriptMeta`, mirrors the status to the API, builds the **`PipelineContext`** (with the run's two download handles, `LocalLowresSource` / `LocalHiresSource`) and hands it to **`run_pipeline_phases()`** (`routes/pipeline_orchestration.py`).
-6. Any exception → `pipeline_failures.classify_run_failure` → status `FAILED` + error code, a user-safe `error` event.
+3. **Redis cache check**: if `response_cache.get_response(youtube_id)` returns a completed payload → stream it instantly (`$0.00`, the "same video = instant serve") and return. (Skipped when `force_refresh=True` — set by the dev provider-override flow, by `bypassCache=true` submissions via the worker payload, or by the `forceRefresh` flag the api stamps on the version row.) A hit opens no Langfuse trace.
+4. On miss → opens the **Langfuse run trace** (`run_trace`, session `pipeline-<videoSummaryId>`, tag `path:worker|sse|dev`), sets Mongo status `PROCESSING`, clears any stale `transcriptMeta`, mirrors the status to the API, builds the **`PipelineContext`** (with the run's two download handles, `LocalLowresSource` / `LocalHiresSource`) and hands it to **`run_pipeline_phases()`** (`routes/pipeline_orchestration.py`).
+5. Any exception → `pipeline_failures.classify_run_failure` → status `FAILED` + error code, a user-safe `error` event.
 
 ---
 
@@ -349,7 +348,7 @@ Output-quality phases 0b, 1 and 2.0 (the output-quality task, 2026-10) reworked 
 ### Transcript provenance write · `routes/pipeline_orchestration.py:_record_transcript_outcome`
 
 - Called from the `finally` around the phase-2 group: builds the block with `transcription/transcript_meta.build_transcript_meta()` and persists it through `repository.set_transcript_meta()` — a dedicated `$set`-only writer (`save_structured_result` would `$unset` the `forceRefresh` bypass marker mid-run).
-- Runs for successful **and** failed fetches (a `TranscriptError` still propagates afterwards) and lives inside the Langfuse `pipeline_trace`, mirroring `transcriptSource` / `transcriptType` / `transcriptAttempted` / `transcriptOutcome` onto the trace.
+- Runs for successful **and** failed fetches (a `TranscriptError` still propagates afterwards) and lives inside the Langfuse `run_trace`, mirroring `transcriptSource` / `transcriptType` / `transcriptAttempted` / `transcriptOutcome` onto the trace.
 - `clear_transcript_meta()` runs at the `processing` transition and on the Redis fast path, so a row re-run on the same `_id` never keeps a stale block. Field shape: [DATA-MODELS.md](./DATA-MODELS.md).
 
 ### Translation · `phases/translation.py` → `pipeline/translation.py` *(non-English only)*
@@ -563,9 +562,8 @@ Concrete traces showing which branch fires for common inputs (default settings).
 
 | Step | What happens |
 |------|--------------|
-| Entry | `stream_summarization` opens the Langfuse trace (so the hit is counted). |
+| Entry | `stream_summarization` checks Redis before it opens any Langfuse trace: a hit is no run and opens none. |
 | **Cache** | `response_cache.get_response(youtube_id)` returns the completed payload, integrity-checked (`status=completed`, matching `youtubeId`, non-empty `tabs`, non-empty `meta`). |
-| Trace | `update_trace_metadata({cacheHit: True})`. |
 | DB | If this user's doc isn't `completed`, a **fire-and-forget** save copies it (clearing any stale `transcriptMeta` first), then reports `completed` with `cacheHit: true` on `POST /internal/status`, so vie-api releases the run's minutes hold as a cached serve instead of settling a run that never ran (review I3). |
 | Stream | `routes/cached_response.py:stream_cached_structured` replays the stored result: `cached`, `metadata`, `triage_complete`, `meta`, every tab once `final: true` at its index, `synthesis_complete`, `done`. **Zero LLM calls, $0.00.** |
 

@@ -35,13 +35,14 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 from litellm.cost_calculator import completion_cost
 from litellm.exceptions import RateLimitError
 from llm_common.context import llm_feature_var, llm_refused_model_var
 
+from src.services.observability import span
 from src.services.pipeline.cache_rewrites import rewrite_counts
 
 logger = logging.getLogger(__name__)
@@ -148,10 +149,6 @@ class PipelineTimingRecorder:
         ts = time.monotonic() if monotonic_ts is None else monotonic_ts
         return max(0, int((ts - self.started_monotonic) * 1000))
 
-    def wall_time(self, offset_ms: int) -> datetime:
-        """Absolute timestamp of an offset — Langfuse spans need datetimes."""
-        return self.started_at + timedelta(milliseconds=offset_ms)
-
     def add_phase(self, name: str, start_monotonic: float, end_monotonic: float) -> None:
         start_ms = self.offset_ms(start_monotonic)
         end_ms = self.offset_ms(end_monotonic)
@@ -257,10 +254,15 @@ def start_run_timing() -> PipelineTimingRecorder:
 
 @contextmanager
 def timed_step(name: str) -> Iterator[None]:
-    """Record a named wall-clock step (phase or sub-step) when a run is bound."""
+    """Record a named wall-clock step (phase or sub-step) when a run is bound.
+
+    The step is also a ``phase:<name>`` span on the run's Langfuse trace, so the
+    LLM generations and child tasks it starts nest under it.
+    """
     start = time.monotonic()
     try:
-        yield
+        with span(f"phase:{name}"):
+            yield
     finally:
         recorder = _recorder_var.get()
         if recorder is not None:

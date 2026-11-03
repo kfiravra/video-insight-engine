@@ -644,7 +644,7 @@ async def test_records_transcript_meta_after_transcript_phase_success() -> None:
     trace_meta = MagicMock()
 
     await _drain_phases(
-        ctx, repository, patch.object(pipeline_orchestration, "update_trace_metadata", trace_meta)
+        ctx, repository, patch.object(pipeline_orchestration, "update_root_metadata", trace_meta)
     )
 
     repository.set_transcript_meta.assert_called_once()

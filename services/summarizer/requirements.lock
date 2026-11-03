@@ -26,7 +26,6 @@ anyio==4.14.1
     # via
     #   google-genai
     #   httpx
-    #   langfuse
     #   openai
     #   starlette
     #   watchfiles
@@ -121,6 +120,8 @@ google-auth==2.55.1
     # via google-genai
 google-genai==2.10.0
     # via -r services/summarizer/requirements.txt
+googleapis-common-protos==1.76.0
+    # via opentelemetry-exporter-otlp-proto-http
 grpcio==1.82.0
     # via qdrant-client
 h11==0.16.0
@@ -157,7 +158,6 @@ idna==3.18
     # via
     #   anyio
     #   httpx
-    #   langfuse
     #   requests
     #   yarl
 importlib-metadata==8.9.0
@@ -184,8 +184,10 @@ jsonschema-specifications==2025.9.1
     # via jsonschema
 langdetect==1.0.9
     # via -r services/summarizer/requirements.txt
-langfuse==2.60.10
-    # via -r services/summarizer/requirements.txt
+langfuse==4.18.0
+    # via
+    #   -r services/summarizer/requirements.txt
+    #   llm-common (packages/llm-common/pyproject.toml)
 litellm==1.105.0
     # via
     #   -r services/summarizer/requirements.txt
@@ -232,12 +234,37 @@ openai==2.44.0
     #   -r services/summarizer/requirements.txt
     #   litellm
 # Hand-pinned to 4.x (matches requirements.txt `<5`): OpenCV 5 removed
-# cv2.CascadeClassifier, which frame_scorer.py needs. A full `uv pip compile`
-# re-resolve would also bump torch off the +cpu build — rerun the header
-# command WITH `--extra-index-url https://download.pytorch.org/whl/cpu` when
-# regenerating this file for real.
+# cv2.CascadeClassifier, which frame_scorer.py needs. Regenerate with the header
+# command PLUS `--extra-index-url https://download.pytorch.org/whl/cpu`, or torch
+# leaves the +cpu build and pulls CUDA; then re-add this note.
 opencv-python-headless==4.14.0.94
     # via -r services/summarizer/requirements.txt
+opentelemetry-api==1.45.2
+    # via
+    #   langfuse
+    #   opentelemetry-exporter-http-transport
+    #   opentelemetry-exporter-otlp-proto-http
+    #   opentelemetry-sdk
+    #   opentelemetry-semantic-conventions
+opentelemetry-exporter-http-transport==0.66b2
+    # via opentelemetry-exporter-otlp-proto-http
+opentelemetry-exporter-otlp-common==0.66b2
+    # via opentelemetry-exporter-otlp-proto-http
+opentelemetry-exporter-otlp-proto-common==1.45.2
+    # via opentelemetry-exporter-otlp-proto-http
+opentelemetry-exporter-otlp-proto-http==1.45.2
+    # via langfuse
+opentelemetry-proto==1.45.2
+    # via
+    #   opentelemetry-exporter-otlp-proto-common
+    #   opentelemetry-exporter-otlp-proto-http
+opentelemetry-sdk==1.45.2
+    # via
+    #   langfuse
+    #   opentelemetry-exporter-otlp-common
+    #   opentelemetry-exporter-otlp-proto-http
+opentelemetry-semantic-conventions==0.66b2
+    # via opentelemetry-sdk
 packaging==24.2
     # via
     #   huggingface-hub
@@ -270,7 +297,10 @@ propcache==0.5.2
     #   aiohttp
     #   yarl
 protobuf==7.35.1
-    # via qdrant-client
+    # via
+    #   googleapis-common-protos
+    #   opentelemetry-proto
+    #   qdrant-client
 pyasn1==0.6.3
     # via pyasn1-modules
 pyasn1-modules==0.4.2
@@ -352,7 +382,8 @@ requests==2.34.2
     #   -r services/summarizer/requirements.txt
     #   google-auth
     #   google-genai
-    #   langfuse
+    #   opentelemetry-exporter-http-transport
+    #   opentelemetry-exporter-otlp-proto-http
     #   spacy
     #   tiktoken
     #   youtube-transcript-api
@@ -458,7 +489,12 @@ typing-extensions==4.16.0
     #   google-genai
     #   grpcio
     #   huggingface-hub
+    #   langfuse
     #   openai
+    #   opentelemetry-api
+    #   opentelemetry-exporter-otlp-proto-http
+    #   opentelemetry-sdk
+    #   opentelemetry-semantic-conventions
     #   pydantic
     #   pydantic-core
     #   pytest-asyncio

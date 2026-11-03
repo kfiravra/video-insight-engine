@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import litellm
@@ -21,9 +21,10 @@ from llm_common.context import llm_feature_var
 
 from src.config import settings
 from src.routes import pipeline_faithfulness, pipeline_orchestration
-from src.services.observability import langfuse_client as lc
+from src.services.observability import run_trace
 from src.services.pipeline import faithfulness
 from src.services.pipeline import faithfulness_hero_quiz as hq
+from llm_common.observability.testing import LangfuseCapture
 from tests.test_p2_4_judge_hero_quiz import (
     _TAKEAWAYS,
     _question,
@@ -57,27 +58,6 @@ def _judge_llm(hero_reply: str, quiz_reply: str) -> MagicMock:
     return _llm(answer)
 
 
-@pytest.fixture(autouse=True)
-def _reset_observability(monkeypatch: pytest.MonkeyPatch):
-    lc._reset_for_tests()
-    monkeypatch.setattr(lc.settings, "LANGFUSE_PUBLIC_KEY", None, raising=False)
-    monkeypatch.setattr(lc.settings, "LANGFUSE_SECRET_KEY", None, raising=False)
-    yield
-    lc._reset_for_tests()
-
-
-@pytest.fixture
-def fake_trace(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
-    """A Langfuse client whose pipeline trace records ``score`` calls."""
-    monkeypatch.setattr(lc, "Langfuse", MagicMock())
-    monkeypatch.setattr(lc.settings, "LANGFUSE_PUBLIC_KEY", "pk", raising=False)
-    monkeypatch.setattr(lc.settings, "LANGFUSE_SECRET_KEY", "sk", raising=False)
-    lc.init_langfuse()
-    trace = MagicMock()
-    cast(MagicMock, lc._client).trace.return_value = trace
-    return trace
-
-
 # ─── The score payload ──────────────────────────────────────────────────
 def _both_samples() -> hq.HeroQuizSamples:
     samples = _samples(
@@ -90,58 +70,60 @@ def _both_samples() -> hq.HeroQuizSamples:
 
 class TestScorePayload:
     async def test_should_log_one_named_score_per_sample_when_both_are_judged(
-        self, fake_trace: MagicMock
+        self, langfuse_capture: LangfuseCapture
     ):
         llm = _judge_llm(_reply(True, False, True), _reply(True, True))
 
-        async with lc.pipeline_trace("vid123"):
+        async with run_trace(name="pipeline:vid123"):
             await hq.run_hero_quiz_check(llm_service=llm, samples=_both_samples())
 
-        scores = {c.kwargs["name"]: c.kwargs["value"] for c in fake_trace.score.call_args_list}
+        scores = {c["name"]: c["value"] for c in langfuse_capture.scores}
         assert scores == {"faithfulness_hero": pytest.approx(0.667), "faithfulness_quiz": 1.0}
 
     async def test_should_say_what_was_judged_in_the_hero_score_comment(
-        self, fake_trace: MagicMock
+        self, langfuse_capture: LangfuseCapture
     ):
         llm = _judge_llm(_reply(True, False, True), _reply(True, True))
 
-        async with lc.pipeline_trace("vid123"):
+        async with run_trace(name="pipeline:vid123"):
             await hq.run_hero_quiz_check(llm_service=llm, samples=_both_samples())
 
-        comments = {c.kwargs["name"]: c.kwargs["comment"] for c in fake_trace.score.call_args_list}
+        comments = {c["name"]: c["comment"] for c in langfuse_capture.scores}
         assert comments["faithfulness_hero"] == (
             "2/3 takeaways grounded at their stamps (0 judge errors, 1 unstamped)"
         )
 
     async def test_should_score_only_the_usable_verdicts_when_the_judge_leaves_an_item_out(
-        self, fake_trace: MagicMock
+        self, langfuse_capture: LangfuseCapture
     ):
         llm = _judge_llm(_reply(True, False, True), '{"verdicts": [{"id": 2, "grounded": false}]}')
 
-        async with lc.pipeline_trace("vid123"):
+        async with run_trace(name="pipeline:vid123"):
             reports = await hq.run_hero_quiz_check(llm_service=llm, samples=_both_samples())
 
         quiz = reports["faithfulness_quiz"]
         assert (quiz.sample_size, quiz.grounded_count, quiz.score) == (1, 0, 0.0)
 
     async def test_should_leave_the_extraction_score_name_to_the_extraction_sample(
-        self, fake_trace: MagicMock
+        self, langfuse_capture: LangfuseCapture
     ):
         llm = _judge_llm(_reply(True, True, True), _reply(True, True))
 
-        async with lc.pipeline_trace("vid123"):
+        async with run_trace(name="pipeline:vid123"):
             await hq.run_hero_quiz_check(llm_service=llm, samples=_both_samples())
 
-        names = [c.kwargs["name"] for c in fake_trace.score.call_args_list]
+        names = [c["name"] for c in langfuse_capture.scores]
         assert "faithfulness" not in names
 
-    async def test_should_log_no_score_when_the_judge_call_fails(self, fake_trace: MagicMock):
+    async def test_should_log_no_score_when_the_judge_call_fails(
+        self, langfuse_capture: LangfuseCapture
+    ):
         llm = _llm(RuntimeError("boom"))
 
-        async with lc.pipeline_trace("vid123"):
+        async with run_trace(name="pipeline:vid123"):
             reports = await hq.run_hero_quiz_check(llm_service=llm, samples=_both_samples())
 
-        assert (reports, fake_trace.score.call_count) == ({}, 0)
+        assert (reports, langfuse_capture.scores) == ({}, [])
 
     async def test_should_make_one_attempt_per_call_when_the_judge_fails_transiently(self):
         # OSError is a transient LLM error: a retry budget would send it again.

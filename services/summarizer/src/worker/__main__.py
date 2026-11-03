@@ -303,13 +303,14 @@ async def main() -> None:
     # ledger isn't lost on container stop.
     _shutdown_usage_callback(usage_callback)
 
-    # Drain Langfuse buffer so in-flight spans aren't lost on container stop.
+    # Flush the Langfuse buffer and stop its export threads, so in-flight
+    # spans aren't lost on container stop.
     try:
-        from src.services.observability import flush_langfuse
+        from src.services.observability import shutdown_langfuse
 
-        await flush_langfuse()
+        await shutdown_langfuse()
     except Exception as e:
-        logger.warning("worker_langfuse_flush_failed error=%s", e)
+        logger.warning("worker_langfuse_shutdown_failed error=%s", e)
 
     logger.info("worker_shutdown_complete")
 

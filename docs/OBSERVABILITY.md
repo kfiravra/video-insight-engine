@@ -2,7 +2,9 @@
 
 LLM observability is the project's debugging story for "this video came out wrong, why?". Aggregate cost is tracked locally in MongoDB via `usage_tracker.py`; per-call traces, prompt versions, datasets and scores live in [Langfuse](https://langfuse.com).
 
-Everything is **best-effort**: every Langfuse call is wrapped in try/except, all helpers no-op when keys are unset, and the SDK lives behind a contextvar so concurrent pipeline runs don't contaminate each other's traces. A failed observability layer must not bring down the pipeline.
+Everything is **best-effort**: every Langfuse call is wrapped in try/except, all helpers no-op when keys are unset (the SDK is not even imported then), and the current span lives in a contextvar so concurrent pipeline runs don't contaminate each other's traces. A failed observability layer must not bring down the pipeline.
+
+The services use the Langfuse **Python SDK v4** (`langfuse>=4.7,<5`, OpenTelemetry underneath) through one shared client, `packages/llm-common/src/llm_common/observability/`; each service's `src/services/observability` re-exports it bound to its settings. `ENVIRONMENT` (lowercased) becomes the Langfuse environment, so `production` / `development` filter apart even inside one project.
 
 ## Quick start
 
@@ -24,7 +26,7 @@ To run **without** Langfuse: leave the keys blank. The pipeline behaves identica
 
 ## Trace structure
 
-One pipeline run = one trace named `pipeline:{videoSummaryId}`, tagged with `youtubeId`, `videoSummaryId`, and `requestId` (when present). Each LLM call attaches as a child generation with `usage` (input/output/total/cost), `modelParameters` (what the request actually sent after the model's request rules — `temperature`, `reasoning_effort`, the `thinking` type, `effort`; `llm_call.model_parameters`) and `metadata` (attempt, useFastModel, modelOverride, latencyMs). Models below are the `config.py` / compose defaults (4.0d, pipeline-1min gate g4-model-ab); "fast tier" = gpt-4o-mini with `LLM_FAST_PROVIDER=openai` (both `.env` templates and prod), Haiku 4.5 by default. Whisper/Gemini transcription bypasses LiteLLM, so it emits its own `transcription:<provider>` generation (and `llm_usage` row) via `services/summarizer/src/services/transcription/usage.py` — Whisper carries `audioSeconds` in metadata (duration-priced), Gemini carries token counts; see [llm-cost-model.md](./llm-cost-model.md#transcription-cost-tracking).
+One pipeline run = one trace named `pipeline:{videoSummaryId}` in the session `pipeline-{videoSummaryId}` (so a row's first run, bypass, regenerate and retries group together), tagged with `youtubeId`, `videoSummaryId`, `path:worker|sse|dev` (the entry path) and `requestId` (when present); the user id follows `LANGFUSE_USER_ID_MODE` and is never copied into metadata. A Redis cache hit is no run and opens no trace. Every `timed_step` (each `run_parallel_phases` member and the dotted sub-steps such as `transcript`, `hero_call`, `quiz_call`) and the five orchestrator phases (`metadata`, `transcript_frames`, `visual_inject`, `assembly`, `translation`) is a `phase:<name>` span with real start/end; each LLM call is a generation opened just before the request and nested under the phase it ran in (tasks spawned inside a phase inherit it, so the t=0 background calls sit under `phase:metadata`). A generation carries `usage` (input/output/total plus `cache_read_input_tokens` / `cache_creation_input_tokens`, and the cost), `modelParameters` (what the request actually sent after the model's request rules — `temperature`, `reasoning_effort`, the `thinking` type, `effort`; `llm_call.model_parameters`) and `metadata` (attempt, useFastModel, modelOverride, latencyMs). Models below are the `config.py` / compose defaults (4.0d, pipeline-1min gate g4-model-ab); "fast tier" = gpt-4o-mini with `LLM_FAST_PROVIDER=openai` (both `.env` templates and prod), Haiku 4.5 by default. Whisper/Gemini transcription bypasses LiteLLM, so it emits its own `transcription:<provider>` generation (and `llm_usage` row) via `services/summarizer/src/services/transcription/usage.py` — Whisper carries `audioSeconds` in metadata (duration-priced), Gemini carries token counts; see [llm-cost-model.md](./llm-cost-model.md#transcription-cost-tracking).
 
 ```
 Trace: pipeline:{videoSummaryId}
@@ -52,7 +54,7 @@ Trace: pipeline:{videoSummaryId}
 ├── generation: rag_translation       model=gpt-6-luna        (LLM_TRANSLATION_MODEL; non-English caption / S3 / Gemini transcript → English for Qdrant)
 ├── generation: <span> (refused)      a declined answer: metadata refusal=true, refusalCategory; the previous model's
 │                                     answer follows under the same span with refusedModel + refusalCategory
-├── span: phase:<name>                one per `pipeline.timing.phases` entry, real start/end (run_timing._log_phase_spans)
+├── span: phase:<name>                every `timed_step` and orchestrator phase; the generations above nest under the phase that ran them (the tree is drawn flat here)
 ├── score: faithfulness               0.0–1.0  (sampled, see below)
 ├── score: faithfulness_hero          0.0–1.0  (the hero's takeaways against their [m:ss] stamps, see below)
 ├── score: faithfulness_quiz          0.0–1.0  (2 sampled quiz questions against their answer stamps, see below)
@@ -71,7 +73,7 @@ The vie-admin **backend** resolves each pipeline-run's trace and returns a direc
 
 In the Langfuse UI:
 
-- **Top of trace**: total cost, total latency, model mix, tags — open this first when triaging. Trace-level `cacheHit` metadata distinguishes Redis-served fast-path runs from full pipeline runs. Full runs also carry `transcriptSource`, `transcriptType`, `transcriptAttempted`, and `transcriptOutcome` (set by the runner right after the transcript phase, for failed runs too), so traces can be filtered by which transcript layer won and why paid ASR ran.
+- **Top of trace**: total cost, total latency, model mix, tags — open this first when triaging. The root span's metadata carries `transcriptSource`, `transcriptType`, `transcriptAttempted`, and `transcriptOutcome` (set by the runner right after the transcript phase, for failed runs too), so traces can be filtered by which transcript layer won and why paid ASR ran.
 - **Generations panel**: the per-stage breakdown. Sort by latency or cost to find the bottleneck.
 - **Input / Output panels** of a generation: the actual prompt and response, after redaction (emails, phone-shaped runs, plus a short allowlist of token formats — see below) and truncation (50KB cap with `[TRUNCATED]` marker; original length is not encoded, on purpose).
 - **Metadata**: `attempt`, `useFastModel`, `modelOverride`, `finishReason`, `latencyMs`. `attempt>1` means a retry fired; `fallbackFrom` marks the cross-provider fallback; `refusal: true` marks a declined answer and `refusedModel` the previous model's answer for it (below). `promptVersions` maps prompt name → registry version for every prompt that was loaded inside the trace.
@@ -229,21 +231,27 @@ Committed metric baselines live in `dev/golden-dataset/baseline.json` — retrie
 ## Operational watch-outs
 
 - **Third-party data flow**: enabling Langfuse ships prompts and outputs to whatever host `LANGFUSE_BASE_URL` points at (cloud.langfuse.com by default). Treat that flow like any other external dependency.
-- **Redaction model**: `langfuse_client.redact_pii` strips a short fixed list of patterns — emails, long phone-shaped digit runs, JWTs (`eyJ...`), AWS access-key IDs (`AKIA…`/`ASIA…`/…), Anthropic keys (`sk-ant-…`), OpenAI keys (`sk-…`), GitHub PATs (`ghp_/ghu_/ghs_/gho_/ghr_…`), and `Bearer <token>` headers. Names, addresses, account numbers and free-form PII are **not** detected. If your compliance posture needs more, extend the pattern list in one place and re-run the test suite. The same redactor runs recursively over Anthropic structured content blocks (frame-vision OCR text included).
+- **Redaction model**: `llm_common.observability.redaction.redact_pii` strips a short fixed list of patterns — emails, long phone-shaped digit runs, JWTs (`eyJ...`), AWS access-key IDs (`AKIA…`/`ASIA…`/…), Anthropic keys (`sk-ant-…`), OpenAI keys (`sk-…`), GitHub PATs (`ghp_/ghu_/ghs_/gho_/ghr_…`), and `Bearer <token>` headers. Names, addresses, account numbers and free-form PII are **not** detected. If your compliance posture needs more, extend the pattern list in one place and re-run the test suite. The same redactor runs recursively over Anthropic structured content blocks (frame-vision OCR text included).
 - **User-id propagation**: by default the internal user id is forwarded on the trace (helpful for support debugging). Set `LANGFUSE_USER_ID_MODE=hash` to forward a deterministic 16-char SHA-256 derivative instead (combine with `LANGFUSE_USER_ID_HASH_SALT` so a leaked trace export isn't trivially correlatable), or `LANGFUSE_USER_ID_MODE=omit` to strip the id entirely.
 - **Payload size**: prompts/outputs are truncated at 50KB before upload (`truncate_payload`). The truncation marker is a fixed string — the original length is deliberately not encoded so a downstream viewer can't infer pre-redaction size from the trace.
 - **Free-tier ceiling**: 50K observations/month covers ~500 pipeline runs/month at current span density. If you exceed it, either drop to per-stage tracing (skip per-batch extraction spans) or upgrade to a paid tier.
 - **SDK absent**: `import langfuse` failures are tolerated — the layer silently no-ops. This keeps trimmed CI images functional without the heavy SDK.
-- **Async lifecycle**: the SDK's `flush()` runs inside `asyncio.to_thread` to avoid blocking the event loop. Don't replace this with a direct sync call.
-- **Cache-hit observability**: Redis-served fast paths still open a trace (with `cacheHit=true` metadata) so dashboards count them. Without this, fast-path traffic would be invisible and dashboards would under-count real request volume.
+- **Async lifecycle**: the SDK exports on its own thread; `flush()` (end of every run) and `shutdown()` (process exit) run inside `asyncio.to_thread` to avoid blocking the event loop. Don't replace this with a direct sync call.
+- **Cache hits**: a Redis-served fast path opens no trace; the api's request logs and the admin count them.
+- **`mark_step` sub-steps** (`frames.scene_detect`, `frames.upload`, …) are recorded after the fact, so they live in `pipeline.timing` only; v4 cannot backdate a span.
 - **Eval URL allowlist**: `scripts/run_eval.py` rejects URLs whose host isn't on the YouTube allowlist — protects against the eval being repointed at an internal host via a PR.
 
 ## File layout
 
 ```
-services/summarizer/src/services/observability/
-├── __init__.py              # public API re-exports
-└── langfuse_client.py       # init, pipeline_trace, log_generation, log_score, redact_pii, fetch_prompt
+packages/llm-common/src/llm_common/observability/
+├── client.py                # init/shutdown, run_trace, span, generation/finish_generation, score, prompts
+├── redaction.py             # redact_pii, truncate_payload, structured-content redaction
+├── prompts.py               # active prompt versions + the registry miss cache
+└── ids.py                   # trace_id_for_run, the user-id policy
+
+services/summarizer/src/services/observability/__init__.py   # re-exports, init_langfuse() bound to settings
+services/summarizer/src/services/llm_telemetry.py            # open/finish a provider call's generation
 
 services/assistant/src/services/observability/
 ├── __init__.py              # public API (adds session_trace, span)

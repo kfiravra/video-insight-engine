@@ -28,7 +28,10 @@ from src.models.schemas import (
 from src.services.llm_telemetry import stopwatch_ms_since
 from src.services.media.download_utils import download_youtube_audio
 from src.services.pipeline.download_timing import record_download
-from src.services.transcription.usage import emit_transcription_usage
+from src.services.transcription.usage import (
+    emit_transcription_usage,
+    open_transcription_generation,
+)
 from src.utils.language_utils import normalize_language_code
 
 logger = logging.getLogger(__name__)
@@ -493,6 +496,7 @@ async def translate_audio_to_english(
     """
     audio_path: Path | None = None
     owns_audio = False
+    handle = None
     try:
         # Check for cached audio from transcription phase first
         whisper_cached = _cached_audio_path(video_id)
@@ -507,6 +511,7 @@ async def translate_audio_to_english(
             owns_audio = True
 
         call_started = time.monotonic()
+        handle = open_transcription_generation(provider="openai", model="whisper-1")
         result = await asyncio.to_thread(_translate_sync, audio_path)
 
         # The translate API billed by duration regardless of text content.
@@ -517,6 +522,7 @@ async def translate_audio_to_english(
             audio_seconds=float(result.get("duration") or 0.0),
             duration_ms=stopwatch_ms_since(call_started),
             success=True,
+            handle=handle,
         )
 
         if not result.get("text"):
@@ -537,6 +543,7 @@ async def translate_audio_to_english(
             feature="summarize:transcript:whisper_translate",
             success=False,
             error=e,
+            handle=handle,
         )
         return None
     finally:
@@ -573,6 +580,7 @@ async def transcribe_with_whisper(
     """
     audio_path: Path | None = None
     chunk_paths: list[Path] = []
+    handle = None
 
     try:
         logger.info("Starting Whisper fallback for %s", video_id)
@@ -583,6 +591,7 @@ async def transcribe_with_whisper(
         # Check if chunking is needed
         file_size_mb = audio_path.stat().st_size / (1024 * 1024)
         call_started = time.monotonic()
+        handle = open_transcription_generation(provider="openai", model="whisper-1")
 
         if file_size_mb > CHUNK_TARGET_SIZE_MB:
             logger.info(
@@ -653,6 +662,7 @@ async def transcribe_with_whisper(
             audio_seconds=float(result.get("duration") or 0.0),
             duration_ms=stopwatch_ms_since(call_started),
             success=True,
+            handle=handle,
         )
 
         return NormalizedTranscript(
@@ -669,6 +679,7 @@ async def transcribe_with_whisper(
             feature="summarize:transcript:whisper",
             success=False,
             error=exc,
+            handle=handle,
         )
         raise
     finally:

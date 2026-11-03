@@ -16,11 +16,12 @@ break transcription.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from llm_common import UsageRecord, record_manual_usage
 from llm_common.models import compute_transcription_cost_usd
 
-from src.services.observability import log_generation
+from src.services.observability import error_status, finish_generation, generation, usage_details
 from src.services.pipeline.pipeline_timing import record_transcription_call
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,19 @@ def _failure_name(success: bool, error: BaseException | None) -> str | None:
     if success:
         return None
     return type(error).__name__ if error is not None else "TranscriptionError"
+
+
+def open_transcription_generation(*, provider: str, model: str) -> Any | None:
+    """Start the Langfuse generation of a transcription call, just before the call.
+
+    Pass the handle to :func:`emit_transcription_usage`, which finishes it, so
+    the generation's start and end are the call's. ``None`` outside a run trace.
+    """
+    try:
+        return generation(f"transcription:{provider}", model=model)
+    except Exception as exc:  # noqa: BLE001 — observability is non-critical
+        logger.debug("Transcription Langfuse generation not opened: %s", exc)
+        return None
 
 
 def emit_transcription_usage(
@@ -44,6 +58,7 @@ def emit_transcription_usage(
     duration_ms: int = 0,
     success: bool = True,
     error: BaseException | None = None,
+    handle: Any | None = None,
 ) -> None:
     """Record a transcription call to ``llm_usage`` and Langfuse.
 
@@ -58,6 +73,8 @@ def emit_transcription_usage(
             nothing) so the run still shows the attempt.
         error: The exception behind a failed attempt (its class name is
             stored on the timing failure row).
+        handle: The generation :func:`open_transcription_generation` opened
+            before the call; without one a zero-length generation is logged.
     """
     unit = "audio_seconds" if audio_seconds > 0 else "tokens"
     cost = (
@@ -89,21 +106,24 @@ def emit_transcription_usage(
     except Exception as exc:  # noqa: BLE001 — ledger emit is non-critical
         logger.debug("Transcription usage ledger emit skipped: %s", exc)
 
-    try:
-        log_generation(
-            name=f"transcription:{provider}",
-            model=model,
-            input_payload={"audioSeconds": round(audio_seconds, 1)},
-            output_payload="",
-            input_tokens=tokens_in,
-            output_tokens=tokens_out,
-            cost_usd=cost,
-            latency_ms=duration_ms,
-            metadata={"unit": unit, "audioSeconds": audio_seconds, "success": success},
-            level="DEFAULT" if success else "ERROR",
-        )
-    except Exception as exc:  # noqa: BLE001 — observability is non-critical
-        logger.debug("Transcription Langfuse generation skipped: %s", exc)
+    # A call that failed before its generation opened (e.g. the download) still
+    # shows as one failed generation; it then has no duration of its own.
+    if handle is None:
+        handle = open_transcription_generation(provider=provider, model=model)
+    finish_generation(
+        handle,
+        output="",
+        usage=usage_details(tokens_in, tokens_out),
+        cost_usd=cost,
+        metadata={
+            "unit": unit,
+            "audioSeconds": round(audio_seconds, 1),
+            "latencyMs": duration_ms,
+            "success": success,
+        },
+        level=None if success else "ERROR",
+        status_message=error_status(error) if error is not None else None,
+    )
 
     try:
         record_transcription_call(

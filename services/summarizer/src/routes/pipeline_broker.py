@@ -81,6 +81,7 @@ async def produce_to_broker(
     llm_service: LLMService,
     owner: str,
     force_refresh: bool = False,
+    run_path: str = "sse",
 ) -> None:
     """Run the pipeline and republish each SSE chunk through the broker.
 
@@ -93,7 +94,8 @@ async def produce_to_broker(
     ``force_refresh=True`` (a bypassCache submission) skips the response_cache
     fast path — the whole point of a version bump is a fresh pipeline run, and
     the Redis cache is keyed by youtubeId, not version, so without this the
-    new run is instantly re-fed the stale payload.
+    new run is instantly re-fed the stale payload. ``run_path`` (``worker`` or
+    ``sse``) tags the run's trace with the path that started it.
 
     ``stream_summarization`` already catches every pipeline-level error and
     yields a structured error event, so the only exception classes that
@@ -124,6 +126,7 @@ async def produce_to_broker(
             repository,
             llm_service,
             force_refresh=force_refresh,
+            run_path=run_path,
         ):
             try:
                 await pipeline_event_stream.publish(video_summary_id, chunk)
@@ -194,6 +197,7 @@ async def direct_stream_fallback(
         repository,
         llm_service,
         force_refresh=True,
+        run_path="dev",
     ):
         yield chunk
     yield "data: [DONE]\n\n"

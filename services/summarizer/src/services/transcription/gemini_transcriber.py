@@ -30,7 +30,10 @@ from src.models.schemas import (
 from src.services.llm_telemetry import stopwatch_ms_since
 from src.services.media.download_utils import download_youtube_audio
 from src.services.pipeline.download_timing import record_download
-from src.services.transcription.usage import emit_transcription_usage
+from src.services.transcription.usage import (
+    emit_transcription_usage,
+    open_transcription_generation,
+)
 from src.utils.language_utils import (
     detect_language_by_script,
     detect_language_from_text,
@@ -394,6 +397,7 @@ async def transcribe_with_gemini(
 
     audio_path: Path | None = None
     upload_result = None
+    handle = None
 
     try:
         client = genai.Client(api_key=settings.GEMINI_API_KEY)
@@ -426,6 +430,7 @@ async def transcribe_with_gemini(
         # Upload file to Gemini File API
         logger.info("Uploading audio to Gemini File API")
         call_started = time.monotonic()
+        handle = open_transcription_generation(provider="google", model=_get_gemini_model())
         upload_result = await asyncio.wait_for(
             client.aio.files.upload(
                 file=audio_path,
@@ -571,6 +576,7 @@ async def transcribe_with_gemini(
             tokens_out=tokens_out,
             duration_ms=stopwatch_ms_since(call_started),
             success=True,
+            handle=handle,
         )
 
         return NormalizedTranscript(
@@ -587,6 +593,7 @@ async def transcribe_with_gemini(
             feature="summarize:transcript:gemini",
             success=False,
             error=exc,
+            handle=handle,
         )
         raise
     finally:

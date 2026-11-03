@@ -9,11 +9,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from llm_common.observability import client as lc
+from llm_common.observability import prompts as prompts_state
+
 from src import config as app_config
-from src.services.observability import langfuse_client as lc
 from src.services.pipeline import prompt_builder
 from src.services.pipeline.prompt_builder import load_prompt_with_fallback
 from src.services.transcription import transcript_chunker
+from llm_common.observability.testing import LangfuseCapture
 
 
 @pytest.fixture(autouse=True)
@@ -25,8 +28,8 @@ def _pin_registry_prompt_source(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture(autouse=True)
 def _reset_observability(monkeypatch):
     lc._reset_for_tests()
-    monkeypatch.setattr(lc.settings, "LANGFUSE_PUBLIC_KEY", None, raising=False)
-    monkeypatch.setattr(lc.settings, "LANGFUSE_SECRET_KEY", None, raising=False)
+    monkeypatch.setattr(app_config.settings, "LANGFUSE_PUBLIC_KEY", None, raising=False)
+    monkeypatch.setattr(app_config.settings, "LANGFUSE_SECRET_KEY", None, raising=False)
     yield
     lc._reset_for_tests()
 
@@ -489,3 +492,28 @@ def test_langfuse_name_for_schema_path():
     assert _langfuse_name_for(PROMPTS_DIR / "schemas" / "food.txt") == "summarizer:schema:food"
     assert _langfuse_name_for(PROMPTS_DIR / "plan.txt") == "summarizer:plan"
     assert _langfuse_name_for(Path("/tmp/random.txt")) is None
+
+
+# ─── Registry unreachable (A4) ──────────────────────────────────────────
+
+
+class TestRegistryUnreachable:
+    """The v4 SDK's ``get_prompt`` failing to connect must leave every load on disk."""
+
+    def test_should_load_the_disk_prompt_and_cache_the_miss(
+        self, tmp_path: Path, langfuse_capture: LangfuseCapture
+    ) -> None:
+        # The capture's client points at 127.0.0.1:9, where nothing listens.
+        f = tmp_path / "plan.txt"
+        f.write_text("LOCAL CONTENT")
+        client = lc.get_client()
+        assert client is not None
+        get_prompt = MagicMock(wraps=client.get_prompt)
+        client.get_prompt = get_prompt
+
+        first = load_prompt_with_fallback(langfuse_name="summarizer:plan", fallback_path=f)
+        second = load_prompt_with_fallback(langfuse_name="summarizer:plan", fallback_path=f)
+
+        assert (first, second) == ("LOCAL CONTENT", "LOCAL CONTENT")
+        assert get_prompt.call_count == 1, "the miss is cached for PROMPT_MISS_TTL_S"
+        assert "summarizer:plan" in prompts_state._prompt_misses
