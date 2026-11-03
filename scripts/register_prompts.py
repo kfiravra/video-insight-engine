@@ -309,7 +309,7 @@ def _build_client(*, dry_run: bool) -> PromptRegistry | None:
     """
     public = os.environ.get("LANGFUSE_PUBLIC_KEY")
     secret = os.environ.get("LANGFUSE_SECRET_KEY")
-    host = os.environ.get("LANGFUSE_BASE_URL", "https://cloud.langfuse.com")
+    base_url = os.environ.get("LANGFUSE_BASE_URL", "https://cloud.langfuse.com")
     if not public or not secret:
         outcome = "dry run compares nothing" if dry_run else "skipping prompt sync"
         logger.info("Langfuse not configured (LANGFUSE_PUBLIC_KEY/SECRET_KEY blank) — %s", outcome)
@@ -321,7 +321,8 @@ def _build_client(*, dry_run: bool) -> PromptRegistry | None:
             sys.exit(f"Langfuse SDK is not installed: {exc}")
         logger.warning("Langfuse SDK is not installed (%s) — dry run compares nothing", exc)
         return None
-    return Langfuse(public_key=public, secret_key=secret, host=host)
+    # SDK v4: ``base_url`` (``host`` is deprecated).
+    return Langfuse(public_key=public, secret_key=secret, base_url=base_url)
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:

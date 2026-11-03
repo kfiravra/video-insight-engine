@@ -60,10 +60,11 @@ def _build_client():
         sys.exit(f"Langfuse SDK is not installed: {exc}")
     public = os.environ.get("LANGFUSE_PUBLIC_KEY")
     secret = os.environ.get("LANGFUSE_SECRET_KEY")
-    host = os.environ.get("LANGFUSE_BASE_URL", "https://cloud.langfuse.com")
+    base_url = os.environ.get("LANGFUSE_BASE_URL", "https://cloud.langfuse.com")
     if not public or not secret:
         sys.exit("LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY must be set")
-    return Langfuse(public_key=public, secret_key=secret, host=host)
+    # SDK v4: ``base_url`` (``host`` is deprecated).
+    return Langfuse(public_key=public, secret_key=secret, base_url=base_url)
 
 
 def upload(records: list[dict[str, Any]], dataset_name: str) -> dict[str, int]:
