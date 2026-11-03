@@ -16,6 +16,8 @@ const videoStatusSchema = z.object({
     error: z.string().optional().nullable(),
     /** `completed` served from the summarizer's response cache: no run happened (I3). */
     cacheHit: z.boolean().optional(),
+    /** The attempt this status belongs to (P0b): closes its `runs` entry. Billing ignores it (A2). */
+    runId: z.string().min(1).optional(),
   }),
 });
 
@@ -118,7 +120,7 @@ export async function internalRoutes(fastify: FastifyInstance) {
 
     if (event.type === 'video.status') {
       // Update userVideos status to match
-      const { videoSummaryId, status, userId, cacheHit } = event.payload;
+      const { videoSummaryId, status, userId, cacheHit, runId } = event.payload;
 
       await fastify.mongo.db.collection('userVideos').updateMany(
         { videoSummaryId: new ObjectId(videoSummaryId) },
@@ -203,6 +205,14 @@ export async function internalRoutes(fastify: FastifyInstance) {
             'dispatch-guard release skipped (duplicate FAILED event or row no longer failed)',
           );
         }
+      }
+
+      if ((status === 'completed' || status === 'failed') && runId) {
+        // Observability only (P-3): the attempt's `runs` entry ends here.
+        const runStatus = status === 'completed' && cacheHit ? 'cache_hit' : status;
+        await videoRepository.closeRun(videoSummaryId, runId, runStatus).catch((err: unknown) => {
+          req.log.warn({ err, videoSummaryId, runId }, 'runs[] close on terminal status failed');
+        });
       }
 
       if (status === 'completed' || status === 'failed') {

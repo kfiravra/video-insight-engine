@@ -38,6 +38,44 @@ export interface TranscriptMeta {
   errorCode: string | null;
 }
 
+/** Lifecycle of one attempt: api writes `dispatched`, the summarizer `running`, the status callback the end. */
+export type RunStatus = 'dispatched' | 'running' | 'completed' | 'failed' | 'cache_hit';
+
+/**
+ * One attempt of the pipeline on a row (P-2): `traceId` = `traceIdForRun(runId)`,
+ * the Langfuse trace of that attempt. The api pushes it at dispatch; the summarizer
+ * marks it running (or pushes its own for runs the api did not start, with
+ * `retryOf`); the status callback closes it.
+ */
+export interface RunEntry {
+  runId: string;
+  traceId: string;
+  requestId?: string;
+  attempt: number;
+  pipelineVersion?: string;
+  bypass: boolean;
+  /** `worker` | `sse` | `dev`, set by the summarizer when the run starts. */
+  path?: string;
+  chatSessionId?: string;
+  retryOf?: string;
+  status: RunStatus;
+  dispatchedAt?: Date;
+  startedAt?: Date;
+  endedAt?: Date;
+}
+
+/** A new attempt the api is about to dispatch (stamped by `stampDispatchContext`). */
+export interface DispatchRun {
+  runId: string;
+  traceId: string;
+  pipelineVersion: string;
+  bypass: boolean;
+  chatSessionId?: string;
+}
+
+/** Entries kept in `runs` (oldest dropped first). */
+export const RUNS_KEPT = 50;
+
 export interface VideoSummaryCacheDocument {
   _id: ObjectId;
   youtubeId: string;
@@ -90,6 +128,10 @@ export interface VideoSummaryCacheDocument {
    *  submission, P3.1): the terminal status settles / releases the hold keyed
    *  by it, while `requestId` keeps naming the run's llm_usage rows. */
   billingRunId?: string;
+  /** The run id of the row's latest dispatched attempt (P0b); its entry is in `runs`. */
+  currentRunId?: string;
+  /** One entry per attempt, newest last, capped at RUNS_KEPT (P-2). Billing never reads it (A2). */
+  runs?: RunEntry[];
   retryCount: number;
   errorCode?: string;
   errorMessage?: string;
@@ -706,8 +748,17 @@ export class VideoRepository {
    * stall check read it as liveness, and `tryClaimDispatchRelease` compares it
    * with the release marker — bumping it here would let a late duplicate
    * FAILED event release the guard this dispatch just acquired.
+   *
+   * `run` (P0b) makes it the row's `currentRunId` and pushes its `runs` entry
+   * (`dispatched`, attempt 1); billing never reads either (A2).
    */
-  async stampDispatchContext(id: string, userId: string, requestId?: string, billingRunId?: string): Promise<void> {
+  async stampDispatchContext(
+    id: string,
+    userId: string,
+    requestId?: string,
+    billingRunId?: string,
+    run?: DispatchRun,
+  ): Promise<void> {
     const set: Partial<VideoSummaryCacheDocument> = { userId };
     const unset: Record<string, ''> = {};
     if (requestId) set.requestId = requestId;
@@ -718,7 +769,34 @@ export class VideoRepository {
     const update: UpdateFilter<VideoSummaryCacheDocument> = Object.keys(unset).length > 0
       ? { $set: set, $unset: unset }
       : { $set: set };
+    if (run) {
+      set.currentRunId = run.runId;
+      const entry: RunEntry = {
+        runId: run.runId,
+        traceId: run.traceId,
+        attempt: 1,
+        pipelineVersion: run.pipelineVersion,
+        bypass: run.bypass,
+        status: 'dispatched',
+        dispatchedAt: new Date(),
+        ...(requestId ? { requestId } : {}),
+        ...(run.chatSessionId ? { chatSessionId: run.chatSessionId } : {}),
+      };
+      update.$push = { runs: { $each: [entry], $slice: -RUNS_KEPT } };
+    }
     await this.cacheCollection.updateOne({ _id: new ObjectId(id) }, update);
+  }
+
+  /**
+   * Close one attempt's `runs` entry on its terminal status (P-3). Matches by
+   * `runId`, so a late callback for an older attempt never closes the current
+   * one. No-op when the entry is gone (capped out) or the row was deleted.
+   */
+  async closeRun(id: string, runId: string, status: Extract<RunStatus, 'completed' | 'failed' | 'cache_hit'>): Promise<void> {
+    await this.cacheCollection.updateOne(
+      { _id: new ObjectId(id), 'runs.runId': runId },
+      { $set: { 'runs.$.status': status, 'runs.$.endedAt': new Date() } },
+    );
   }
 
   /** Merge one `synthesis_complete` emission — rules in buildSynthesisMerge. */

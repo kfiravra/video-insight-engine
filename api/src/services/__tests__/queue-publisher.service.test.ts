@@ -87,6 +87,17 @@ describe('QueuePublisher', () => {
       expect(payload.priority).toBe(PRIORITY_FREE);
     });
 
+    it('should carry the run id and pipeline version when the dispatch has them (P0b)', async () => {
+      const channel = createSuccessfulChannel();
+      const publisher = new QueuePublisher(async () => channel as never, mockLogger);
+
+      await publisher.publishVideoJob({ ...validInput, runId: 'run-q-1', pipelineVersion: 'v11' });
+
+      const parsed = JSON.parse((channel.publish.mock.calls[0][2] as Buffer).toString('utf8'));
+      expect([parsed.runId, parsed.pipelineVersion]).toEqual(['run-q-1', 'v11']);
+      expect(parsed).not.toHaveProperty('chatSessionId');
+    });
+
     it('should queue a paid run ahead of a free one', async () => {
       const channel = createSuccessfulChannel();
       const publisher = new QueuePublisher(async () => channel as never, mockLogger);

@@ -371,6 +371,8 @@ Get video with summary.
 
 The same `sourceLanguage` block is included on the public share endpoint (`GET /share/:slug`) and is consumed by `apps/web/src/api/share.ts` + `apps/web/src/api/videos.ts`.
 
+`runId` / `traceId` (P0b) name the row's latest attempt (`videoSummaryCache.currentRunId`) and its Langfuse trace (`sha256(runId)` hex, first 32 chars); absent on rows dispatched before P0b.
+
 `processingStartedAt` (ISO 8601) is present only while `status` is `pending` or `processing`: when the run that owns the row was dispatched (re-stamped on retry and stall redispatch). The web client counts its elapsed clock from it, so a refresh mid-run shows the real wait. Absent once the run has settled.
 
 `updateAvailable: true` is present when the summary is `completed` and stamped with an older `pipelineVersion` than the current one: the copy is served as it is, and the UI offers "update to latest version" (`POST /videos` with `updateToLatest: true`). Absent otherwise (never `false` or `null`), including for an unstamped (pre-stamping) summary, a summary still running, and always for the shared demo account, which may not pay for an update.
@@ -439,6 +441,8 @@ summarizer skips its S3 transcript + scene-frame caches; it implies
    them, charged) and served as is, with `updateAvailable: true`, to one who
    already has it.
 7. If **MISS**: create cache entry, publish job, return with `status: pending`
+
+A response for a call that dispatched a run also carries that run's `runId` and `traceId` at the top level (P0b); an attach, a cache hit or a duplicate carries neither.
 
 **Response (201) - Already in the library:**
 
@@ -999,6 +1003,8 @@ Video processing status update.
   }
 }
 ```
+
+The summarizer's `POST /internal/status` body that produces this event may also carry `cacheHit` (a `completed` served from the response cache) and `runId` (P0b): a terminal status with a `runId` closes that attempt's `runs[]` entry (`completed`, `failed`, or `cache_hit`). Billing ignores `runId`.
 
 **Status flow:**
 

@@ -5,6 +5,7 @@ import { QueuePublisher } from './queue-publisher.service.js';
 import { IdempotencyService } from './idempotency.service.js';
 import type { IDispatchGuard } from './dispatch-guard.service.js';
 import { config } from '../config.js';
+import { newRunIds, traceIdForRun } from '../utils/trace-id.js';
 import { extractYoutubeId } from '../utils/youtube.js';
 import { ColdRunForbiddenError, InvalidYouTubeUrlError, VideoNotFoundError, VersionCreationError, InvalidCategoryError, QueuePublishError, RunNotAllowedError } from '../utils/errors.js';
 import { buildMetaFromDoc, buildTabsFromDoc } from '../utils/meta-builder.js';
@@ -77,6 +78,16 @@ interface CreatedVersion extends VersionRow {
   userVideoId: string;
   /** False when the dispatch guard was held: another run owns the row (I1). */
   dispatched: boolean;
+  /** The dispatched run's ids (P0b); absent when the guard was held. */
+  runId?: string;
+  traceId?: string;
+}
+
+/** What `dispatchPipeline` started: the run's ids only when it dispatched (P0b). */
+interface DispatchResult {
+  dispatched: boolean;
+  runId?: string;
+  traceId?: string;
 }
 
 /**
@@ -144,7 +155,7 @@ export class VideoService {
       requestId?: string;
       billingRunId?: string;
     },
-  ): Promise<{ dispatched: boolean }> {
+  ): Promise<DispatchResult> {
     // Belt-and-suspenders: even though Step 1's content-addressed upsert
     // already collapses concurrent submits at the cache row, this guard
     // catches the narrower window where two API replicas might race outside
@@ -168,6 +179,11 @@ export class VideoService {
       return { dispatched: false };
     }
 
+    // One attempt = one run id = one Langfuse trace (P-1). Minted per
+    // dispatch, after the guard so a refused dispatch writes nothing.
+    const { runId, traceId } = newRunIds();
+    const bypass = payload.bypassCache ?? false;
+
     // Wrap the entire publish path so any throw (broker outage, schema bug,
     // HTTP fallback exception) releases the guard via the Lua CAS before
     // propagating. Without this the guard sits held for the full TTL
@@ -188,6 +204,7 @@ export class VideoService {
           payload.userId,
           payload.requestId,
           payload.billingRunId,
+          { runId, traceId, pipelineVersion: config.PIPELINE_VERSION, bypass },
         ),
       ]);
       if (config.USE_QUEUE_PIPELINE) {
@@ -208,8 +225,10 @@ export class VideoService {
             providers: payload.providers,
             bypassCache: payload.bypassCache,
             requestId: payload.requestId,
+            runId,
+            pipelineVersion: config.PIPELINE_VERSION,
           });
-          return { dispatched: true };
+          return { dispatched: true, runId, traceId };
         } catch (err) {
           // Only swallow broker-side / validation failures (QueuePublishError).
           // Anything else is a real bug and should surface to the caller —
@@ -236,8 +255,11 @@ export class VideoService {
         userId: payload.userId,
         providers: payload.providers,
         requestId: payload.requestId,
+        runId,
+        pipelineVersion: config.PIPELINE_VERSION,
+        bypassCache: bypass,
       });
-      return { dispatched: true };
+      return { dispatched: true, runId, traceId };
     } catch (err) {
       // Release the guard first so a retry can re-acquire immediately.
       await this.dispatchGuard.release(payload.videoSummaryId, guard.token);
@@ -347,7 +369,7 @@ export class VideoService {
       });
 
     const { userId, url, youtubeId, queuePlan, providers, requestId, billingRunId, forceRefresh } = input;
-    const { dispatched } = await this.dispatchPipeline({
+    const { dispatched, ...runIds } = await this.dispatchPipeline({
       videoSummaryId: row.videoSummaryId,
       youtubeId,
       url,
@@ -359,7 +381,7 @@ export class VideoService {
       billingRunId,
     });
 
-    return { userVideoId, ...row, dispatched };
+    return { userVideoId, ...row, dispatched, ...runIds };
   }
 
   /** `insertVersion` with its failures mapped to VersionCreationError. */
@@ -432,6 +454,7 @@ export class VideoService {
           cached: false,
           newVersion: true,
           ...attachedUnless(created.dispatched),
+          ...(created.runId ? { runId: created.runId, traceId: created.traceId } : {}),
         };
       }
       // A user run on a video with no user versions falls through to the normal flow
@@ -515,7 +538,7 @@ export class VideoService {
         folderId,
       });
 
-      const { dispatched } = await this.dispatchPipeline({
+      const { dispatched, ...runIds } = await this.dispatchPipeline({
         videoSummaryId: cached._id.toString(),
         youtubeId,
         url,
@@ -536,6 +559,7 @@ export class VideoService {
         },
         cached: false,
         ...attachedUnless(dispatched),
+        ...runIds,
       };
     }
 
@@ -566,7 +590,7 @@ export class VideoService {
           folderId,
         });
 
-        const { dispatched } = await this.dispatchPipeline({
+        const { dispatched, ...runIds } = await this.dispatchPipeline({
           videoSummaryId: cached._id.toString(),
           youtubeId,
           url,
@@ -590,6 +614,7 @@ export class VideoService {
           cached: false,
           regenerating: true,
           ...attachedUnless(dispatched),
+          ...runIds,
         };
       }
 
@@ -632,7 +657,7 @@ export class VideoService {
         folderId,
       });
 
-      const { dispatched } = await this.dispatchPipeline({
+      const { dispatched, ...runIds } = await this.dispatchPipeline({
         videoSummaryId: cached._id.toString(),
         youtubeId,
         url,
@@ -655,6 +680,7 @@ export class VideoService {
         },
         cached: false,
         ...attachedUnless(dispatched),
+        ...runIds,
       };
     }
 
@@ -686,7 +712,7 @@ export class VideoService {
         folderId,
       });
 
-      const { dispatched } = await this.dispatchPipeline({
+      const { dispatched, ...runIds } = await this.dispatchPipeline({
         videoSummaryId: cached._id.toString(),
         youtubeId,
         url,
@@ -708,6 +734,7 @@ export class VideoService {
         },
         cached: false,
         ...attachedUnless(dispatched),
+        ...runIds,
       };
     }
 
@@ -818,6 +845,11 @@ export class VideoService {
       meta,
       tabs,
       ...(processingStartedAt ? { processingStartedAt } : {}),
+      // The row's latest attempt and its Langfuse trace (P-5): the eval resume
+      // path finds its trace by id instead of by name.
+      ...(summary?.currentRunId
+        ? { runId: summary.currentRunId, traceId: traceIdForRun(summary.currentRunId) }
+        : {}),
       // sourceLanguage is conditional — omitted entirely for English-source
       // videos rather than serialized as `null`. The FE checks presence to
       // decide whether to render the language toggle.

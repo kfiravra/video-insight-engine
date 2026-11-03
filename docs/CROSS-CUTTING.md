@@ -268,6 +268,18 @@ When adding a new type:
 
 ---
 
+## Run and trace ids (P0b)
+
+One attempt of the pipeline = one `runId` = one Langfuse trace. Who owns which id:
+
+| Id | Minted by | Carried in | Stored | Read by |
+|---|---|---|---|---|
+| `runId` | vie-api `dispatchPipeline` (one per dispatch); the summarizer mints a fresh one, with `retryOf`, for an attempt the api did not dispatch or whose id already ran | queue payload `runId`, `POST /summarize` body `runId`, status callback `runId` | `videoSummaryCache.currentRunId`, `runs[].runId` | summarizer (trace id), api (closes `runs[]`), `POST /api/videos` + `GET /api/videos/:id` responses, eval |
+| `traceId` | derived, never sent alone: `sha256(runId)` hex, first 32 chars (`traceIdForRun` in TS, `trace_id_for_run` in Python, same as `Langfuse.create_trace_id(seed=)`; one test vector pinned on both sides) | responses next to `runId` | `runs[].traceId` | admin deep links, eval |
+| `requestId` | vie-api request id | `X-Request-ID`, queue `requestId` | row `requestId`, `runs[].requestId`, `llm_usage.request_id` | billing settle, logs, Sentry |
+| `billingRunId` | vie-api submission (minutes ledger) | never sent | row `billingRunId` | billing only; unchanged by P0b |
+| session `pipeline-<videoSummaryId>` | derived by the summarizer | Langfuse only | | groups every attempt of a row |
+
 ## Error Handling Across Services
 
 ### Error Flow

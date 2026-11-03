@@ -34,7 +34,7 @@ needs `JWT_SECRET`, `JWT_REFRESH_SECRET`. `/check` runs the right subset.
   summarizer's Pydantic models (`grep domain_types.py`), or extraction output fails validation.
 - `packages/shared/src/config/pipeline-version.json` is read by api (`config.ts`, docker path first)
   and summarizer. One value, never overridden by env. A bump creates new dedupKey rows for every
-  video; `?bypassCache=true` on submit is the surgical refresh ([docs/IDEMPOTENCY.md](../../../docs/IDEMPOTENCY.md)).
+  video; `bypassCache: true` in the submit body is the surgical refresh ([docs/IDEMPOTENCY.md](../../../docs/IDEMPOTENCY.md)).
 - Mongo runs as single-node replica set `rs0`. In-container URIs work as is; host tools need
   `?directConnection=true`.
 - Redis response cache keys are `vie:response:v<N>:<ytid>`; the version segment follows

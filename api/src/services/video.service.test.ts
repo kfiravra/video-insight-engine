@@ -7,6 +7,7 @@ import { QueuePublisher } from './queue-publisher.service.js';
 import { IdempotencyService } from './idempotency.service.js';
 import { DispatchGuardService } from './dispatch-guard.service.js';
 import { config } from '../config.js';
+import { traceIdForRun } from '../utils/trace-id.js';
 
 // Mock logger for tests
 const mockLogger = {
@@ -194,6 +195,25 @@ describe('VideoService', () => {
       expect((result.meta as Record<string, unknown>)?.tldr).toBe('Test');
       expect((result.meta as Record<string, unknown>)?.keyTakeaways).toEqual([]);
       expect(result).not.toHaveProperty('synthesis');
+    });
+
+    it('should return the current run id and its trace id when the row has one', async () => {
+      mockVideoRepository.findUserVideo.mockResolvedValue({
+        _id: { toString: () => 'vid123' },
+        videoSummaryId: { toString: () => 'summary123' },
+        youtubeId: 'abc123',
+        status: 'completed',
+      });
+      mockVideoRepository.findCacheById.mockResolvedValue({
+        _id: { toString: () => 'summary123' },
+        youtubeId: 'abc123',
+        status: 'completed',
+        currentRunId: 'run-abc',
+      });
+
+      const result = await videoService.getVideo('user123', 'vid123');
+
+      expect([result.runId, result.traceId]).toEqual(['run-abc', traceIdForRun('run-abc')]);
     });
 
     it('should expose the run start time while the summary is still processing', async () => {
@@ -621,6 +641,75 @@ describe('VideoService', () => {
 
         const call = mockSummarizerClient.triggerSummarization.mock.calls[0][0];
         expect(call.requestId).toBe('req-http-fallback-99');
+      });
+    });
+
+    describe('run ids (P0b)', () => {
+      const freshInsert = (videoSummaryId: string): void => {
+        mockVideoRepository.findUserVideoByYoutubeId.mockResolvedValue(null);
+        mockVideoRepository.upsertCacheByDedupKey.mockResolvedValue(
+          upsertResult(true, { _id: videoSummaryId, youtubeId: 'dQw4w9WgXcQ', status: 'pending' }),
+        );
+        mockVideoRepository.createUserVideo.mockResolvedValue({
+          _id: { toString: () => `uv-${videoSummaryId}` },
+          videoSummaryId: { toString: () => videoSummaryId },
+          youtubeId: 'dQw4w9WgXcQ',
+          status: 'pending',
+        });
+      };
+      const url = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+
+      afterEach(() => {
+        config.USE_QUEUE_PIPELINE = false;
+      });
+
+      it('should stamp, publish and return the same run id when dispatching on the queue', async () => {
+        config.USE_QUEUE_PIPELINE = true;
+        freshInsert('summary-run-q');
+
+        const result = await videoService.createVideo('user-r', url, { queuePlan: 'free', requestId: 'req-run-q-1' });
+
+        const published = mockQueuePublisher.publishVideoJob.mock.calls[0][0];
+        const stampedRun = mockVideoRepository.stampDispatchContext.mock.calls[0][4];
+        expect(published.runId).toMatch(/^[0-9a-f-]{36}$/);
+        expect(published.pipelineVersion).toBe(config.PIPELINE_VERSION);
+        expect(stampedRun).toEqual({
+          runId: published.runId,
+          traceId: traceIdForRun(published.runId),
+          pipelineVersion: config.PIPELINE_VERSION,
+          bypass: false,
+        });
+        expect([result.runId, result.traceId]).toEqual([published.runId, traceIdForRun(published.runId)]);
+      });
+
+      it('should send the run id, version and bypass flag when dispatching over HTTP', async () => {
+        freshInsert('summary-run-http');
+
+        await videoService.createVideo('user-r', url, { queuePlan: 'free', bypassCache: true });
+
+        const call = mockSummarizerClient.triggerSummarization.mock.calls[0][0];
+        expect(call.runId).toBe(mockVideoRepository.stampDispatchContext.mock.calls[0][4].runId);
+        expect([call.pipelineVersion, call.bypassCache]).toEqual([config.PIPELINE_VERSION, true]);
+      });
+
+      it('should mint a new run id when the same row is dispatched again', async () => {
+        freshInsert('summary-run-twice');
+        await videoService.createVideo('user-r', url, { queuePlan: 'free' });
+        await videoService.createVideo('user-r', url, { queuePlan: 'free' });
+
+        const [first, second] = mockSummarizerClient.triggerSummarization.mock.calls.map(c => c[0].runId);
+        expect(first).not.toBe(second);
+      });
+
+      it('should write and return no run when the guard is held', async () => {
+        mockDispatchGuard.acquire.mockResolvedValueOnce({ acquired: false, token: null });
+        freshInsert('summary-run-held');
+
+        const result = await videoService.createVideo('user-r', url, { queuePlan: 'free' });
+
+        expect(mockVideoRepository.stampDispatchContext).not.toHaveBeenCalled();
+        expect(result).not.toHaveProperty('runId');
+        expect(result.attached).toBe(true);
       });
     });
 
