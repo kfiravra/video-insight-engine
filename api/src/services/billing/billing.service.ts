@@ -135,7 +135,10 @@ export class BillingService {
     private readonly logger: FastifyBaseLogger,
     private readonly clock: () => Date = () => new Date(),
   ) {
-    this.units = new BillingUnits(repo, clock);
+    this.units = new BillingUnits(repo, clock, async (ownerId) => {
+      const owner = await userRepository.findById(ownerId);
+      return owner !== null && !owner.deletedAt;
+    });
     this.admin = new BillingAdmin(repo, this.units, userRepository);
   }
 

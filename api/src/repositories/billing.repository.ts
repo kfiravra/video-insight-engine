@@ -110,6 +110,7 @@ function normalizeHold(hold: NonNullable<StoredAccount['holds']>[number]): Billi
     durationSec: hold.durationSec ?? 0,
     tokens: 0,
     split: { plan: 0, credit: 0, lots: [] },
+    minuteSplit: hold.minuteSplit ?? hold.split,
     planCycleStart: hold.planCycleStart ?? null,
   };
 }

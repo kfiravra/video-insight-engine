@@ -81,7 +81,8 @@ export function balanceOf(state: SpendableState): number {
   return Math.max(state.planAvailable, 0) + spendableCredit(state.lots, state.now) - state.debt;
 }
 
-function takeFromLots(tokens: number, lots: AllocationLot[]): LotSlice[] {
+/** Take `tokens` from `lots` in the order given (callers pass spendable lots, FIFO). */
+export function takeFromLots(tokens: number, lots: AllocationLot[]): LotSlice[] {
   const slices: LotSlice[] = [];
   let left = tokens;
   for (const lot of lots) {

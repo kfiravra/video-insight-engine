@@ -39,6 +39,8 @@ export interface BillingHoldDocument {
   split: BucketSplitDocument;
   planCycleStart: Date | null;
   createdAt: Date;
+  /** A minute hold's original split, kept through token writes until the token migration (read by nothing else). */
+  minuteSplit?: unknown;
 }
 
 export interface BillingPlanDocument {

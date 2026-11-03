@@ -1,12 +1,12 @@
 import { ObjectId } from 'mongodb';
 import { chargeSplit } from './allocation.js';
 import { repayDebt } from './debt.js';
-import { isCurrentCycle, planAvailable } from './plan-cycle.js';
+import { isCurrentCycle } from './plan-cycle.js';
+import { spendableState } from './spendable.js';
 import { splitProportionally } from './tokens.js';
-import { toAllocationLot } from './views.js';
 import type { BillingBucket, BillingSource, BucketSplit, ExecutionKind } from '@vie/types';
 import type { AccountDraft, EntryFields } from './account-draft.js';
-import type { ChargeSplit, SpendableState } from './allocation.js';
+import type { ChargeSplit } from './allocation.js';
 import type { BillingHoldDocument, CreditLotDocument } from '../../repositories/billing.repository.js';
 
 // Pure hold → settle | release transitions and direct charges on an
@@ -83,16 +83,7 @@ function costShares(weights: number[], costUsd: number | undefined): Array<numbe
   return splitProportionally(costUsd, weights);
 }
 
-/** What the account can spend right now (the draft is rolled to `now`). */
-export function spendableState(draft: AccountDraft): SpendableState {
-  const { account, now } = draft;
-  return {
-    now,
-    planAvailable: planAvailable(account, now),
-    lots: draft.lots.map(toAllocationLot),
-    debt: account.buckets.debt.tokens,
-  };
-}
+export { spendableState } from './spendable.js';
 
 export function findHold(draft: AccountDraft, requestId: string): BillingHoldDocument | undefined {
   return draft.account.holds.find((hold) => hold.requestId === requestId);
@@ -135,12 +126,12 @@ function applyChargeSplit(
   fields: Omit<EntryFields, 'type' | 'bucket' | 'tokens' | 'idempotencyKey'>,
   costUsd: number | undefined,
 ): void {
-  const parts: Array<{ bucket: BillingBucket; tokens: number; lotId?: ObjectId; suffix: string }> = [];
-  if (split.plan > 0) parts.push({ bucket: 'plan', tokens: split.plan, suffix: 'plan' });
+  const parts: HoldSlice[] = [];
+  if (split.plan > 0) parts.push({ bucket: 'plan', tokens: split.plan, keySuffix: 'plan' });
   for (const slice of split.lots) {
-    if (slice.tokens > 0) parts.push({ bucket: 'credit', tokens: slice.tokens, lotId: new ObjectId(slice.lotId), suffix: `lot:${slice.lotId}` });
+    if (slice.tokens > 0) parts.push({ bucket: 'credit', tokens: slice.tokens, lotId: new ObjectId(slice.lotId), keySuffix: `lot:${slice.lotId}` });
   }
-  if (split.debt > 0) parts.push({ bucket: 'debt', tokens: split.debt, suffix: 'debt' });
+  if (split.debt > 0) parts.push({ bucket: 'debt', tokens: split.debt, keySuffix: 'debt' });
   const shares = costShares(parts.map((part) => part.tokens), costUsd);
   parts.forEach((part, i) => {
     if (part.bucket === 'plan') draft.account.buckets.plan.tokensUsed += part.tokens;
@@ -148,7 +139,7 @@ function applyChargeSplit(
     if (part.bucket === 'debt') draft.changeDebt(part.tokens);
     draft.addEntry({
       ...fields, type: 'debit', bucket: part.bucket, tokens: -part.tokens, lotId: part.lotId,
-      idempotencyKey: `${prefix}:${part.suffix}`, costUsd: shares[i],
+      idempotencyKey: `${prefix}:${part.keySuffix}`, costUsd: shares[i],
     });
   });
   draft.markChanged();

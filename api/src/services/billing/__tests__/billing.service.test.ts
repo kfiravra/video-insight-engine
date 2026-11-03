@@ -77,6 +77,17 @@ describe('BillingService (runs, real Mongo replica set)', () => {
       expect(await ledger({ type: 'grant' })).toHaveLength(1);
     });
 
+    it('should open no account, and grant nothing, for an id that is not a live user (D23)', async () => {
+      const erased = new ObjectId().toHexString();
+      const softDeleted = await insertUser(db());
+      await db().collection('users').updateOne({ _id: new ObjectId(softDeleted) }, { $set: { deletedAt: new Date() } });
+
+      await expect(service.summary(erased)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      await expect(service.ensureAccount(softDeleted)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      expect(await db().collection('billingAccounts').countDocuments({ ownerId: { $in: [new ObjectId(erased), new ObjectId(softDeleted)] } })).toBe(0);
+      expect(await db().collection('ledgerEntries').countDocuments({ idempotencyKey: { $in: [`grant:signup:${erased}`, `grant:signup:${softDeleted}`] } })).toBe(0);
+    });
+
     it('should be idempotent through ensureAccount', async () => {
       await service.ensureAccount(userId);
       await service.ensureAccount(userId);

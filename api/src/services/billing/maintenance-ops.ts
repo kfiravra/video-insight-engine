@@ -17,7 +17,9 @@ import type { RunState } from '../../repositories/billing-maintenance.repository
 
 export const lotExpiryKey = (lotId: ObjectId): string => `expire:lot:${lotId.toHexString()}`;
 
-export const signupGrantKey = (ownerId: ObjectId): string => `grant:signup:${ownerId.toHexString()}`;
+export function signupGrantKey(ownerId: ObjectId): string {
+  return `grant:signup:${ownerId.toHexString()}`;
+}
 
 /** Expire what is left of every open lot past its expiry. Returns the tokens expired. */
 export function applyLotExpiry(draft: AccountDraft, alreadyExpired: ReadonlySet<string>): number {

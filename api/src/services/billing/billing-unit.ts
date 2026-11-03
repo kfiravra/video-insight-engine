@@ -1,5 +1,5 @@
 import { ObjectId } from 'mongodb';
-import { DatabaseError, ValidationError } from '../../utils/errors.js';
+import { DatabaseError, NotFoundError, ValidationError } from '../../utils/errors.js';
 import { emptyAccountState, StaleAccountVersionError } from '../../repositories/billing.repository.js';
 import { AccountDraft } from './account-draft.js';
 import { repayDebt } from './debt.js';
@@ -48,7 +48,9 @@ function rollToNow(draft: AccountDraft): void {
  * transaction. A stale version or a write conflict retries the whole unit.
  * Units on the same account are queued in-process first (KeyedMutex), so
  * only writers in other processes ever meet as write conflicts. An owner
- * without an account gets one with its signup grant (`ensureAccount`).
+ * without an account gets one with its signup grant (`ensureAccount`), but
+ * only a live user: never an erased (or unknown) id, whose account and grant
+ * would put back the link the GDPR erasure removed.
  */
 export class BillingUnits {
   private readonly accountLocks = new KeyedMutex();
@@ -56,6 +58,8 @@ export class BillingUnits {
   constructor(
     private readonly repo: BillingRepository,
     private readonly clock: () => Date,
+    /** True for a user that exists and is not deleted: only those get a new account. */
+    private readonly ownerExists: (ownerId: string) => Promise<boolean>,
   ) {}
 
   /**
@@ -68,6 +72,7 @@ export class BillingUnits {
     const owner = parseObjectId(ownerId, 'userId');
     const found = await this.repo.findAccount('user', ownerId);
     if (found) return found;
+    if (!(await this.ownerExists(ownerId))) throw new NotFoundError('User');
     const now = this.clock();
     const account: BillingAccountDocument = { _id: new ObjectId(), ownerType: 'user', ownerId: owner, ...emptyAccountState(now) };
     const draft = new AccountDraft(account, [], now);

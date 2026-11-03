@@ -23,7 +23,7 @@ POST /api/videos
   ↓ reserveHash (atomic insert of a `pending` placeholder on unique-hash index)
   ↓
   ├─ created=true (we won the race):
-  │    minutes-ledger quote + hold → videoService.createVideo → completeHash
+  │    token-ledger quote + hold → videoService.createVideo → completeHash
   │    Return result with { cached: bool } (HTTP 201)
   │
   └─ created=false (someone got there first):
@@ -229,8 +229,9 @@ retried:
   dispatch stamp (`videoSummaryCache.billingRunId`, beside `requestId`) and the
   settle all use it: the summarizer reads the stamp and sends it back on
   `POST /internal/run-cost`, and a stamp that no longer names the hold's run
-  (a newer dispatch replaced it) settles nothing — the repair job settles the
-  old hold from `llm_usage`. `requestId` stays the client / Fastify id for logs
+  (a newer dispatch replaced it) settles nothing — once the old hold is older
+  than `BILLING_HOLD_MAX_AGE_HOURS` the repair job finds no row stamped with its
+  run and releases it, so the replaced run is never charged. `requestId` stays the client / Fastify id for logs
   and is what the summarizer writes on `llm_usage.request_id`. Each playlist
   item gets its own run id (used as its dispatch `requestId` too).
 - **An Idempotency-Key replay or an HTTP retry holds nothing:** it returns

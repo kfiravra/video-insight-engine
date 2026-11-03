@@ -1,6 +1,6 @@
 import { ObjectId } from 'mongodb';
 import { ValidationError } from '../../utils/errors.js';
-import { spendableLots } from './allocation.js';
+import { spendableLots, takeFromLots } from './allocation.js';
 import { repayDebt } from './debt.js';
 import { endPlan, expirePlanRemainder, openCycle, planAvailable } from './plan-cycle.js';
 import { addMonthsUtc, MANUAL_PRO_TERM_MONTHS } from './tokens.js';
@@ -141,18 +141,14 @@ function adjustCredit(draft: AccountDraft, tokens: number, audit: AdminAudit): v
   const lots = spendableLots(draft.lots.map(toAllocationLot), draft.now);
   const available = lots.reduce((sum, lot) => sum + lot.tokensRemaining, 0);
   if (available < -tokens) throw new ValidationError('The adjustment would leave a negative credit balance');
-  let left = -tokens;
-  for (const view of lots) {
-    if (left === 0) break;
-    const take = Math.min(left, view.tokensRemaining);
-    const lot = draft.lots.find((candidate) => candidate._id.toHexString() === view.lotId);
+  for (const slice of takeFromLots(-tokens, lots)) {
+    const lot = draft.findLot(new ObjectId(slice.lotId));
     if (!lot) continue;
-    draft.changeLot(lot, -take);
+    draft.changeLot(lot, -slice.tokens);
     draft.addEntry({
-      type: 'adjust', bucket: 'credit', tokens: -take, lotId: lot._id,
-      idempotencyKey: adminKey(audit, `lot:${view.lotId}`), ...context,
+      type: 'adjust', bucket: 'credit', tokens: -slice.tokens, lotId: lot._id,
+      idempotencyKey: adminKey(audit, `lot:${slice.lotId}`), ...context,
     });
-    left -= take;
   }
 }
 

@@ -176,6 +176,8 @@ export class BillingErasureRepository {
       set.auditId = auditId;
     }
     set.idempotencyKey = idempotencyKey;
+    // The repair backfill names its execution after the request id (`req:<requestId>`).
+    if (entry.executionId) set.executionId = remapKey(entry.executionId, entry.source.ref, ref);
     if (entry.userId.equals(user)) set.userId = tombstone;
     return set;
   }
