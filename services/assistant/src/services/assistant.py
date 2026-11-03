@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from cachetools import TTLCache
 
+from llm_common.context import bind_usage_ids
 from src.config import Settings
 from src.exceptions import NotFoundError
 from src.logging_config import get_logger
@@ -26,7 +27,7 @@ from src.services.agent_loop import (  # noqa: F401 — re-exported budgets
 from src.services.confirmation import ConfirmationGate
 from src.services.context_builder import ContextBuilder
 from src.services.llm_provider import LLMProvider
-from src.services.observability import chat_trace
+from src.services.observability import chat_trace, chat_turn
 from src.services.rag import RAGService
 from src.services.tool_router import ActionDispatcher, ToolRouter
 from src.tools.base import BaseTool
@@ -108,6 +109,8 @@ class AssistantService:
         :class:`ValidationError` on bad input.
         """
         video_ctx = await self._load_video_context(video_id) if video_id else None
+        if video_ctx is not None:
+            bind_usage_ids(video_id=video_ctx.youtube_id, video_summary_id=video_id)
         return await self._action_dispatcher.dispatch(
             action=action,
             video_id=video_id,
@@ -141,6 +144,7 @@ class AssistantService:
         *,
         user_id: str | None = None,
         session_id: str | None = None,
+        request_id: str | None = None,
         confirm_token: str | None = None,
     ) -> AsyncGenerator[str, None]:
         """Stream a chat response about a video.
@@ -151,11 +155,12 @@ class AssistantService:
         as child spans.
 
         Args:
-            video_id: YouTube video ID.
+            video_id: The video's ``videoSummaryId`` (what vie-api forwards).
             message: User's current message.
             history: Previous conversation messages.
             user_id: Optional user identifier for the trace.
             session_id: Optional chat session id for grouping turns.
+            request_id: The gateway's request id, tagged on the trace.
             confirm_token: Single-use token echoed from a prior
                 ``pending_confirmation`` event to run its parked action.
 
@@ -166,6 +171,8 @@ class AssistantService:
             NotFoundError: If video is not found.
         """
         video_ctx = await self._load_video_context(video_id)
+        # D9: ledger rows name the video by its YouTube id, the row by its summary id.
+        bind_usage_ids(video_id=video_ctx.youtube_id, video_summary_id=video_id)
 
         logger.info(
             "assistant_chat_start",
@@ -174,9 +181,12 @@ class AssistantService:
         )
 
         async with chat_trace(
-            video_id=video_id,
+            video_summary_id=video_id,
+            youtube_id=video_ctx.youtube_id,
             user_id=user_id,
             session_id=session_id,
+            request_id=request_id,
+            turn=chat_turn(history),
             metadata={"historyLen": len(history), "messageLen": len(message)},
         ):
             # RAG-powered chat (also exposes library action tools)
@@ -198,6 +208,7 @@ class AssistantService:
         *,
         user_id: str | None = None,
         session_id: str | None = None,
+        request_id: str | None = None,
         inventory: list[dict] | None = None,
         confirm_token: str | None = None,
     ) -> AsyncGenerator[str, None]:
@@ -215,6 +226,7 @@ class AssistantService:
             history: Previous conversation messages.
             user_id: Optional user identifier for the trace.
             session_id: Optional chat session id for grouping turns.
+            request_id: The gateway's request id, tagged on the trace.
 
         Yields:
             SSE-formatted strings (``data: {json}\\n\\n``).
@@ -226,9 +238,11 @@ class AssistantService:
         )
 
         async with chat_trace(
-            video_id=None,
+            video_summary_id=None,
             user_id=user_id,
             session_id=session_id,
+            request_id=request_id,
+            turn=chat_turn(history),
             tags=["library"],
             metadata={
                 "videoCount": len(video_ids),

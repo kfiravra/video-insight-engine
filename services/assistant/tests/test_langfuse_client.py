@@ -49,7 +49,7 @@ def test_init_should_build_the_client_from_assistant_settings_when_keys_are_set(
 
 @pytest.mark.parametrize("name", observability.__all__)
 def test_package_should_re_export_the_shared_helper_when_imported(name: str):
-    if name in {"init_langfuse", "chat_trace"}:
+    if name in {"init_langfuse", "chat_trace", "chat_turn"}:
         pytest.skip("assistant-specific")
     assert getattr(observability, name) is getattr(shared, name)
 
@@ -58,7 +58,7 @@ def test_package_should_re_export_the_shared_helper_when_imported(name: str):
 
 
 async def test_chat_trace_should_yield_none_when_disabled():
-    async with chat_trace(video_id="v1") as root:
+    async with chat_trace(video_summary_id="v1") as root:
         assert root is None
 
 
@@ -66,21 +66,52 @@ async def test_chat_trace_should_name_the_turn_and_group_the_session_when_a_sess
     langfuse_capture: LangfuseCapture,
 ):
     async with chat_trace(
-        video_id="yt1", user_id="u1", session_id="s1", metadata={"historyLen": 2}
+        video_summary_id="yt1", user_id="u1", session_id="s1", metadata={"historyLen": 2}
     ) as root:
         assert root is not None
 
     turn = langfuse_capture.named("chat:yt1")
     assert turn.attributes["session.id"] == "chat-s1"
     assert turn.attributes["user.id"] == "u1"
-    assert turn.attributes["langfuse.trace.tags"] == ("videoId:yt1",)
+    assert turn.attributes["langfuse.trace.tags"] == ("videoSummaryId:yt1",)
     assert turn.attributes["langfuse.trace.metadata.historyLen"] == "2"
+
+
+async def test_chat_trace_should_tag_the_ids_and_turn_the_pipeline_traces_use(
+    langfuse_capture: LangfuseCapture,
+):
+    async with chat_trace(
+        video_summary_id="vs1", youtube_id="yt1", request_id="req-12345678", turn=3
+    ):
+        pass
+
+    turn = langfuse_capture.named("chat:vs1")
+    assert turn.attributes["langfuse.trace.tags"] == (
+        "videoSummaryId:vs1",
+        "youtubeId:yt1",
+        "requestId:req-12345678",
+        "turn:3",
+    )
+
+
+def test_chat_turn_should_count_the_user_messages_before_this_one():
+    from src.models.requests import ChatMessage
+    from src.services.observability import chat_turn
+
+    history = [
+        ChatMessage(role="user", content="a"),
+        ChatMessage(role="assistant", content="b"),
+        ChatMessage(role="user", content="c"),
+        ChatMessage(role="assistant", content="d"),
+    ]
+    assert chat_turn([]) == 1
+    assert chat_turn(history) == 3
 
 
 async def test_chat_trace_should_be_named_library_when_there_is_no_video(
     langfuse_capture: LangfuseCapture,
 ):
-    async with chat_trace(video_id=None, tags=["library"]):
+    async with chat_trace(video_summary_id=None, tags=["library"]):
         pass
 
     turn = langfuse_capture.named("chat:library")
@@ -93,7 +124,7 @@ async def test_chat_trace_should_send_no_user_when_the_mode_is_omit(
 ):
     monkeypatch.setattr(shared_client._settings, "LANGFUSE_USER_ID_MODE", "omit")
 
-    async with chat_trace(video_id="yt1", user_id="u1"):
+    async with chat_trace(video_summary_id="yt1", user_id="u1"):
         pass
 
     assert "user.id" not in langfuse_capture.named("chat:yt1").attributes
@@ -102,7 +133,7 @@ async def test_chat_trace_should_send_no_user_when_the_mode_is_omit(
 async def test_spans_should_nest_under_the_turn_when_opened_inside_it(
     langfuse_capture: LangfuseCapture,
 ):
-    async with chat_trace(video_id="yt1"):
+    async with chat_trace(video_summary_id="yt1"):
         async with span("library_agent"):
             async with span("tool:quiz_generator", as_type="tool"):
                 pass

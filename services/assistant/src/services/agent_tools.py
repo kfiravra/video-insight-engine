@@ -17,8 +17,8 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from llm_common.context import llm_feature_var
-
 from src.logging_config import get_logger
+from src.services.observability import span
 from src.tools.library_organizer import LibraryOrganizerTool
 
 if TYPE_CHECKING:
@@ -193,6 +193,17 @@ AGENT_TOOL_SCHEMAS: list[dict[str, Any]] = [
 ]
 
 
+def _record_tool_outcome(name: str, tool_span: Any | None, result: dict[str, Any]) -> None:
+    """Mark the tool span WARNING with the model-facing error when the tool failed."""
+    error = result.get("error")
+    if tool_span is None or not error:
+        return
+    try:
+        tool_span.update(level="WARNING", status_message=str(error)[:500])
+    except Exception as exc:  # noqa: BLE001 — observability must never break a tool run
+        logger.debug("agent_tool_span_update_failed", tool=name, error=str(exc))
+
+
 async def execute_tool(
     name: str,
     args: dict[str, Any],
@@ -223,18 +234,22 @@ async def execute_tool(
     # generations stay labelled with the chat feature. Without this, library
     # agentic tools roll up under "assistant:library_chat".
     token = llm_feature_var.set(f"assistant:tool:{name}")
-    try:
-        return await _dispatch(name, args, user_id=user_id, api_client=api_client, llm=llm)
-    except KeyError as exc:
-        return {"error": f"missing required argument: {exc}"}
-    except (TypeError, ValueError) as exc:
-        logger.warning("agent_tool_bad_args", tool=name, error=str(exc))
-        return {"error": f"invalid arguments for {name}: {exc}"}
-    except Exception as exc:  # noqa: BLE001 — surface as model-correctable error
-        logger.warning("agent_tool_failed", tool=name, error=str(exc))
-        return {"error": f"tool {name} failed: {exc}"}
-    finally:
-        llm_feature_var.reset(token)
+    # One tool span per run in the turn's trace (D8); the LLM calls a tool makes nest in it.
+    async with span(f"tool:{name}", as_type="tool") as tool_span:
+        try:
+            result = await _dispatch(name, args, user_id=user_id, api_client=api_client, llm=llm)
+        except KeyError as exc:
+            result = {"error": f"missing required argument: {exc}"}
+        except (TypeError, ValueError) as exc:
+            logger.warning("agent_tool_bad_args", tool=name, error=str(exc))
+            result = {"error": f"invalid arguments for {name}: {exc}"}
+        except Exception as exc:  # noqa: BLE001 — surface as model-correctable error
+            logger.warning("agent_tool_failed", tool=name, error=str(exc))
+            result = {"error": f"tool {name} failed: {exc}"}
+        finally:
+            llm_feature_var.reset(token)
+        _record_tool_outcome(name, tool_span, result)
+    return result
 
 
 _OBJECT_ID = re.compile(r"[0-9a-f]{24}")

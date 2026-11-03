@@ -25,9 +25,8 @@ from llm_common.observability import (
     truncate_payload,
     usage_details,
 )
-
 from src.config import settings
-from src.services.observability.traces import chat_trace
+from src.services.observability.traces import chat_trace, chat_turn
 
 
 def init_langfuse() -> Any | None:
@@ -37,6 +36,7 @@ def init_langfuse() -> Any | None:
 
 __all__ = [
     "chat_trace",
+    "chat_turn",
     "current_trace_id",
     "error_status",
     "finish_generation",

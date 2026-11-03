@@ -44,6 +44,37 @@ class TestApiClient:
         assert seen["path"] == "/internal/assistant/folders"
         await api.aclose()
 
+    async def test_should_forward_the_chat_request_and_session_ids(self) -> None:
+        from llm_common.context import usage_scope
+
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["request"] = request.headers.get("X-Request-ID")
+            seen["session"] = request.headers.get("X-Session-Id")
+            return httpx.Response(200, json={"success": True, "data": []})
+
+        api = _client_with_handler(handler)
+
+        with usage_scope(request_id="req-chat-1234", session_id="chat-session-1"):
+            await api.list_folders("user42")
+
+        assert seen == {"request": "req-chat-1234", "session": "chat-session-1"}
+        await api.aclose()
+
+    async def test_should_send_no_correlation_headers_outside_a_request(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["headers"] = {k.lower() for k in request.headers}
+            return httpx.Response(200, json={"success": True, "data": []})
+
+        api = _client_with_handler(handler)
+        await api.list_folders("user42")
+
+        assert {"x-request-id", "x-session-id"}.isdisjoint(seen["headers"])
+        await api.aclose()
+
     async def test_should_post_create_folder_with_filtered_fields(self) -> None:
         # Arrange
         seen: dict = {}

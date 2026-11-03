@@ -137,7 +137,7 @@ class TestStreamWithMessagesObservability:
 
         provider = LLMProvider(model="anthropic/claude-sonnet-4-6")
         tokens: list[str] = []
-        async with chat_trace(video_id="yt1"):
+        async with chat_trace(video_summary_id="yt1"):
             async for tok in provider.stream_with_messages(
                 messages=[{"role": "user", "content": "hi"}],
                 span_name="rag_generation",
@@ -165,7 +165,7 @@ class TestStreamWithMessagesObservability:
         monkeypatch.setattr(lp, "acompletion", _fake_acompletion)
 
         provider = LLMProvider(model="anthropic/claude-sonnet-4-6")
-        async with chat_trace(video_id="yt1"):
+        async with chat_trace(video_summary_id="yt1"):
             async for _ in provider.stream_with_messages(
                 messages=[{"role": "user", "content": "hi"}],
             ):
@@ -182,7 +182,7 @@ class TestStreamWithMessagesObservability:
         monkeypatch.setattr(lp, "acompletion", _fake_acompletion)
 
         provider = LLMProvider(model="anthropic/claude-sonnet-4-6")
-        async with chat_trace(video_id="yt1"):
+        async with chat_trace(video_summary_id="yt1"):
             with pytest.raises(LLMError):
                 async for _ in provider.stream_with_messages(
                     messages=[{"role": "user", "content": "hi"}],
@@ -203,7 +203,7 @@ class TestStreamWithMessagesObservability:
         monkeypatch.setattr(lp, "acompletion", _fake_acompletion)
 
         provider = LLMProvider(model="anthropic/claude-sonnet-4-6")
-        async with chat_trace(video_id="yt1"):
+        async with chat_trace(video_summary_id="yt1"):
             stream = provider.stream_with_messages(
                 messages=[{"role": "user", "content": "hi"}], span_name="rag_generation"
             )
@@ -227,7 +227,7 @@ class TestCompletionObservability:
         monkeypatch.setattr(lp, "completion_cost", lambda **_kw: 0.0021)
 
         provider = LLMProvider(model="anthropic/claude-sonnet-4-6")
-        async with chat_trace(video_id="yt1"):
+        async with chat_trace(video_summary_id="yt1"):
             out = await provider.complete_with_messages(
                 [{"role": "user", "content": "hi"}], span_name="query_translate"
             )
@@ -254,7 +254,7 @@ class TestCompletionObservability:
         monkeypatch.setattr(lp, "completion_cost", lambda **_kw: 0.0)
 
         provider = LLMProvider(model="anthropic/claude-sonnet-4-6")
-        async with chat_trace(video_id="yt1"):
+        async with chat_trace(video_summary_id="yt1"):
             result = await provider.complete_with_tools(
                 [{"role": "user", "content": "quiz me"}], tools=[], span_name="library_agent"
             )
@@ -272,7 +272,7 @@ class TestCompletionObservability:
         monkeypatch.setattr(lp, "acompletion", _fake_acompletion)
 
         provider = LLMProvider(model="anthropic/claude-sonnet-4-6")
-        async with chat_trace(video_id="yt1"):
+        async with chat_trace(video_summary_id="yt1"):
             with pytest.raises(LLMError):
                 await provider.complete_with_messages(
                     [{"role": "user", "content": "hi"}], span_name="query_translate"

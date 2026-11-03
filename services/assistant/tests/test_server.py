@@ -277,6 +277,38 @@ class TestActionEndpoint:
         assert response.status_code == 403
 
 
+class TestActionTrace:
+    """D8: an /action dispatch joins the chat session that triggered it."""
+
+    async def test_should_put_the_action_in_the_chat_session(self, langfuse_capture):
+        from httpx import ASGITransport, AsyncClient
+        from src.server import app
+
+        spy = AsyncMock()
+        spy.dispatch_action = AsyncMock(return_value={"done": True})
+        app.state.assistant_service = spy
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+                headers={
+                    "X-Internal-Secret": "dev-internal-secret-change-me",
+                    "X-Session-Id": "chat-session-1",
+                    "X-Request-ID": "req-action-1234",
+                },
+            ) as client:
+                resp = await client.post(
+                    "/action", json={"action": "organize_library", "video_id": None, "params": {}}
+                )
+                assert resp.status_code == 200
+        finally:
+            app.state.assistant_service = None
+
+        trace = langfuse_capture.named("chat:library")
+        assert trace.attributes["session.id"] == "chat-chat-session-1"
+        assert "requestId:req-action-1234" in trace.attributes["langfuse.trace.tags"]
+
+
 class TestLibraryChatEndpoint:
     """POST /library/chat endpoint tests."""
 
