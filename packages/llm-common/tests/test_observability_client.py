@@ -189,6 +189,15 @@ async def test_run_trace_should_use_the_trace_id_when_one_is_pinned(exporter):
 
 
 @pytest.mark.asyncio
+async def test_run_trace_should_bind_its_trace_id_for_the_usage_ledger(exporter):
+    from llm_common.context import llm_trace_id_var
+
+    async with lc.run_trace(name="chat:library") as root:
+        assert llm_trace_id_var.get() == root.trace_id
+    assert llm_trace_id_var.get() is None
+
+
+@pytest.mark.asyncio
 async def test_run_trace_should_drop_metadata_values_when_over_the_propagation_limit(exporter):
     async with lc.run_trace(name="pipeline:x", metadata={"short": "ok", "long": "x" * 201}):
         pass

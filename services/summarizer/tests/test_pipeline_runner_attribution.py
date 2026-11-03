@@ -103,3 +103,67 @@ class TestRequestIdAttribution:
         )
 
         assert captured["request_id"] == "fresh-sse-uuid"
+
+
+class TestRunIdsOnTheLedger:
+    """D9: the attempt's run, trace and session ids reach every ``llm_usage`` row."""
+
+    async def test_should_bind_the_attempt_ids_before_the_cache_lookup(self):
+        from llm_common.context import usage_ids
+        from llm_common.observability import trace_id_for_run
+
+        captured: dict[str, Any] = {}
+
+        async def fake_get_response(_youtube_id: str) -> dict:
+            captured.update(usage_ids())
+            return _CACHED
+
+        async def stream(_vsid: str, _cached: dict):
+            yield "data: {}\n\n"
+
+        entry = _entry(currentRunId="run-ledger-1")
+        entry["runs"] = [
+            {
+                "runId": "run-ledger-1",
+                "status": "dispatched",
+                "attempt": 1,
+                "chatSessionId": "chat-9",
+            }
+        ]
+        with (
+            patch.object(pipeline_runner.response_cache, "get_response", new=fake_get_response),
+            patch.object(pipeline_runner, "_stream_cached_structured", new=stream),
+            patch.object(pipeline_runner.settings, "REDIS_ENABLED", True),
+        ):
+            _ = [
+                ev
+                async for ev in pipeline_runner.stream_summarization(
+                    "vsum_attr", entry, MagicMock(), MagicMock()
+                )
+            ]
+
+        assert captured["run_id"] == "run-ledger-1"
+        assert captured["trace_id"] == trace_id_for_run("run-ledger-1")
+        assert captured["attempt"] == 1
+        assert captured["session_id"] == "chat-9"
+        assert captured["pipeline_version"] == pipeline_runner.settings.PIPELINE_VERSION
+        assert captured["bypass"] is False
+
+    async def test_should_not_keep_a_previous_runs_user_when_this_run_has_none(self):
+        token = llm_user_id_var.set("previous-run-user")
+        try:
+            captured = await _run_cache_hit(_entry())
+        finally:
+            llm_user_id_var.reset(token)
+        assert captured["user_id"] is None
+
+    def test_should_clear_the_run_ids_between_attempts(self):
+        from llm_common.context import usage_ids
+
+        pipeline_runner._bind_run(None)
+
+        ids = usage_ids()
+        assert [ids[k] for k in ("run_id", "trace_id", "attempt", "session_id", "bypass")] == [
+            None
+        ] * 5
+        assert "run_id" not in structlog.contextvars.get_contextvars()

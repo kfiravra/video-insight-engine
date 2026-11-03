@@ -19,13 +19,7 @@ from typing import Any, AsyncGenerator
 
 import redis.exceptions as redis_exceptions
 import structlog
-from llm_common.context import (  # noqa: F401 — llm_feature_var used in phases
-    llm_feature_var,
-    llm_request_id_var,
-    llm_user_id_var,
-    llm_video_id_var,
-    llm_video_summary_id_var,
-)
+from llm_common.context import bind_usage_ids
 
 from src.config import settings
 from src.models.schemas import ProcessingStatus
@@ -243,13 +237,36 @@ def _bind_usage_context(
     traces share the api's correlation id.
     """
     user_id, request_id = _resolve_run_attribution(entry, structlog.contextvars.get_contextvars())
-    llm_video_id_var.set(youtube_id)
-    llm_video_summary_id_var.set(video_summary_id)
-    if user_id:
-        llm_user_id_var.set(user_id)
-    if request_id:
-        llm_request_id_var.set(request_id)
+    # Set even when None: a context reused across runs must not keep the last owner.
+    bind_usage_ids(
+        video_id=youtube_id,
+        video_summary_id=video_summary_id,
+        user_id=user_id,
+        request_id=request_id,
+    )
     return user_id, request_id
+
+
+def _bind_run(run: RunIdentity | None, *, bypass: bool = False) -> None:
+    """Bind the attempt's ids for its status callbacks, ledger rows and log lines (D9, D11).
+
+    ``None`` clears the previous attempt's. Bound without reset tokens: the runner
+    is an async generator whose ``aclose()`` may run in another context; the worker
+    restores the job's ids itself (``usage_scope``).
+    """
+    bind_run_id(run.run_id if run else None)
+    bind_usage_ids(
+        run_id=run.run_id if run else None,
+        trace_id=run.trace_id if run else None,
+        attempt=run.attempt if run else None,
+        session_id=run.chat_session_id if run else None,
+        pipeline_version=settings.PIPELINE_VERSION if run else None,
+        bypass=bypass if run else None,
+    )
+    if run:
+        structlog.contextvars.bind_contextvars(run_id=run.run_id)
+    else:
+        structlog.contextvars.unbind_contextvars("run_id")
 
 
 async def _mark_processing(
@@ -335,8 +352,8 @@ async def stream_summarization(
     """
     timer = PipelineTimer()
     force_refresh = force_refresh or bool(entry.get("forceRefresh"))
-    # A context reused across runs must never report the previous run's id.
-    bind_run_id(None)
+    # A context reused across runs must never report the previous run's ids.
+    _bind_run(None)
 
     try:
         youtube_id = entry.get("youtubeId") or entry.get("youtube_id")
@@ -350,7 +367,7 @@ async def stream_summarization(
         # callback closes the api's entry too (as cache_hit). Registered below,
         # only when the pipeline runs.
         run = resolve_run(entry, dispatch)
-        bind_run_id(run.run_id)
+        _bind_run(run, bypass=force_refresh)
 
         # Redis fast path (same YouTube video = instant serve). It runs BEFORE
         # the trace opens: a cache hit is no pipeline run and opens no trace.
@@ -376,7 +393,7 @@ async def stream_summarization(
             run_path=run_path,
             bypass=force_refresh,
         )
-        bind_run_id(run.run_id)
+        _bind_run(run, bypass=force_refresh)
         trace_args = _run_trace_args(
             entry,
             youtube_id=youtube_id,

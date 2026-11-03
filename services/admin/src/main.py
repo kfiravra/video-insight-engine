@@ -109,6 +109,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             # Both keys are populated by the unified cost ledger going forward.
             db.llm_usage.create_index([("request_id", 1), ("timestamp", -1)]),
             db.llm_usage.create_index([("user_id", 1), ("timestamp", -1)]),
+            # D9: runs and chat sessions (same specs as vie-api's plugins/mongodb.ts).
+            db.llm_usage.create_index([("run_id", 1), ("timestamp", -1)]),
+            db.llm_usage.create_index([("session_id", 1), ("timestamp", -1)]),
             db.llm_usage.create_index([("video_summary_id", 1)]),
             # Alert cooldown lookups + UI alert feed query by (type, recency).
             db.llm_alerts.create_index([("type", 1), ("timestamp", -1)]),

@@ -187,3 +187,46 @@ class TestRequestIdValidation:
         response = _make_response()
         result, _ = self._run(request, response)
         assert len(result.headers["X-Request-ID"]) >= 8
+
+
+class TestSessionId:
+    """``X-Session-Id`` (the web's chat session, via vie-api) reaches logs and the ledger."""
+
+    @pytest.fixture(autouse=True)
+    def _clean_contextvars(self):
+        structlog.contextvars.clear_contextvars()
+        yield
+        structlog.contextvars.clear_contextvars()
+
+    def _run_capturing(self, headers: dict) -> dict:
+        from llm_common.context import llm_session_id_var
+
+        seen: dict = {}
+
+        async def call_next(_request):
+            seen["log"] = structlog.contextvars.get_contextvars().get("session_id")
+            seen["ledger"] = llm_session_id_var.get()
+            return _make_response()
+
+        middleware = RequestContextMiddleware(app=MagicMock())
+        asyncio.run(middleware.dispatch(_make_request(headers=headers), call_next))
+        seen["after"] = llm_session_id_var.get()
+        return seen
+
+    def test_binds_a_valid_session_id_for_logs_and_ledger(self):
+        seen = self._run_capturing({"X-Session-Id": "3f2b8c1e-7a4d-4e5f-9b6a-1c2d3e4f5a6b"})
+        assert seen["log"] == seen["ledger"] == "3f2b8c1e-7a4d-4e5f-9b6a-1c2d3e4f5a6b"
+
+    def test_drops_a_forged_session_id(self):
+        seen = self._run_capturing({"X-Session-Id": "abc12345\nforged"})
+        assert seen["log"] is None
+        assert seen["ledger"] is None
+
+    def test_binds_nothing_without_the_header(self):
+        seen = self._run_capturing({})
+        assert seen["log"] is None
+        assert seen["ledger"] is None
+
+    def test_resets_the_ledger_session_after_the_request(self):
+        seen = self._run_capturing({"X-Session-Id": "chat-session-abcdef12"})
+        assert seen["after"] is None

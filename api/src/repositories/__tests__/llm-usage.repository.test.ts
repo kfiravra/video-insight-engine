@@ -25,6 +25,15 @@ describe('LlmUsageRepository', () => {
       expect([row?.user_id, row?.request_id, row?.prompt_preview]).toEqual([undefined, undefined, undefined]);
     });
 
+    it('should unset the run, trace and session ids on rows before the cutoff', async () => {
+      await rows().insertOne({ service: 'assistant', run_id: 'run', trace_id: 't'.repeat(32), session_id: 's', cost_usd: 1, timestamp: BEFORE });
+
+      expect(await repo.scrubPersonalDataBefore(CUTOFF, 100)).toBe(1);
+
+      const row = await rows().findOne({});
+      expect([row?.run_id, row?.trace_id, row?.session_id]).toEqual([undefined, undefined, undefined]);
+    });
+
     it('should keep cost, model, service, timestamp and prompt_hash on a cleared row', async () => {
       await rows().insertOne({ service: 'assistant', model: 'm', user_id: 'u', prompt_preview: 'p', prompt_hash: 'h', cost_usd: 1, timestamp: BEFORE });
 
