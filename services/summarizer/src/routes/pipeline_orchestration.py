@@ -23,7 +23,7 @@ from src.routes.pipeline_faithfulness import (
     _launch_faithfulness_check,
     _launch_hero_quiz_check,
 )
-from src.routes.run_timing import log_run_summary, mark_phase, persist_run_timing
+from src.routes.run_timing import log_run_summary, mark_phase, persist_run_timing, report_run_cost
 from src.services.observability import span, update_root_metadata
 from src.services.pipeline.context import PipelineContext
 from src.services.pipeline.phases import (
@@ -112,7 +112,8 @@ async def run_pipeline_phases(
     once the phases finish or fail. A run that finished — ``done`` already
     out — gives a non-English RAG transcript task and a deferred hi-res pass a
     bounded wait (side by side), so their calls and steps are in the document;
-    a failing run never waits (its error event follows this).
+    a failing run never waits (its error event follows this). A finished
+    run then reports its total cost to vie-api (token ledger settle).
     """
     timing = start_run_timing()
     finished = False
@@ -125,7 +126,9 @@ async def run_pipeline_phases(
         try:
             await _end_run_work(ctx, finished)
         finally:
-            await persist_run_timing(ctx, repository, video_summary_id, timing)
+            doc = await persist_run_timing(ctx, repository, video_summary_id, timing)
+            if finished and doc is not None:
+                await report_run_cost(ctx, repository, video_summary_id, doc)
 
 
 async def _end_run_work(ctx: PipelineContext, finished: bool) -> None:

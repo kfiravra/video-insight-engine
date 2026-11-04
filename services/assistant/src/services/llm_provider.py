@@ -13,7 +13,7 @@ from contextlib import aclosing
 from dataclasses import dataclass, field
 from typing import Any
 
-from litellm import acompletion, completion_cost
+from litellm import acompletion, completion_cost, stream_chunk_builder
 from litellm.exceptions import (
     APIError,
     AuthenticationError,
@@ -25,6 +25,7 @@ from litellm.exceptions import (
 from src.config import settings
 from src.exceptions import LLMError
 from src.logging_config import get_logger
+from src.services.execution_cost import record_llm_cost
 from src.services.llm_generation import CallGeneration, call_generation
 
 logger = get_logger(__name__)
@@ -119,13 +120,15 @@ class LLMProvider:
                         max_tokens=max_tokens,
                     )
                 content = choice.message.content or ""
+                cost_usd = _safe_completion_cost(response=response)
+                record_llm_cost(cost_usd)
                 if span_name:
                     usage = getattr(response, "usage", None)
                     call.succeed(
                         content=content,
                         input_tokens=_usage_int(usage, "prompt_tokens"),
                         output_tokens=_usage_int(usage, "completion_tokens"),
-                        cost_usd=_safe_completion_cost(response=response),
+                        cost_usd=cost_usd,
                         latency_ms=latency_ms,
                         finish_reason=choice.finish_reason,
                         extra_metadata=span_metadata,
@@ -199,13 +202,15 @@ class LLMProvider:
                 message = choice.message
                 content = message.content or None
                 tool_calls = _parse_tool_calls(getattr(message, "tool_calls", None))
+                cost_usd = _safe_completion_cost(response=response)
+                record_llm_cost(cost_usd)
                 if span_name:
                     usage = getattr(response, "usage", None)
                     call.succeed(
                         content=content or "",
                         input_tokens=_usage_int(usage, "prompt_tokens"),
                         output_tokens=_usage_int(usage, "completion_tokens"),
-                        cost_usd=_safe_completion_cost(response=response),
+                        cost_usd=cost_usd,
                         latency_ms=latency_ms,
                         finish_reason=choice.finish_reason,
                         extra_metadata={"toolCallCount": len(tool_calls), **(span_metadata or {})},
@@ -274,8 +279,9 @@ class LLMProvider:
                 kwargs["tool_choice"] = tool_choice
         if self._fallback_models:
             kwargs["fallbacks"] = self._fallback_models
-        if span_name:
-            kwargs["stream_options"] = {"include_usage": True}
+        # Usage on the last chunk: the request's token-ledger cost needs it,
+        # traced or not.
+        kwargs["stream_options"] = {"include_usage": True}
 
         with call_generation(self._model, span_name, messages, span_metadata) as call:
             # ``aclosing``: a client that stops reading closes the provider stream now.
@@ -292,9 +298,15 @@ class LLMProvider:
         span_metadata: dict[str, Any] | None,
         call: CallGeneration,
     ) -> AsyncGenerator[str, None]:
-        """The stream behind :meth:`stream_with_messages`; finishes ``call`` on the last chunk."""
+        """The stream behind :meth:`stream_with_messages`; finishes ``call`` on the last chunk.
+
+        The chunks are kept so the whole response can be rebuilt and priced
+        like a non-streamed one (cache reads and writes included) for the
+        request's execution cost — also when the reader stops early.
+        """
         start_monotonic = time.monotonic()
         accumulated: list[str] = []
+        chunks: list[Any] = []
         usage: Any = None
         finish_reason: str | None = None
 
@@ -303,6 +315,7 @@ class LLMProvider:
             # litellm's ModelResponse | CustomStreamWrapper union.
             response: Any = await acompletion(**kwargs)
             async for chunk in response:
+                chunks.append(chunk)
                 choices = getattr(chunk, "choices", None) or []
                 if choices:
                     choice = choices[0]
@@ -332,6 +345,10 @@ class LLMProvider:
                 error=str(exc),
             )
             raise LLMError(f"LLM authentication failed: {exc}") from exc
+        finally:
+            # A stream the reader closed early still cost what it produced.
+            if chunks:
+                record_llm_cost(_stream_cost(chunks, kwargs["messages"], self._model, usage))
 
         if span_name:
             input_tokens = _usage_int(usage, "prompt_tokens")
@@ -408,6 +425,25 @@ def _parse_tool_calls(raw_calls: Any) -> list[dict[str, Any]]:
             }
         )
     return parsed
+
+
+def _stream_cost(chunks: list[Any], messages: list[dict], model: str, usage: Any) -> float:
+    """What a streamed response cost: rebuilt from its chunks and priced like a
+    non-streamed one (cache pricing included); from the token counts when it
+    cannot be rebuilt."""
+    try:
+        rebuilt = stream_chunk_builder(chunks, messages=messages)
+    except Exception:  # noqa: BLE001 — pricing must never break a stream
+        rebuilt = None
+    if rebuilt is not None:
+        cost = _safe_completion_cost(response=rebuilt)
+        if cost > 0:
+            return cost
+    return _safe_completion_cost(
+        model=model,
+        prompt_tokens=_usage_int(usage, "prompt_tokens"),
+        completion_tokens=_usage_int(usage, "completion_tokens"),
+    )
 
 
 def _usage_int(usage: Any, attr: str) -> int:

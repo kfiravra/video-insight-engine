@@ -29,6 +29,7 @@ from src.models.requests import (
 )
 from src.models.responses import ActionResponse
 from src.services.assistant import AssistantService
+from src.services.execution_cost import metered_stream, report_in_background, start_execution
 from src.services.observability import chat_trace, span
 from src.services.rag import RAGService
 
@@ -46,6 +47,82 @@ from src.services.rate_limit import (  # noqa: F401 — trackers re-exported for
 # Configure structured logging before anything else
 configure_structlog(json_format=settings.LOG_FORMAT == "json")
 logger = get_logger(__name__)
+
+
+async def _run_action(
+    service: AssistantService, request: ActionRequest, user_id: str | None
+) -> JSONResponse:
+    """Dispatch one action inside its trace and map its outcome to the response."""
+    trace_id = uuid4().hex[:12]
+    async with chat_trace(
+        video_id=request.video_id,
+        user_id=user_id,
+        tags=["action", f"action:{request.action}"],
+        metadata={"action": request.action, "traceId": trace_id},
+    ):
+        async with span(f"action:{request.action}"):
+            try:
+                result = await service.dispatch_action(
+                    action=request.action,
+                    video_id=request.video_id,
+                    params=dict(request.params),
+                    user_id=user_id,
+                )
+            except ValidationError as exc:
+                logger.warning(
+                    "action_validation_failed",
+                    trace_id=trace_id,
+                    action=request.action,
+                    error=exc.message,
+                )
+                return JSONResponse(
+                    status_code=exc.status_code,
+                    content=ActionResponse(
+                        success=False,
+                        action=request.action,
+                        data=None,
+                        error=exc.message,
+                        trace_id=trace_id,
+                    ).model_dump(),
+                )
+            except NotFoundError as exc:
+                return JSONResponse(
+                    status_code=exc.status_code,
+                    content=ActionResponse(
+                        success=False,
+                        action=request.action,
+                        data=None,
+                        error=exc.message,
+                        trace_id=trace_id,
+                    ).model_dump(),
+                )
+            except AppError as exc:
+                logger.exception(
+                    "action_app_error",
+                    trace_id=trace_id,
+                    action=request.action,
+                )
+                return JSONResponse(
+                    status_code=exc.status_code,
+                    content=ActionResponse(
+                        success=False,
+                        action=request.action,
+                        data=None,
+                        error=exc.message,
+                        trace_id=trace_id,
+                    ).model_dump(),
+                )
+
+            return JSONResponse(
+                status_code=200,
+                content=ActionResponse(
+                    success=True,
+                    action=request.action,
+                    data=result,
+                    error=None,
+                    trace_id=trace_id,
+                ).model_dump(),
+            )
 
 
 def create_app() -> FastAPI:
@@ -128,15 +205,26 @@ def create_app() -> FastAPI:
         llm_video_id_var.set(request.video_id)
         llm_user_id_var.set(user_id)
         llm_request_id_var.set(request_id)
+        # Token ledger: the turn's cost goes back to vie-api under X-Execution-Id.
+        meter = start_execution(
+            execution_id=req.headers.get("X-Execution-Id"),
+            kind="chat",
+            user_id=user_id,
+            request_id=request_id,
+        )
 
         return StreamingResponse(
-            service.chat(
-                video_id=request.video_id,
-                message=request.message,
-                history=request.conversation_history,
-                user_id=user_id,
-                session_id=session_id,
-                confirm_token=request.confirm_token,
+            metered_stream(
+                service.chat(
+                    video_id=request.video_id,
+                    message=request.message,
+                    history=request.conversation_history,
+                    user_id=user_id,
+                    session_id=session_id,
+                    confirm_token=request.confirm_token,
+                ),
+                meter,
+                getattr(req.app.state, "api_client", None),
             ),
             media_type="text/event-stream",
             headers={
@@ -183,16 +271,26 @@ def create_app() -> FastAPI:
         llm_feature_var.set("assistant:library_chat")
         llm_user_id_var.set(user_id)
         llm_request_id_var.set(request_id)
+        meter = start_execution(
+            execution_id=req.headers.get("X-Execution-Id"),
+            kind="library_chat",
+            user_id=user_id,
+            request_id=request_id,
+        )
 
         return StreamingResponse(
-            service.library_chat(
-                video_ids=list(request.video_ids),
-                message=request.message,
-                history=request.conversation_history,
-                user_id=user_id,
-                session_id=session_id,
-                inventory=[lv.model_dump() for lv in request.library],
-                confirm_token=request.confirm_token,
+            metered_stream(
+                service.library_chat(
+                    video_ids=list(request.video_ids),
+                    message=request.message,
+                    history=request.conversation_history,
+                    user_id=user_id,
+                    session_id=session_id,
+                    inventory=[lv.model_dump() for lv in request.library],
+                    confirm_token=request.confirm_token,
+                ),
+                meter,
+                getattr(req.app.state, "api_client", None),
             ),
             media_type="text/event-stream",
             headers={
@@ -280,77 +378,16 @@ def create_app() -> FastAPI:
         llm_video_id_var.set(request.video_id)
         llm_user_id_var.set(user_id)
         llm_request_id_var.set(request_id)
-
-        trace_id = uuid4().hex[:12]
-        async with chat_trace(
-            video_id=request.video_id,
+        meter = start_execution(
+            execution_id=req.headers.get("X-Execution-Id"),
+            kind="action",
             user_id=user_id,
-            tags=["action", f"action:{request.action}"],
-            metadata={"action": request.action, "traceId": trace_id},
-        ):
-            async with span(f"action:{request.action}"):
-                try:
-                    result = await service.dispatch_action(
-                        action=request.action,
-                        video_id=request.video_id,
-                        params=dict(request.params),
-                        user_id=user_id,
-                    )
-                except ValidationError as exc:
-                    logger.warning(
-                        "action_validation_failed",
-                        trace_id=trace_id,
-                        action=request.action,
-                        error=exc.message,
-                    )
-                    return JSONResponse(
-                        status_code=exc.status_code,
-                        content=ActionResponse(
-                            success=False,
-                            action=request.action,
-                            data=None,
-                            error=exc.message,
-                            trace_id=trace_id,
-                        ).model_dump(),
-                    )
-                except NotFoundError as exc:
-                    return JSONResponse(
-                        status_code=exc.status_code,
-                        content=ActionResponse(
-                            success=False,
-                            action=request.action,
-                            data=None,
-                            error=exc.message,
-                            trace_id=trace_id,
-                        ).model_dump(),
-                    )
-                except AppError as exc:
-                    logger.exception(
-                        "action_app_error",
-                        trace_id=trace_id,
-                        action=request.action,
-                    )
-                    return JSONResponse(
-                        status_code=exc.status_code,
-                        content=ActionResponse(
-                            success=False,
-                            action=request.action,
-                            data=None,
-                            error=exc.message,
-                            trace_id=trace_id,
-                        ).model_dump(),
-                    )
-
-                return JSONResponse(
-                    status_code=200,
-                    content=ActionResponse(
-                        success=True,
-                        action=request.action,
-                        data=result,
-                        error=None,
-                        trace_id=trace_id,
-                    ).model_dump(),
-                )
+            request_id=request_id,
+        )
+        try:
+            return await _run_action(service, request, user_id)
+        finally:
+            report_in_background(meter, getattr(req.app.state, "api_client", None))
 
     return application
 

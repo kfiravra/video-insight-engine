@@ -21,6 +21,7 @@ from src.services.pipeline.download_timing import failed_video_downloads
 from src.services.pipeline.phases.enrichment import QUIZ_CALL_STEP
 from src.services.pipeline.pipeline_helpers import PipelineTimer
 from src.services.pipeline.pipeline_timing import PipelineTimingRecorder
+from src.services.status_callback import post_run_cost
 
 logger = logging.getLogger(__name__)
 
@@ -157,11 +158,12 @@ async def persist_run_timing(
     repository: MongoDBVideoRepository,
     video_summary_id: str,
     timing: PipelineTimingRecorder,
-) -> None:
+) -> dict[str, Any] | None:
     """Write ``pipeline.timing`` and mirror it onto the trace — for successful
-    AND failed runs. Best-effort: timing must never mask the run's own outcome."""
+    AND failed runs. Best-effort: timing must never mask the run's own outcome.
+    Returns the document written, or None when nothing was."""
     if ctx.row_deleted:
-        return
+        return None
     try:
         planned, assembled = _tab_counts(ctx)
         doc = timing.to_document(tabs_planned=planned, tabs_assembled=assembled)
@@ -170,5 +172,35 @@ async def persist_run_timing(
         doc["degraded"], doc["degradedReasons"] = bool(reasons), reasons
         update_root_metadata({"timing": _trace_timing_summary(doc)})
         await asyncio.to_thread(repository.set_pipeline_timing, video_summary_id, doc, reasons)
+        return doc
     except Exception as exc:
         logger.warning("[pipeline] timing record failed for %s: %s", video_summary_id, exc)
+        return None
+
+
+async def report_run_cost(
+    ctx: PipelineContext,
+    repository: MongoDBVideoRepository,
+    video_summary_id: str,
+    doc: dict[str, Any],
+) -> None:
+    """Hand a completed run's total cost (``pipeline.timing.costUsd``, written
+    last, after the judge drain) to vie-api, which settles the run's token hold
+    on it. Only a row that ended ``completed``: a failed run (an extraction
+    that produced nothing ends the phases without raising) is released, never
+    charged. Never raises."""
+    if ctx.row_deleted:
+        return
+    try:
+        row = await asyncio.to_thread(repository.get_video_summary, video_summary_id)
+        if not row or row.get("status") != "completed":
+            return
+        billing_run_id = ctx.entry.get("billingRunId")
+        await post_run_cost(
+            video_summary_id,
+            billing_run_id if isinstance(billing_run_id, str) else None,
+            float(doc["costUsd"]),
+            int(doc["counts"]["llmCalls"]),
+        )
+    except Exception as exc:  # noqa: BLE001 — billing hand-back must never fail the run
+        logger.warning("[pipeline] run-cost report failed for %s: %s", video_summary_id, exc)

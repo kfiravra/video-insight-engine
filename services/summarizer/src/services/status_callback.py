@@ -26,7 +26,7 @@ async def send_video_status(
     """Send video status update to API for WebSocket broadcast.
 
     ``cache_hit`` marks a ``completed`` that was served from the response
-    cache with no run: vie-api releases the run's minutes hold as cached (I3).
+    cache with no run: vie-api releases the run's token hold as cached (I3).
     """
     try:
         async with httpx.AsyncClient() as client:
@@ -79,3 +79,58 @@ def send_video_status_background(
     )
     _STATUS_TASKS.add(task)
     task.add_done_callback(_STATUS_TASKS.discard)
+
+
+# ─── Run cost (token ledger) ───
+
+# The api settles the run's token hold on this; a lost callback is settled by
+# its repair job from llm_usage hours later, so a few quick retries are cheap.
+_RUN_COST_ATTEMPTS = 3
+_RUN_COST_BACKOFF_S = 0.5
+
+
+async def post_run_cost(
+    video_summary_id: str,
+    billing_run_id: str | None,
+    cost_usd: float,
+    llm_calls: int,
+) -> bool:
+    """Report a finished run's total LLM cost to vie-api (``POST /internal/run-cost``).
+
+    ``cost_usd`` is ``pipeline.timing.costUsd`` (every call of the run, judges
+    and transcription included); ``billing_run_id`` the cache row's
+    ``billingRunId`` as the run read it, so the api can tell this run's hold
+    from a newer dispatch's. Idempotent on the api side; retried on transport
+    errors and 5xx. Never raises; returns whether the api accepted it.
+    """
+    payload: dict[str, object] = {
+        "videoSummaryId": video_summary_id,
+        "costUsd": cost_usd,
+        "llmCalls": llm_calls,
+    }
+    if billing_run_id:
+        payload["billingRunId"] = billing_run_id
+    for attempt in range(1, _RUN_COST_ATTEMPTS + 1):
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{settings.API_URL}/internal/run-cost",
+                    json=payload,
+                    headers={"X-Internal-Secret": settings.INTERNAL_SECRET},
+                    timeout=5.0,
+                )
+            if response.status_code < 500:
+                if response.status_code >= 400:
+                    logger.warning(
+                        "run-cost callback refused for %s: %s",
+                        video_summary_id,
+                        response.status_code,
+                    )
+                return response.status_code < 400
+        except httpx.HTTPError as exc:
+            logger.warning(
+                "run-cost callback failed for %s (attempt %d): %s", video_summary_id, attempt, exc
+            )
+        if attempt < _RUN_COST_ATTEMPTS:
+            await asyncio.sleep(_RUN_COST_BACKOFF_S * attempt)
+    return False

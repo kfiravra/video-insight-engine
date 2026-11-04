@@ -47,7 +47,7 @@ also deletes the previous run's stream, so a re-run never replays old events. Th
 why a React StrictMode double-mount, three open tabs, and a worker job all collapse to
 a single pipeline run. The SSE route never competes for the lock on a `failed` row: it
 only consumes (an in-progress run, or what is left of the last one's events), because a
-re-run costs the user minutes and only vie-api's billed submit may start it (review W1;
+re-run costs the user tokens and only vie-api's billed submit may start it (review W1;
 vie-api itself answers a `VIDEO_FAILED` error event before proxying).
 
 The producer calls **`stream_summarization()`** (`routes/pipeline_runner.py`), which:
@@ -107,7 +107,14 @@ chunk stamps its milestones), runs `_run_phases_in_order`, and in its `finally` 
 whatever the t=0 group left running (`_release_run_media`: the caption / description /
 quiz tasks, the tier probe, both downloads), waits — bounded — for a non-English RAG
 transcript task once `done` is out, then persists `pipeline.timing`
-(`routes/run_timing.py:persist_run_timing`) on success **and** failure.
+(`routes/run_timing.py:persist_run_timing`) on success **and** failure. A run whose
+phases finished and whose row ended `completed` then reports its total cost to vie-api
+(`report_run_cost` → `status_callback.post_run_cost` → `POST /internal/run-cost
+{videoSummaryId, billingRunId, costUsd, llmCalls}`, three tries on transport errors and
+5xx, never raises): `costUsd` is `pipeline.timing.costUsd`, written last, after the
+judges drained, and `billingRunId` the cache row's stamp as the run read it. vie-api
+settles the run's token hold on it ([llm-cost-model.md](./llm-cost-model.md#per-user-spend-tokens-not-dollars));
+a failed run reports nothing (its hold is released).
 `_run_phases_in_order` drives the phases below inside the Langfuse trace and drains the
 fire-and-forget faithfulness tasks before the trace flushes. Each phase is an **async
 generator** that mutates `ctx` and `yield`s SSE event strings up to the broker.
@@ -367,7 +374,8 @@ Every phase and sub-step (`text`, `transcript`, `plan`, `memory`, `frames`, `fra
 `synthesis`, `enrichment`, `quiz_call`, `hero_call`, `translation`, …), every LLM call (tokens, cache
 reads / 1h / 5m writes, cost, retries, fallbacks, `ttftMs` for the streamed warm-up), every
 failed attempt and every download lands in `pipeline.timing` (schema version 4,
-DATA-MODELS.md) and a one-line `DONE` log (`log_run_summary`). On the split path the
+DATA-MODELS.md) and a one-line `DONE` log (`log_run_summary`). Its `costUsd` is what the
+user is charged for the run (× 3, in tokens) via the run-cost callback above. On the split path the
 `transcript_frames` wall spans the extraction too; `extraction` = plan-done → last group
 landed.
 

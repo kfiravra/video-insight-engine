@@ -13,6 +13,7 @@ exception handling, structured logging, and domain errors (never HTTP types).
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import httpx
@@ -21,6 +22,10 @@ from src.exceptions import AppError, ServiceUnavailableError, ValidationError
 from src.logging_config import get_logger
 
 logger = get_logger(__name__)
+
+# The usage report: one try plus two retries (vie-api debits once per execution id).
+_USAGE_REPORT_ATTEMPTS = 3
+_USAGE_REPORT_BACKOFF_S = 0.5
 
 
 class ApiClient:
@@ -91,9 +96,7 @@ class ApiClient:
                 user_id=user_id,
                 error=str(exc),
             )
-            raise ServiceUnavailableError(
-                f"vie-api request failed: {exc}"
-            ) from exc
+            raise ServiceUnavailableError(f"vie-api request failed: {exc}") from exc
 
         return self._unwrap(response, method, path, user_id)
 
@@ -138,9 +141,7 @@ class ApiClient:
         Optional *fields*: ``color``, ``icon``, ``parentId``.
         """
         payload = {"name": name, **{k: v for k, v in fields.items() if v is not None}}
-        return await self._request(
-            "POST", "/internal/assistant/folders", user_id, json=payload
-        )
+        return await self._request("POST", "/internal/assistant/folders", user_id, json=payload)
 
     async def update_folder(self, user_id: str, folder_id: str, **fields: Any) -> Any:
         """PATCH /internal/assistant/folders/:id — rename/move/restyle."""
@@ -219,9 +220,65 @@ class ApiClient:
         payload: dict[str, Any] = {"url": url}
         if folder_id is not None:
             payload["folderId"] = folder_id
-        return await self._request(
-            "POST", "/internal/assistant/generate", user_id, json=payload
-        )
+        return await self._request("POST", "/internal/assistant/generate", user_id, json=payload)
+
+    # ─── Token ledger ───────────────────────────────────────────────────
+
+    async def report_execution_usage(
+        self,
+        user_id: str,
+        *,
+        execution_id: str,
+        request_id: str,
+        kind: str,
+        cost_usd: float,
+        calls: int,
+    ) -> bool:
+        """POST /internal/assistant/usage — the request's LLM cost, for vie-api to debit.
+
+        Idempotent on ``execution_id`` at vie-api, so it is retried (twice) on
+        transport errors and 5xx. Never raises: a report that does not land is
+        logged, and vie-api's repair job backfills it from ``llm_usage``.
+        Returns whether vie-api accepted it.
+        """
+        payload = {
+            "executionId": execution_id,
+            "requestId": request_id,
+            "kind": kind,
+            "costUsd": cost_usd,
+            "calls": calls,
+        }
+        for attempt in range(1, _USAGE_REPORT_ATTEMPTS + 1):
+            try:
+                response = await self._get_client().post(
+                    "/internal/assistant/usage", headers=self._headers(user_id), json=payload
+                )
+            except httpx.HTTPError as exc:
+                logger.warning(
+                    "execution_usage_request_failed",
+                    execution_id=execution_id,
+                    attempt=attempt,
+                    error=str(exc),
+                )
+            else:
+                if response.status_code < 500:
+                    if response.status_code >= 400:
+                        logger.warning(
+                            "execution_usage_refused",
+                            execution_id=execution_id,
+                            status_code=response.status_code,
+                            error=_extract_error_message(response),
+                        )
+                    return response.status_code < 400
+                logger.warning(
+                    "execution_usage_upstream_error",
+                    execution_id=execution_id,
+                    attempt=attempt,
+                    status_code=response.status_code,
+                )
+            if attempt < _USAGE_REPORT_ATTEMPTS:
+                await asyncio.sleep(_USAGE_REPORT_BACKOFF_S * attempt)
+        return False
 
     async def aclose(self) -> None:
         """Close the underlying HTTP client (call on shutdown)."""
