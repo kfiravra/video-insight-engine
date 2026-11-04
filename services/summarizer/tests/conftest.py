@@ -44,6 +44,17 @@ def _disable_stage_model_overrides(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_data_api_key(monkeypatch):
+    """No test reaches the real YouTube Data API through a developer's ``.env`` key.
+
+    ``Settings`` reads ``.env``; with YOUTUBE_API_KEY set there, every
+    ``/video/metadata`` route test would call googleapis.com. Tests that want
+    the Data API path set the key themselves and stub ``fetch_video``.
+    """
+    monkeypatch.setattr(_settings, "YOUTUBE_API_KEY", None)
+
+
+@pytest.fixture(autouse=True)
 def _fresh_exit_memory(monkeypatch):
     """Each test starts with no round-robin assignments and no blocked proxy exits.
 

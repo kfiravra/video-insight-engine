@@ -1792,12 +1792,18 @@ Extract playlist metadata using yt-dlp (fast, no video download).
 
 ### GET /video/metadata
 
-Pre-flight facts about one video for the API's billing quote: yt-dlp metadata
-only (the same `extract_video_data` call the pipeline starts with), **no
-captions fetched, no LLM**. Internal: it sends `X-Internal-Secret` like the purge
-route, and the summarizer publishes no port in prod. It goes through the proxy
-exit rotation (`YOUTUBE_PROXY_URL`) every other YouTube call uses and has no
-route-level timeout, like `/playlist/extract`; the API client gives up after 25 s (the rotation budget is 15 s, checked only before starting an exit beyond the third, so a rotation that is still working can answer after ~15 s plus the attempt in flight).
+Pre-flight facts about one video for the API's billing quote, **no captions
+fetched, no LLM**. Internal: it sends `X-Internal-Secret` like the purge route,
+and the summarizer publishes no port in prod. With `YOUTUBE_API_KEY` set the
+facts come from one YouTube Data API `videos.list` call (5 s timeout, direct, key
+in the `X-Goog-Api-Key` header), so a quote no longer depends on the proxy
+exits. Without a key, or when the Data API cannot answer for the video (403,
+quota, an empty `items`, an age restriction or a region allow-list, a timeout, a
+bad body), the route falls back to yt-dlp — the same `extract_video_data` call
+the pipeline starts with, through the proxy exit rotation (`YOUTUBE_PROXY_URL`)
+every other YouTube call uses — and logs one `video_metadata_data_api_fallback`
+warning with the reason. It has no route-level timeout, like `/playlist/extract`;
+the API client gives up after 25 s (the rotation budget is 15 s, checked only before starting an exit beyond the third, so a rotation that is still working can answer after ~15 s plus the attempt in flight).
 
 **Request:** `GET /video/metadata?youtubeId=dQw4w9WgXcQ` with header `X-Internal-Secret`.
 
@@ -1816,11 +1822,11 @@ route-level timeout, like `/playlist/extract`; the API client gives up after 25 
 **Error Codes:**
 - `400`: `youtubeId` is not 11 characters of `A-Za-z0-9_-`; yt-dlp is not called
 - `401`: missing or wrong `X-Internal-Secret`
-- `404`: the video is unknown, private, removed or age-gated (yt-dlp's `expected` extractor errors, or an empty extraction)
-- `422`: a live stream, or a video with no duration yet (premiere, still processing)
+- `404`: the video is unknown, private, removed or age-gated — always yt-dlp's verdict (its `expected` extractor errors, or an empty extraction); an empty Data API answer falls back to yt-dlp first
+- `422`: a live stream, a premiere that has not started (Data API `upcoming`), or a video with no duration yet (still processing)
 - `503`: YouTube could not be asked: bot check or 429 on every exit, or a transport failure
 
-The `detail` text is fixed per status; yt-dlp's own message is never returned.
+The `detail` text is fixed per status; neither yt-dlp's nor Google's message is ever returned.
 vie-api caches a 200 for 24 h at `vie:api:video-meta:<youtubeId>`, remembers a 404 for 10
 minutes at `vie:api:video-meta-miss:<youtubeId>`, and turns every non-200 into
 `METADATA_UNAVAILABLE`: 404 is `not_found`, 422 is `unsupported` (status 422), anything

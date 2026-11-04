@@ -159,6 +159,16 @@ class Settings(BaseSettings):
     # giving up on captions.
     # 1 (or a username without a -N suffix) = no rotation, retry on the same exit.
     YOUTUBE_PROXY_EXIT_COUNT: int = 1
+    # YouTube Data API v3 key for the pre-flight GET /video/metadata only
+    # (routes/video_metadata.py): one videos.list call, direct — googleapis.com
+    # is not bot-checked — so a billing quote no longer depends on the proxy
+    # exits; 1 unit of the project's 10,000/day quota per uncached quote. Blank =
+    # yt-dlp through the proxy, which is also the fallback on a 403/quota error,
+    # an unknown or private video, an age or region allow-list restriction, a
+    # timeout or a bad body (one warning names the reason). The pipeline's own
+    # metadata step stays on yt-dlp. Restrict the key by API (YouTube Data API v3)
+    # only, no IP restriction: the same key serves the dev machine and the box.
+    YOUTUBE_API_KEY: str | None = Field(default=None, repr=False)
 
     # Whisper fallback (Phase 4 - for videos without captions)
     # Max duration set to 600 min (10 hours) to support ultra-long content.
