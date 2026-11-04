@@ -297,6 +297,43 @@ describe('internal assistant routes', () => {
       );
     });
 
+    it('should carry the forwarded chat session into the run it starts', async () => {
+      mockContainer.videoService.createVideo.mockResolvedValue({
+        video: { id: 'v1', youtubeId: 'dQw4w9WgXcQ', status: 'pending' },
+        cached: false,
+      });
+
+      await app.inject({
+        method: 'POST',
+        url: '/internal/assistant/generate',
+        headers: { ...internalHeaders(USER_A), 'x-session-id': 'chat-session-abcdef12' },
+        payload: { url: 'https://youtu.be/dQw4w9WgXcQ' },
+      });
+
+      expect(mockContainer.videoService.createVideo).toHaveBeenCalledWith(
+        USER_A,
+        'https://youtu.be/dQw4w9WgXcQ',
+        expect.objectContaining({ chatSessionId: 'chat-session-abcdef12' }),
+      );
+    });
+
+    it('should start the run with no chat session when none is forwarded', async () => {
+      mockContainer.videoService.createVideo.mockResolvedValue({
+        video: { id: 'v1', youtubeId: 'dQw4w9WgXcQ', status: 'pending' },
+        cached: false,
+      });
+
+      await app.inject({
+        method: 'POST',
+        url: '/internal/assistant/generate',
+        headers: internalHeaders(USER_A),
+        payload: { url: 'https://youtu.be/dQw4w9WgXcQ' },
+      });
+
+      const options = mockContainer.videoService.createVideo.mock.calls[0][2];
+      expect(options.chatSessionId).toBeUndefined();
+    });
+
     it('should queue a run paid with plan minutes as paid', async () => {
       mockContainer.billingEnforcement.admit.mockResolvedValueOnce({ requestId: 'r', minutes: 10, split: { free: 0, plan: 10, credit: 0, lots: [] } });
       mockContainer.videoService.createVideo.mockResolvedValue({ video: {}, cached: false });

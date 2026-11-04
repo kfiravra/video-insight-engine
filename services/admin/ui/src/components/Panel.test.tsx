@@ -67,6 +67,19 @@ describe('Panel', () => {
     expect(panel?.className).not.toContain('p-6');
   });
 
+  it('should inset the header when padding=none so the title clears the border', () => {
+    const { container } = render(<Panel padding="none" title="Flush">x</Panel>);
+    const header = container.querySelector('[data-slot="panel-header"]');
+    expect(header?.className).toContain('px-4');
+    expect(header?.className).toContain('pt-3');
+  });
+
+  it('should not inset the header when the panel already has padding', () => {
+    const { container } = render(<Panel padding="md" title="Padded">x</Panel>);
+    const header = container.querySelector('[data-slot="panel-header"]');
+    expect(header?.className).not.toContain('px-4');
+  });
+
   it('should merge custom className', () => {
     const { container } = render(<Panel className="extra-class">x</Panel>);
     const panel = container.querySelector('[data-slot="panel"]');

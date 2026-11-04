@@ -7,7 +7,7 @@ from httpx import ASGITransport, AsyncClient
 
 from src.config import settings
 from src.main import app
-from src.routes.usage import (
+from src.routes.usage_runs import (
     _attach_cache_fields,
     _build_run_call,
     _build_run_summary,
@@ -190,6 +190,7 @@ class TestBuildRunSummary:
 
         group = {
             "_id": "req-abc-123",
+            "request_id": "req-abc-123",
             "video_id": "dQw4w9WgXcQ",
             "video_summary_id": "664f000000000000000000aa",
             "user_id": "664f000000000000000000bb",
@@ -213,6 +214,7 @@ class TestBuildRunSummary:
 
         group = {
             "_id": None,
+            "request_id": None,
             "video_id": "some-video",
             "video_summary_id": None,
             "user_id": None,
@@ -233,6 +235,7 @@ class TestBuildRunSummary:
 
         group = {
             "_id": "req-xyz",
+            "request_id": "req-xyz",
             "video_id": "vid1",
             "video_summary_id": None,
             "user_id": None,
@@ -262,6 +265,7 @@ class TestBuildRunSummary:
 
         group = {
             "_id": "req-abc",
+            "request_id": "req-abc",
             "video_id": "vid1",
             "video_summary_id": "664f000000000000000000aa",
             "user_id": None,
@@ -360,6 +364,7 @@ class TestAttachCacheFields:
     def _run(self, request_id: str | None = "req-1", vsid: str | None = "vs-1"):
         group = {
             "_id": request_id,
+            "request_id": request_id,
             "video_id": "yt",
             "video_summary_id": vsid,
             "first_call": None,

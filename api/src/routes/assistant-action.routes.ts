@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { actionEnumSchema, actionParamsSchema } from '../schemas/assistant.schema.js';
 import { VideoNotFoundError } from '../utils/errors.js';
+import { readSessionId } from '../plugins/request-id.js';
 import type { AssistantAction } from '../services/assistant-client.js';
 import type { VideoRepository } from '../repositories/video.repository.js';
 
@@ -79,11 +80,12 @@ export async function assistantActionRoutes(fastify: FastifyInstance): Promise<v
         userId: req.user.userId,
         videoId,
         requestId: req.id,
+        sessionId: readSessionId(req.headers),
       });
 
       return reply.status(status).send(body);
     } catch (error) {
-      fastify.log.error(error, 'assistant action failed');
+      req.log.error(error, 'assistant action failed');
       return reply.status(502).send({
         error: 'SERVICE_UNAVAILABLE',
         message: 'Assistant service is temporarily unavailable. Please try again.',

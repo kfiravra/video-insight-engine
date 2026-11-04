@@ -10,9 +10,11 @@ read-only and cached under ``<cache-dir>/eqa/``:
   (``pipeline.triage.contentFormat``) and source language;
 * dev S3 (the pipeline's transcript store): the transcript segments, rendered
   by ``render_transcript`` as the text branch renders them;
-* that run's dev Langfuse trace (public read API): the two inputs Mongo/S3 do
-  not keep — the tier probe's answer (→ the ``Hint:`` line and the playbook
-  domain, through the pipeline's ``parse_tier_probe`` / ``probe_hint`` /
+* that run's dev Langfuse trace (one v2 observations read through the SDK v4
+  public-API client, found by the trace name ``pipeline:<videoSummaryId>``,
+  which v9 runs carry): the two inputs Mongo/S3 do not keep — the tier
+  probe's answer (→ the ``Hint:`` line and the playbook domain, through the
+  pipeline's ``parse_tier_probe`` / ``probe_hint`` /
   ``PROBE_CONFIDENCE_THRESHOLD``) and the YouTube description (verbatim in the
   run's description-analysis request).
 
@@ -31,7 +33,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-import httpx
 from _model_ab_capture import recording_provider
 from _model_ab_inputs import _MARKER, _mongosh, _segments
 from _model_ab_types import GPT_4O_MINI, SONNET_46, AbRequest
@@ -49,9 +50,11 @@ EQA_VIDEO = "EqaMrzd9nZU"
 PIPELINE_VERSION = "v9"
 _LANGFUSE_KEYS = ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_BASE_URL")
 _LANGFUSE_DEFAULT_HOST = "https://cloud.langfuse.com"
-# Langfuse Cloud throttles its read API (≈ 4 reads in 3 s → 429): one read every 2 s.
+# Langfuse Cloud throttles its read API (≈ 4 reads in 3 s → 429): wait before the one read.
 _READ_SPACING_S = 2.0
 _GENERATIONS = ("tier_probe", "description_analysis", "plan")
+# v2 observation field groups: name/level, input/output, model, usage, metadata.
+_GENERATION_FIELDS = "basic,io,model,usage,metadata"
 _PLAN_ANSWER = "{}"
 # What Langfuse puts in a stored input: a cut-off long text, a masked PII-looking span.
 _TRUNCATED = "[TRUNCATED]"
@@ -85,37 +88,77 @@ def _run_js(video_id: str) -> str:
     )
 
 
-def _get(client: httpx.Client, url: str, params: dict[str, Any]) -> dict[str, Any]:
-    time.sleep(_READ_SPACING_S)
-    response = client.get(url, params=params)
-    response.raise_for_status()
-    return response.json()
+def _decoded(value: Any) -> Any:
+    """A v2 observation's input/output: raw JSON text on the wire, the value it encodes here."""
+    if not isinstance(value, str):
+        return value
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return value
+
+
+def _as_text(value: Any) -> str:
+    """The model's answer as text: a JSON answer the SDK stored unquoted decodes to an object."""
+    return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+
+
+def _trace_name_filter(summary_id: str) -> str:
+    """v2 ``filter``: the observations of the trace named ``pipeline:<videoSummaryId>``."""
+    return json.dumps(
+        [
+            {
+                "type": "string",
+                "column": "traceName",
+                "operator": "=",
+                "value": f"pipeline:{summary_id}",
+            }
+        ]
+    )
+
+
+def generations_from(observations: list[dict[str, Any]], summary_id: str) -> dict[str, Any]:
+    """The run's tier probe, description-analysis and plan generations, from v2 observations."""
+    trace_ids = {o.get("traceId") for o in observations}
+    if len(trace_ids) != 1:
+        raise ValueError(f"pipeline:{summary_id}: {len(trace_ids)} traces, expected 1")
+    trace_id = trace_ids.pop()
+    by_name = {
+        o["name"]: o
+        for o in observations
+        if o.get("type") == "GENERATION" and o.get("name") in _GENERATIONS
+    }
+    missing = sorted(set(_GENERATIONS) - set(by_name))
+    if missing:
+        raise ValueError(f"trace {trace_id} lacks generations {missing}")
+    plan = by_name["plan"]
+    return {
+        "trace_id": trace_id,
+        "probe_output": _as_text(_decoded(by_name["tier_probe"].get("output"))),
+        "description_request": _decoded(by_name["description_analysis"].get("input")),
+        "plan_request": _decoded(plan.get("input")),
+        "plan_model": plan.get("model"),
+        "plan_usage": plan.get("usageDetails"),
+        "plan_metadata": _decoded(plan.get("metadata")),
+    }
 
 
 def _trace_generations(summary_id: str, env_path: Path) -> dict[str, Any]:
-    """The run's tier probe, description-analysis and plan generations (read-only)."""
+    """The run's generations, read once from dev Langfuse (read-only, SDK imported lazily)."""
+    from langfuse import Langfuse
+
     creds = _env_values(_LANGFUSE_KEYS, env_path)
-    host = (creds.get("LANGFUSE_BASE_URL") or _LANGFUSE_DEFAULT_HOST).rstrip("/")
-    auth = (creds["LANGFUSE_PUBLIC_KEY"], creds["LANGFUSE_SECRET_KEY"])
-    with httpx.Client(base_url=host, auth=auth, timeout=30.0) as client:
-        traces = _get(client, "/api/public/traces", {"name": f"pipeline:{summary_id}"})["data"]
-        if len(traces) != 1:
-            raise ValueError(f"pipeline:{summary_id}: {len(traces)} traces, expected 1")
-        params = {"traceId": traces[0]["id"], "type": "GENERATION", "limit": 100}
-        found = _get(client, "/api/public/observations", params)["data"]
-    by_name = {o["name"]: o for o in found if o.get("name") in _GENERATIONS}
-    missing = sorted(set(_GENERATIONS) - set(by_name))
-    if missing:
-        raise ValueError(f"trace {traces[0]['id']} lacks generations {missing}")
-    return {
-        "trace_id": traces[0]["id"],
-        "probe_output": by_name["tier_probe"]["output"],
-        "description_request": by_name["description_analysis"]["input"],
-        "plan_request": by_name["plan"]["input"],
-        "plan_model": by_name["plan"].get("model"),
-        "plan_usage": by_name["plan"].get("usageDetails") or by_name["plan"].get("usage"),
-        "plan_metadata": by_name["plan"].get("metadata"),
-    }
+    client = Langfuse(
+        public_key=creds["LANGFUSE_PUBLIC_KEY"],
+        secret_key=creds["LANGFUSE_SECRET_KEY"],
+        base_url=(creds.get("LANGFUSE_BASE_URL") or _LANGFUSE_DEFAULT_HOST).rstrip("/"),
+    )
+    time.sleep(_READ_SPACING_S)
+    page = client.api.observations.get_many(
+        filter=_trace_name_filter(summary_id), fields=_GENERATION_FIELDS, limit=1000
+    )
+    observations = [o.model_dump(by_alias=True, mode="json") for o in page.data]
+    return generations_from(observations, summary_id)
 
 
 def gather_eqa(cache_dir: Path, env_path: Path, video_id: str = EQA_VIDEO) -> dict[str, Any]:

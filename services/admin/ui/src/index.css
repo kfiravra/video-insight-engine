@@ -9,6 +9,11 @@
   --color-warning-soft: rgba(245, 158, 11, 0.08);
   --color-danger: #ef4444;
   --color-danger-soft: rgba(239, 68, 68, 0.08);
+  /* Text shades of the tone colours: AA (≥ 4.5:1) on their soft fills at pill sizes. */
+  --color-primary-ink: #4338ca;
+  --color-success-ink: #15803d;
+  --color-warning-ink: #b45309;
+  --color-danger-ink: #b91c1c;
   --color-accent: #8b5cf6;
   --color-accent-soft: rgba(139, 92, 246, 0.08);
   --color-surface: #ffffff;
@@ -36,6 +41,10 @@
     --color-success-soft: rgba(34, 197, 94, 0.12);
     --color-warning-soft: rgba(245, 158, 11, 0.12);
     --color-danger-soft: rgba(239, 68, 68, 0.12);
+    --color-primary-ink: #a5b4fc;
+    --color-success-ink: #4ade80;
+    --color-warning-ink: #fbbf24;
+    --color-danger-ink: #f87171;
     --color-accent-soft: rgba(139, 92, 246, 0.12);
     --color-surface: #0f172a;
     --color-surface-dim: #1e293b;

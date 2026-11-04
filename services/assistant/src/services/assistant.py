@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from cachetools import TTLCache
 
+from llm_common.context import bind_usage_ids
 from src.config import Settings
 from src.exceptions import NotFoundError
 from src.logging_config import get_logger
@@ -26,9 +27,10 @@ from src.services.agent_loop import (  # noqa: F401 — re-exported budgets
 from src.services.confirmation import ConfirmationGate
 from src.services.context_builder import ContextBuilder
 from src.services.llm_provider import LLMProvider
-from src.services.observability import chat_trace
+from src.services.observability import chat_trace, chat_turn
 from src.services.rag import RAGService
 from src.services.tool_router import ActionDispatcher, ToolRouter
+from src.services.turn_events import observe_turn
 from src.tools.base import BaseTool
 from src.utils.language_detect import detect_language
 
@@ -108,6 +110,8 @@ class AssistantService:
         :class:`ValidationError` on bad input.
         """
         video_ctx = await self._load_video_context(video_id) if video_id else None
+        if video_ctx is not None:
+            bind_usage_ids(video_id=video_ctx.youtube_id, video_summary_id=video_id)
         return await self._action_dispatcher.dispatch(
             action=action,
             video_id=video_id,
@@ -115,6 +119,15 @@ class AssistantService:
             video_ctx=video_ctx,
             user_id=user_id,
         )
+
+    async def youtube_id_of(self, video_id: str | None) -> str | None:
+        """The YouTube id of a ``videoSummaryId`` (cached context), ``None`` when unknown."""
+        if not video_id:
+            return None
+        try:
+            return (await self._load_video_context(video_id)).youtube_id
+        except NotFoundError:
+            return None
 
     async def _load_video_context(self, video_id: str) -> VideoContext:
         """Load video context from cache or MongoDB.
@@ -141,6 +154,7 @@ class AssistantService:
         *,
         user_id: str | None = None,
         session_id: str | None = None,
+        request_id: str | None = None,
         confirm_token: str | None = None,
     ) -> AsyncGenerator[str, None]:
         """Stream a chat response about a video.
@@ -151,11 +165,12 @@ class AssistantService:
         as child spans.
 
         Args:
-            video_id: YouTube video ID.
+            video_id: The video's ``videoSummaryId`` (what vie-api forwards).
             message: User's current message.
             history: Previous conversation messages.
             user_id: Optional user identifier for the trace.
             session_id: Optional chat session id for grouping turns.
+            request_id: The gateway's request id, tagged on the trace.
             confirm_token: Single-use token echoed from a prior
                 ``pending_confirmation`` event to run its parked action.
 
@@ -166,6 +181,8 @@ class AssistantService:
             NotFoundError: If video is not found.
         """
         video_ctx = await self._load_video_context(video_id)
+        # D9: ledger rows name the video by its YouTube id, the row by its summary id.
+        bind_usage_ids(video_id=video_ctx.youtube_id, video_summary_id=video_id)
 
         logger.info(
             "assistant_chat_start",
@@ -173,20 +190,27 @@ class AssistantService:
             history_len=len(history),
         )
 
+        turn = chat_turn(history)
         async with chat_trace(
-            video_id=video_id,
+            video_summary_id=video_id,
+            youtube_id=video_ctx.youtube_id,
             user_id=user_id,
             session_id=session_id,
+            request_id=request_id,
+            turn=turn,
             metadata={"historyLen": len(history), "messageLen": len(message)},
         ):
             # RAG-powered chat (also exposes library action tools)
-            async for sse in self._rag_chat(
+            rag_turn = self._rag_chat(
                 video_id,
                 message,
                 history,
                 video_ctx,
                 user_id=user_id,
                 confirm_token=confirm_token,
+            )
+            async for sse in observe_turn(
+                rag_turn, surface="video", session_id=session_id, turn=turn
             ):
                 yield sse
 
@@ -198,6 +222,7 @@ class AssistantService:
         *,
         user_id: str | None = None,
         session_id: str | None = None,
+        request_id: str | None = None,
         inventory: list[dict] | None = None,
         confirm_token: str | None = None,
     ) -> AsyncGenerator[str, None]:
@@ -215,6 +240,7 @@ class AssistantService:
             history: Previous conversation messages.
             user_id: Optional user identifier for the trace.
             session_id: Optional chat session id for grouping turns.
+            request_id: The gateway's request id, tagged on the trace.
 
         Yields:
             SSE-formatted strings (``data: {json}\\n\\n``).
@@ -225,10 +251,13 @@ class AssistantService:
             history_len=len(history),
         )
 
+        turn = chat_turn(history)
         async with chat_trace(
-            video_id=None,
+            video_summary_id=None,
             user_id=user_id,
             session_id=session_id,
+            request_id=request_id,
+            turn=turn,
             tags=["library"],
             metadata={
                 "videoCount": len(video_ids),
@@ -236,57 +265,73 @@ class AssistantService:
                 "messageLen": len(message),
             },
         ):
-            user_language = detect_language(message)
-            search_query = await self._translate_query(message, user_language)
-
-            rag_sources = await self._rag.search_library(
-                query=search_query,
-                video_ids=video_ids,
-                top_k=self._settings.MAX_CONTEXT_CHUNKS,
+            library_turn = self._library_turn(
+                video_ids, message, history, user_id, inventory, confirm_token
             )
+            async for sse in observe_turn(
+                library_turn, surface="library", session_id=session_id, turn=turn
+            ):
+                yield sse
 
-            # Label each source with its video title so the answer + source chips
-            # name videos instead of leaking raw ids.
-            title_by_id = {
-                v.get("video_id"): v.get("title", "")
-                for v in (inventory or [])
-                if v.get("video_id")
-            }
-            for src in rag_sources:
-                src.title = title_by_id.get(src.video_id) or src.title
+    async def _library_turn(
+        self,
+        video_ids: list[str],
+        message: str,
+        history: list[ChatMessage],
+        user_id: str | None,
+        inventory: list[dict] | None,
+        confirm_token: str | None,
+    ) -> AsyncGenerator[str, None]:
+        """One library turn: search the owned videos, then the agentic loop (in the turn's trace)."""
+        user_language = detect_language(message)
+        search_query = await self._translate_query(message, user_language)
 
-            if rag_sources:
-                yield self._format_sse(ChatEvent(type="source", sources=rag_sources))
-            else:
-                logger.info("assistant_library_chat_no_context")
+        rag_sources = await self._rag.search_library(
+            query=search_query,
+            video_ids=video_ids,
+            top_k=self._settings.MAX_CONTEXT_CHUNKS,
+        )
 
-            system_prompt = self._build_library_system_prompt(
-                rag_sources, user_language, inventory, user_id=user_id
-            )
-            messages = self._build_messages(system_prompt, history, message)
+        # Label each source with its video title so the answer + source chips
+        # name videos instead of leaking raw ids.
+        title_by_id = {
+            v.get("video_id"): v.get("title", "") for v in (inventory or []) if v.get("video_id")
+        }
+        for src in rag_sources:
+            src.title = title_by_id.get(src.video_id) or src.title
 
-            try:
-                async for sse in self._run_agentic_loop(
-                    messages,
-                    user_id,
-                    confirm_token=confirm_token,
-                ):
-                    yield sse
-            except Exception as exc:
-                logger.error("assistant_library_chat_llm_error", error=str(exc))
-                yield self._format_sse(
-                    ChatEvent(
-                        type="error",
-                        content="Failed to generate response. Please try again.",
-                    )
-                )
+        if rag_sources:
+            yield self._format_sse(ChatEvent(type="source", sources=rag_sources))
+        else:
+            logger.info("assistant_library_chat_no_context")
 
+        system_prompt = self._build_library_system_prompt(
+            rag_sources, user_language, inventory, user_id=user_id
+        )
+        messages = self._build_messages(system_prompt, history, message)
+
+        try:
+            async for sse in self._run_agentic_loop(
+                messages,
+                user_id,
+                confirm_token=confirm_token,
+            ):
+                yield sse
+        except Exception as exc:
+            logger.error("assistant_library_chat_llm_error", error=str(exc))
             yield self._format_sse(
                 ChatEvent(
-                    type="done",
-                    metadata={"sources_count": len(rag_sources)},
+                    type="error",
+                    content="Failed to generate response. Please try again.",
                 )
             )
+
+        yield self._format_sse(
+            ChatEvent(
+                type="done",
+                metadata={"sources_count": len(rag_sources)},
+            )
+        )
 
     def _build_library_system_prompt(
         self,

@@ -14,6 +14,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from src.auth import ApiKeyMiddleware
 from src.config import settings, validate_secrets
 from src.dependencies import close_mongo_client, get_database, init_mongo_client
+from src.logging_config import configure_admin_logging
 from src.routes.alerts import router as alerts_router
 from src.routes.auth import router as auth_router
 from src.routes.billing import router as billing_router
@@ -23,11 +24,15 @@ from src.routes.queue import router as queue_router
 from src.routes.shares import router as shares_router
 from src.routes.tiers import router as tiers_router
 from src.routes.usage import router as usage_router
+from src.routes.usage_runs import router as usage_runs_router
 from src.routes.users import router as users_router
 from src.routes.videos import router as videos_router
+from src.sentry_scrub import scrub_event_payload
 from src.services.alert_evaluator import alert_evaluator_loop
 from src.services.health_checker import health_poller_loop
 
+# Before the first log line: JSON in prod, through stdlib so errors reach Sentry.
+configure_admin_logging()
 logger = structlog.get_logger(__name__)
 
 _health_task: asyncio.Task | None = None
@@ -53,6 +58,8 @@ def _init_sentry() -> bool:
             release=settings.SENTRY_RELEASE,
             traces_sample_rate=settings.SENTRY_TRACES_SAMPLE_RATE,
             send_default_pii=False,
+            # The shared PII scrub (vendored from llm-common, P-13).
+            before_send=scrub_event_payload,
         )
         sentry_sdk.set_tag("service", "vie-admin")
         return True
@@ -109,6 +116,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             # Both keys are populated by the unified cost ledger going forward.
             db.llm_usage.create_index([("request_id", 1), ("timestamp", -1)]),
             db.llm_usage.create_index([("user_id", 1), ("timestamp", -1)]),
+            # D9: runs and chat sessions (same specs as vie-api's plugins/mongodb.ts).
+            db.llm_usage.create_index([("run_id", 1), ("timestamp", -1)]),
+            db.llm_usage.create_index([("session_id", 1), ("timestamp", -1)]),
             db.llm_usage.create_index([("video_summary_id", 1)]),
             # Alert cooldown lookups + UI alert feed query by (type, recency).
             db.llm_alerts.create_index([("type", 1), ("timestamp", -1)]),
@@ -160,6 +170,7 @@ app.add_middleware(ApiKeyMiddleware)
 # Register routers
 app.include_router(auth_router)
 app.include_router(usage_router)
+app.include_router(usage_runs_router)
 app.include_router(health_router)
 app.include_router(alerts_router)
 app.include_router(shares_router)

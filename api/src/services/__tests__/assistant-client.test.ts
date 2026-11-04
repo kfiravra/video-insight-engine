@@ -173,6 +173,40 @@ describe('AssistantClient', () => {
   });
 
   describe.each(Object.entries({
+    chat: (client: AssistantClient, sessionId?: string) =>
+      client.chat({ videoId: 'vid-1', userId: 'user-1', message: 'hi', sessionId }),
+    libraryChat: (client: AssistantClient, sessionId?: string) =>
+      client.libraryChat({ youtubeIds: [], userId: 'user-1', message: 'hi', sessionId }),
+    action: (client: AssistantClient, sessionId?: string) =>
+      client.action({ userId: 'user-1', action: 'organize_library', sessionId }),
+    librarySearch: (client: AssistantClient, sessionId?: string) =>
+      client.librarySearch({ youtubeIds: [], userId: 'user-1', query: 'q', sessionId }),
+  }))('%s — chat session propagation', (_name, call) => {
+    function respond(): void {
+      const stream = new ReadableStream({ start(controller) { controller.close(); } });
+      mockFetch.mockResolvedValueOnce(
+        new Response(stream, { status: 200, headers: { 'Content-Type': 'text/event-stream' } }),
+      );
+    }
+
+    it('should forward X-Session-Id when supplied', async () => {
+      respond();
+      await call(client, 'chat-session-abcdef12').catch(() => undefined);
+
+      const [, options] = mockFetch.mock.calls[0];
+      expect(options.headers['X-Session-Id']).toBe('chat-session-abcdef12');
+    });
+
+    it('should omit X-Session-Id when not supplied', async () => {
+      respond();
+      await call(client).catch(() => undefined);
+
+      const [, options] = mockFetch.mock.calls[0];
+      expect(options.headers).not.toHaveProperty('X-Session-Id');
+    });
+  });
+
+  describe.each(Object.entries({
     chat: (client: AssistantClient) => client.chat({ videoId: 'vid-1', userId: 'user-1', message: 'hi' }),
     libraryChat: (client: AssistantClient) =>
       client.libraryChat({ youtubeIds: [], userId: 'user-1', message: 'hi' }),

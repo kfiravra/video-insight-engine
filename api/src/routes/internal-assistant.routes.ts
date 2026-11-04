@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { idParamSchema, objectIdSchema } from '../utils/validation.js';
 import { VideoSubmissionService } from '../services/video-submission.service.js';
+import { readSessionId } from '../plugins/request-id.js';
 
 // Bound how many owned videos the assistant can enumerate in a single call so a
 // power user's library can't balloon the internal response unboundedly.
@@ -157,11 +158,14 @@ export async function internalAssistantRoutes(fastify: FastifyInstance): Promise
     // around the burst limit (RATE_LIMITED, 429).
     await submitBurstLimiter.consume(userId);
 
+    // The assistant forwards the chat's X-Request-ID and X-Session-Id, so the
+    // run this starts carries the chat session as `chatSession:<id>` (D8).
     const submission = await videoSubmissionService.submit({
       userId,
       url,
       folderId,
       requestId: req.id,
+      chatSessionId: readSessionId(req.headers),
     });
 
     if (submission.outcome === 'duplicate') {

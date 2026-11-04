@@ -1,13 +1,14 @@
 import { Link, useParams } from 'react-router-dom';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList } from 'recharts';
 import { useVideoDetail } from '../hooks/use-admin-api';
-import { formatCost, formatDuration, timeAgo, formatNumber, formatUsageVolume } from '../lib/format';
+import { formatCost, formatDuration, timeAgo, formatNumber } from '../lib/format';
 import { ArrowLeftIcon, DollarIcon, ZapIcon, HashIcon, ClockIcon } from '../components/icons';
 import { Panel } from '../components/Panel';
 import { StatCard } from '../components/StatCard';
 import { SkeletonPanel } from '../components/SkeletonPanel';
 import { ErrorState } from '../components/ErrorState';
 import { PurgeVideoControls } from '../components/PurgeVideoControls';
+import { RunsTable } from '../components/RunsTable';
 
 function BackLink() {
   return (
@@ -43,7 +44,7 @@ export function VideoDetailPage() {
     );
   }
 
-  const { video, summary, by_feature, calls } = data;
+  const { video, summary, by_feature, runs } = data;
 
   return (
     <div className="space-y-6">
@@ -152,39 +153,16 @@ export function VideoDetailPage() {
         </Panel>
       )}
 
-      {/* Individual LLM calls table */}
-      {calls.length > 0 && (
-        <Panel title={`Individual Calls (${calls.length})`} tone="raised" padding="none">
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-[var(--color-border)] bg-[var(--color-surface-dim)]">
-                  <th className="text-left p-2 pl-4 font-medium text-[var(--color-text-muted)]">Model</th>
-                  <th className="text-left p-2 font-medium text-[var(--color-text-muted)]">Feature</th>
-                  <th className="text-right p-2 font-medium text-[var(--color-text-muted)]">Cost</th>
-                  <th className="text-right p-2 font-medium text-[var(--color-text-muted)]">Tokens</th>
-                  <th className="text-right p-2 font-medium text-[var(--color-text-muted)]">Duration</th>
-                  <th className="text-right p-2 pr-4 font-medium text-[var(--color-text-muted)]">Time</th>
-                </tr>
-              </thead>
-              <tbody>
-                {calls.map((row, i) => (
-                  <tr key={row._id ?? i} className="border-b border-[var(--color-border)] last:border-0 hover:bg-[var(--color-primary-soft)] transition-colors">
-                    <td className="p-2 pl-4 font-mono truncate max-w-[180px]">{row.model}</td>
-                    <td className="p-2 truncate max-w-[120px]">{row.feature}</td>
-                    <td className="p-2 text-right font-mono font-medium text-[var(--color-primary)]">{formatCost(row.cost_usd)}</td>
-                    <td className="p-2 text-right">{formatUsageVolume(row)}</td>
-                    <td className="p-2 text-right">{row.duration_ms}ms</td>
-                    <td className="p-2 pr-4 text-right text-[var(--color-text-muted)]">
-                      {timeAgo(row.timestamp)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      {/* The video's pipeline attempts, newest first, each expandable to its calls */}
+      <Panel title={`Pipeline Runs (${runs.length})`} tone="raised" padding="none">
+        {runs.length === 0 ? (
+          <div className="p-6 text-center text-xs text-[var(--color-text-muted)]">
+            No pipeline runs recorded for this video in the last 90 days.
           </div>
-        </Panel>
-      )}
+        ) : (
+          <RunsTable runs={runs} />
+        )}
+      </Panel>
     </div>
   );
 }

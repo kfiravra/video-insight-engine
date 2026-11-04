@@ -30,6 +30,15 @@ class UsageRecord(BaseModel):
     video_id: str | None = None
     user_id: str | None = None
     video_summary_id: str | None = None
+    # D9: the pipeline attempt (run, its Langfuse trace, attempt number,
+    # pipeline version, bypass) or chat session a row belongs to. Additive:
+    # older rows read as None and the admin falls back to ``request_id``.
+    run_id: str | None = None
+    trace_id: str | None = None
+    session_id: str | None = None
+    attempt: int | None = None
+    pipeline_version: str | None = None
+    bypass: bool | None = None
     is_stream: bool = False
     service: str = "unknown"
     prompt_preview: str = ""

@@ -361,3 +361,9 @@ jobs:
           docker compose --env-file /tmp/prod-validate.env -f docker-compose.prod.yml -f docker-compose.aws.yml config -q
           docker run --rm -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" -e DOMAIN=ci.invalid \
             caddy:2.10-alpine caddy validate --config /etc/caddy/Caddyfile
+
+      # vie-alloy only starts on the box (profile monitoring): its config must parse here.
+      - name: Validate the Alloy config
+        run: |
+          docker run --rm -v "$PWD/ops/alloy:/etc/alloy:ro" grafana/alloy:v1.21.3 \
+            fmt /etc/alloy/config.alloy > /dev/null

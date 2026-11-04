@@ -337,7 +337,9 @@ One row per video **version** (`version`, `isLatest` below); the served row is s
   } | absent,
   // The usage ledger (`llm_usage`, one row per LiteLLM call) tags the same events:
   // refusal / refusal_category on a declined answer's row, fallback_from = the refused
-  // model on the previous model's row — llm-cost-model.md §Schema.
+  // model on the previous model's row; every row also carries the attempt's run_id,
+  // trace_id, attempt, pipeline_version, bypass and (chat) session_id (D9, P1) —
+  // llm-cost-model.md §Schema.
 
   // Processed summary (legacy v1 format — kept for backward compat,
   // new pipeline populates assembledMeta/assembledTabs instead)

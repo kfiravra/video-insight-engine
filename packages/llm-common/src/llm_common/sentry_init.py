@@ -38,6 +38,11 @@ except ImportError:
     _SDK_AVAILABLE = False
 
 
+# The logger an app's catch-all exception handler writes to (see init_sentry).
+UNHANDLED_ERROR_LOGGER = "vie.unhandled"
+
+# ─── scrub: BEGIN (vendored verbatim into services/admin/src/sentry_scrub.py; the
+# admin's identity test fails on any drift, so change both in one commit) ───
 _SENSITIVE_HEADERS = frozenset(
     {
         "authorization",
@@ -204,10 +209,20 @@ def scrub_event_payload(
                 video_summary_id = bound.get("video_summary_id")
                 if isinstance(video_summary_id, str) and video_summary_id:
                     tags.setdefault("videoSummaryId", video_summary_id)
+                # D13: the pipeline attempt and the chat session, as vie-api tags them.
+                run_id = bound.get("run_id")
+                if isinstance(run_id, str) and run_id:
+                    tags.setdefault("runId", run_id)
+                session_id = bound.get("session_id")
+                if isinstance(session_id, str) and session_id:
+                    tags.setdefault("sessionId", session_id)
     except Exception as exc:  # noqa: BLE001 - never crash the SDK pipeline
         logger.debug("sentry_before_send_scrub_failed: %s", exc)
 
     return event
+
+
+# ─── scrub: END ───
 
 
 def init_sentry(
@@ -245,6 +260,12 @@ def init_sentry(
             send_default_pii=False,
         )
         sentry_sdk.set_tag("service", service)
+        # The app's own "unhandled error" log line: the ASGI integration captures
+        # the exception itself, as unhandled; a logging event first would make
+        # Dedupe keep the handled copy.
+        from sentry_sdk.integrations.logging import ignore_logger
+
+        ignore_logger(UNHANDLED_ERROR_LOGGER)
         logger.info(
             "sentry_initialized environment=%s release=%s service=%s",
             environment,
@@ -364,9 +385,14 @@ def pipeline_stage_transaction(stage: str, **tags: str | None) -> StageTransacti
         # filtered alongside Sentry events emitted during the same job.
         bound = structlog.contextvars.get_contextvars()
         if isinstance(bound, dict):
-            rid = bound.get("request_id")
-            if isinstance(rid, str):
-                transaction.set_tag("requestId", rid)
+            for bound_key, tag in (
+                ("request_id", "requestId"),
+                ("run_id", "runId"),
+                ("session_id", "sessionId"),
+            ):
+                value = bound.get(bound_key)
+                if isinstance(value, str) and value:
+                    transaction.set_tag(tag, value)
         return transaction
     except Exception as exc:  # noqa: BLE001
         logger.debug("sentry_start_transaction_failed: %s", exc)
@@ -389,6 +415,11 @@ def capture_exception_with_context(exc: BaseException, **tags: str | None) -> No
                 rid = bound.get("request_id")
                 if isinstance(rid, str):
                     scope.set_tag("requestId", rid)
+                # The attempt the runner resolved wins over a caller's message id.
+                for bound_key, tag in (("run_id", "runId"), ("session_id", "sessionId")):
+                    value = bound.get(bound_key)
+                    if isinstance(value, str) and value:
+                        scope.set_tag(tag, value)
             sentry_sdk.capture_exception(exc)
     except Exception as scope_exc:  # noqa: BLE001
         logger.debug("sentry_capture_failed: %s", scope_exc)

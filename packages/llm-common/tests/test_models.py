@@ -141,3 +141,25 @@ def test_cache_savings_should_credit_the_4_0_models_at_their_docs_rates(
     model: str, saved_per_million: float
 ) -> None:
     assert compute_cache_savings_usd(model, 1_000_000) == pytest.approx(saved_per_million)
+
+
+def test_usage_record_run_ids_default_to_none():
+    record = UsageRecord(model="m", provider="p")
+    dumped = record.model_dump()
+    for field in ("run_id", "trace_id", "session_id", "attempt", "pipeline_version", "bypass"):
+        assert dumped[field] is None
+
+
+def test_usage_record_run_ids_round_trip():
+    record = UsageRecord(
+        model="m",
+        provider="p",
+        run_id="run-1",
+        trace_id="a" * 32,
+        session_id="chat-sess",
+        attempt=2,
+        pipeline_version="v10",
+        bypass=False,
+    )
+    assert record.model_dump()["attempt"] == 2
+    assert record.model_dump()["bypass"] is False

@@ -10,11 +10,18 @@ interface LlmUsageDocument {
   service?: string;
   /** The first 200 characters of the prompt; "" where the service does not store it. */
   prompt_preview?: string | null;
+  /** D9: the pipeline attempt / chat session the call belongs to (Python services). */
+  run_id?: string | null;
+  trace_id?: string | null;
+  session_id?: string | null;
   timestamp?: Date;
 }
 
 /** A preview that holds text; the Python services write "" when they keep none. */
 const HOLDS_PROMPT_TEXT = { $exists: true, $nin: ['', null] };
+
+/** The row fields the 90-day scrub removes: personal data and every id that links to it. */
+const SCRUBBED_FIELDS = ['user_id', 'request_id', 'prompt_preview', 'run_id', 'trace_id', 'session_id'] as const;
 
 /**
  * Access to `llm_usage`, written by the Python services. Every row carries the
@@ -53,14 +60,15 @@ export class LlmUsageRepository {
    * usage analytics older than 90 days carry no personal data): `user_id` and
    * `prompt_preview`, from every service. `request_id` goes too: it joins to
    * the ledger's `source.ref`, whose rows name the user (I6) — a settle reads
-   * it at completion, never after 90 days. Cost, model and timestamp stay. At
+   * it at completion, never after 90 days. So do the D9 ids (`run_id`,
+   * `trace_id`, `session_id`): they join a row to its `runs[]` entry (which
+   * keeps `userId` until an erasure strips it) and to its Langfuse trace or
+   * session (user id per LANGFUSE_USER_ID_MODE). Cost, model and timestamp stay. At
    * most `limit` rows per call; a re-run matches nothing it already cleared.
    * Returns the rows changed.
    */
   async scrubPersonalDataBefore(cutoff: Date, limit: number): Promise<number> {
-    const linked = {
-      $or: [{ user_id: { $exists: true } }, { request_id: { $exists: true } }, { prompt_preview: { $exists: true } }],
-    };
+    const linked = { $or: SCRUBBED_FIELDS.map((field) => ({ [field]: { $exists: true } })) };
     const rows = await this.collection
       .find({ timestamp: { $lt: cutoff }, ...linked }, { projection: { _id: 1 } })
       .limit(limit)
@@ -68,7 +76,7 @@ export class LlmUsageRepository {
     if (rows.length === 0) return 0;
     const result = await this.collection.updateMany(
       { _id: { $in: rows.map((row) => row._id) } },
-      { $unset: { user_id: '', request_id: '', prompt_preview: '' } },
+      { $unset: Object.fromEntries(SCRUBBED_FIELDS.map((field) => [field, ''])) },
     );
     return result.modifiedCount;
   }

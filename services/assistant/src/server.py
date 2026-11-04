@@ -9,14 +9,13 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from llm_common.context import (
-    llm_feature_var,
-    llm_request_id_var,
-    llm_user_id_var,
-    llm_video_id_var,
+from llm_common.context import bind_usage_ids, llm_feature_var, llm_session_id_var
+from llm_common.sentry_init import UNHANDLED_ERROR_LOGGER
+from llm_common.middleware import (
+    REQUEST_ID_HEADER,
+    add_request_context_middleware,
+    valid_correlation_id,
 )
-from llm_common.middleware import add_request_context_middleware
-
 from src.bootstrap import lifespan
 from src.config import settings
 from src.exceptions import AppError, NotFoundError, ValidationError
@@ -48,6 +47,15 @@ configure_structlog(json_format=settings.LOG_FORMAT == "json")
 logger = get_logger(__name__)
 
 
+def _correlation_ids(req: Request) -> tuple[str | None, str | None]:
+    """The gateway's ``(request_id, session_id)``; a request id that is not a safe id is dropped.
+
+    The session id is the one ``RequestContextMiddleware`` validated and bound for
+    the ledger, so the trace and the ``llm_usage`` rows always name the same session.
+    """
+    return valid_correlation_id(req.headers.get(REQUEST_ID_HEADER)), llm_session_id_var.get()
+
+
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     application = FastAPI(title="vie-assistant", lifespan=lifespan)
@@ -73,7 +81,8 @@ def create_app() -> FastAPI:
 
     @application.exception_handler(Exception)
     async def generic_error_handler(_request: Request, exc: Exception) -> JSONResponse:
-        logger.exception("unhandled_error", error=str(exc))
+        # Sentry ignores this logger: its ASGI integration reports the exception as unhandled.
+        get_logger(UNHANDLED_ERROR_LOGGER).exception("unhandled_error", error=str(exc))
         return JSONResponse(
             status_code=500,
             content={"error": "Internal server error", "code": "INTERNAL_ERROR"},
@@ -101,7 +110,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=403, detail="Forbidden")
 
         # vie-api forwards X-User-Id; X-Session-Id is optional and groups
-        # consecutive chat turns under one Langfuse session.
+        # the turns of one chat surface under one Langfuse session (D8).
         user_id = req.headers.get("X-User-Id")
 
         # Bucket per upstream user so one user can't exhaust (or share) another
@@ -120,14 +129,12 @@ def create_app() -> FastAPI:
         if service is None:
             raise HTTPException(status_code=503, detail="Service not ready")
 
-        session_id = req.headers.get("X-Session-Id")
-        request_id = req.headers.get("X-Request-ID")
+        request_id, session_id = _correlation_ids(req)
 
-        # Propagate tracking context onto every llm_usage row for this request.
+        # Propagate tracking context onto every llm_usage row for this request
+        # (the service adds the video's YouTube id once it loaded the video).
         llm_feature_var.set("assistant:rag_chat")
-        llm_video_id_var.set(request.video_id)
-        llm_user_id_var.set(user_id)
-        llm_request_id_var.set(request_id)
+        bind_usage_ids(user_id=user_id, request_id=request_id, video_summary_id=request.video_id)
 
         return StreamingResponse(
             service.chat(
@@ -136,6 +143,7 @@ def create_app() -> FastAPI:
                 history=request.conversation_history,
                 user_id=user_id,
                 session_id=session_id,
+                request_id=request_id,
                 confirm_token=request.confirm_token,
             ),
             media_type="text/event-stream",
@@ -176,13 +184,11 @@ def create_app() -> FastAPI:
         if service is None:
             raise HTTPException(status_code=503, detail="Service not ready")
 
-        session_id = req.headers.get("X-Session-Id")
-        request_id = req.headers.get("X-Request-ID")
+        request_id, session_id = _correlation_ids(req)
 
         # Propagate tracking context onto every llm_usage row for this request.
         llm_feature_var.set("assistant:library_chat")
-        llm_user_id_var.set(user_id)
-        llm_request_id_var.set(request_id)
+        bind_usage_ids(user_id=user_id, request_id=request_id)
 
         return StreamingResponse(
             service.library_chat(
@@ -191,6 +197,7 @@ def create_app() -> FastAPI:
                 history=request.conversation_history,
                 user_id=user_id,
                 session_id=session_id,
+                request_id=request_id,
                 inventory=[lv.model_dump() for lv in request.library],
                 confirm_token=request.confirm_token,
             ),
@@ -260,7 +267,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=403, detail="Forbidden")
 
         user_id = req.headers.get("X-User-Id")
-        request_id = req.headers.get("X-Request-ID")
+        request_id, session_id = _correlation_ids(req)
         rate_key = user_id or request.video_id or "anonymous"
         if _check_action_rate_limit(rate_key):
             return JSONResponse(
@@ -275,16 +282,18 @@ def create_app() -> FastAPI:
         if service is None:
             raise HTTPException(status_code=503, detail="Service not ready")
 
-        # Propagate tracking context onto every llm_usage row for this request.
+        # Propagate tracking context onto every llm_usage row for this request
+        # (dispatch_action adds the video's YouTube id once it loaded the video).
         llm_feature_var.set(f"assistant:action:{request.action}")
-        llm_video_id_var.set(request.video_id)
-        llm_user_id_var.set(user_id)
-        llm_request_id_var.set(request_id)
+        bind_usage_ids(user_id=user_id, request_id=request_id, video_summary_id=request.video_id)
 
         trace_id = uuid4().hex[:12]
         async with chat_trace(
-            video_id=request.video_id,
+            video_summary_id=request.video_id,
+            youtube_id=await service.youtube_id_of(request.video_id),
             user_id=user_id,
+            session_id=session_id,
+            request_id=request_id,
             tags=["action", f"action:{request.action}"],
             metadata={"action": request.action, "traceId": trace_id},
         ):

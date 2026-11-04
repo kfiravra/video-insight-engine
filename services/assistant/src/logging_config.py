@@ -10,11 +10,10 @@ Provides:
 from __future__ import annotations
 
 import logging
-import sys
 from typing import TYPE_CHECKING, Any
 
 import structlog
-from structlog.types import Processor
+from llm_common.logging_setup import configure_logging
 
 from src.config import settings
 
@@ -39,73 +38,40 @@ def get_log_level() -> int:
     return getattr(logging, level, logging.INFO)
 
 
-def _add_service_processor(service_name: str) -> Processor:
-    """Return a structlog processor that stamps every log line with `service`."""
-    from structlog.types import EventDict
-
-    def _processor(_logger: Any, _method_name: str, event_dict: EventDict) -> EventDict:
-        event_dict.setdefault("service", service_name)
-        return event_dict
-
-    return _processor
+# Libraries quieted to WARNING.
+_NOISY_LOGGERS = (
+    "httpx",
+    "httpcore",
+    "litellm",
+    "LiteLLM",
+    "pymongo",
+    "sentence_transformers",
+    "qdrant_client",
+    "openai",
+    "urllib3",
+)
 
 
 def configure_structlog(json_format: bool = False, service_name: str = "vie-assistant") -> None:
-    """Configure structlog for the application.
+    """Configure structlog and stdlib logging for the process (``llm_common.logging_setup``).
+
+    structlog events go through the standard library (D13): one root handler on
+    stdout renders structlog's lines and every stdlib record (uvicorn, the
+    libraries) through the same chain, and Sentry's logging integration sees
+    structlog ERROR events.
 
     Args:
         json_format: If True, use JSON output. Otherwise, use colored console output.
         service_name: Stamped on every log line as ``service`` so log
             aggregators can filter cross-service traffic by source.
     """
-    shared_processors: list[Processor] = [
-        _add_service_processor(service_name),
-        structlog.contextvars.merge_contextvars,
-        structlog.stdlib.add_log_level,
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.StackInfoRenderer(),
-        structlog.processors.UnicodeDecoder(),
-    ]
-
-    if json_format:
-        processors: list[Processor] = [
-            *shared_processors,
-            structlog.processors.format_exc_info,
-            structlog.processors.JSONRenderer(),
-        ]
-    else:
-        processors = [
-            *shared_processors,
-            structlog.dev.ConsoleRenderer(colors=True),
-        ]
-
-    structlog.configure(
-        processors=processors,
-        wrapper_class=structlog.make_filtering_bound_logger(get_log_level()),
-        context_class=dict,
-        logger_factory=structlog.PrintLoggerFactory(),
-        cache_logger_on_first_use=True,
-    )
-
-    logging.basicConfig(
-        format="%(message)s",
-        stream=sys.stdout,
+    configure_logging(
+        service_name=service_name,
+        json_format=json_format,
         level=get_log_level(),
+        quiet_loggers=_NOISY_LOGGERS,
+        health_filter=_HealthCheckFilter(),
     )
-
-    # Suppress uvicorn access logs for health checks
-    logging.getLogger("uvicorn.access").addFilter(_HealthCheckFilter())
-
-    # Suppress noisy loggers
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
-    logging.getLogger("litellm").setLevel(logging.WARNING)
-    logging.getLogger("LiteLLM").setLevel(logging.WARNING)
-    logging.getLogger("pymongo").setLevel(logging.WARNING)
-    logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
-    logging.getLogger("qdrant_client").setLevel(logging.WARNING)
-    logging.getLogger("openai").setLevel(logging.WARNING)
-    logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 
 def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:

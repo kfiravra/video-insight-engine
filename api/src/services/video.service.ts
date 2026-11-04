@@ -29,6 +29,8 @@ export interface CreateVideoOptions {
   requestId?: string;
   /** The minutes ledger's run id (P3.1), stamped beside `requestId` on the dispatched row. */
   billingRunId?: string;
+  /** The chat session that asked for the video (D8); tagged on the run it dispatches. */
+  chatSessionId?: string;
   /**
    * P3.1: the ledger refused to pay for a run, so only serve what costs
    * nothing — the user's own copy, a completed row, or attaching to a live
@@ -61,6 +63,7 @@ interface NewVersionInput {
   queuePlan: QueuePlan;
   requestId?: string;
   billingRunId?: string;
+  chatSessionId?: string;
   evalRun: boolean;
   /** Skip the summarizer's response cache (the submission's bypassCache). */
   forceRefresh: boolean;
@@ -154,6 +157,7 @@ export class VideoService {
       bypassCache?: boolean;
       requestId?: string;
       billingRunId?: string;
+      chatSessionId?: string;
     },
   ): Promise<DispatchResult> {
     // Belt-and-suspenders: even though Step 1's content-addressed upsert
@@ -204,7 +208,13 @@ export class VideoService {
           payload.userId,
           payload.requestId,
           payload.billingRunId,
-          { runId, traceId, pipelineVersion: config.PIPELINE_VERSION, bypass },
+          {
+            runId,
+            traceId,
+            pipelineVersion: config.PIPELINE_VERSION,
+            bypass,
+            chatSessionId: payload.chatSessionId,
+          },
         ),
       ]);
       if (config.USE_QUEUE_PIPELINE) {
@@ -229,6 +239,7 @@ export class VideoService {
             requestId: payload.requestId,
             runId,
             pipelineVersion: config.PIPELINE_VERSION,
+            chatSessionId: payload.chatSessionId,
           });
           return { dispatched: true, runId, traceId };
         } catch (err) {
@@ -244,6 +255,7 @@ export class VideoService {
               videoSummaryId: payload.videoSummaryId,
               youtubeId: payload.youtubeId,
               requestId: payload.requestId,
+              runId,
             },
             'Queue publish failed, falling back to HTTP summarizer call',
           );
@@ -260,6 +272,7 @@ export class VideoService {
         runId,
         pipelineVersion: config.PIPELINE_VERSION,
         bypassCache: bypass,
+        chatSessionId: payload.chatSessionId,
       });
       return { dispatched: true, runId, traceId };
     } catch (err) {
@@ -370,7 +383,7 @@ export class VideoService {
         this.logger.warn({ youtubeId: input.youtubeId, error: err }, 'Failed to cleanup old versions');
       });
 
-    const { userId, url, youtubeId, queuePlan, providers, requestId, billingRunId, forceRefresh } = input;
+    const { userId, url, youtubeId, queuePlan, providers, requestId, billingRunId, chatSessionId, forceRefresh } = input;
     const { dispatched, ...runIds } = await this.dispatchPipeline({
       videoSummaryId: row.videoSummaryId,
       youtubeId,
@@ -381,6 +394,7 @@ export class VideoService {
       bypassCache: forceRefresh,
       requestId,
       billingRunId,
+      chatSessionId,
     });
 
     return { userVideoId, ...row, dispatched, ...runIds };
@@ -406,7 +420,10 @@ export class VideoService {
   }
 
   async createVideo(userId: string, url: string, options: CreateVideoOptions) {
-    const { folderId, providers, queuePlan, requestId, billingRunId, cold = false, serveOnly = false, updateToLatest = false } = options;
+    const {
+      folderId, providers, queuePlan, requestId, billingRunId, chatSessionId,
+      cold = false, serveOnly = false, updateToLatest = false,
+    } = options;
     const refuseRun = (): void => {
       if (serveOnly) throw new RunNotAllowedError();
     };
@@ -439,6 +456,7 @@ export class VideoService {
         queuePlan,
         requestId,
         billingRunId,
+        chatSessionId,
         evalRun,
         forceRefresh: bypassCache,
         coldMedia: cold,
@@ -550,6 +568,7 @@ export class VideoService {
         bypassCache,
         requestId,
         billingRunId,
+        chatSessionId,
       });
 
       return {
@@ -601,6 +620,7 @@ export class VideoService {
           providers,
           requestId,
           billingRunId,
+          chatSessionId,
         });
         // `pending` at once: the summarizer's stream replays a `completed` row
         // instead of running it (the HTTP path), and the page flips to the run.
@@ -668,6 +688,7 @@ export class VideoService {
         providers,
         requestId,
         billingRunId,
+        chatSessionId,
       });
 
       if (dispatched) {
@@ -723,6 +744,7 @@ export class VideoService {
         providers,
         requestId,
         billingRunId,
+        chatSessionId,
       });
       // The row is this run's now: `pending` + a fresh updatedAt, so the
       // summarizer's stall sweeper does not fail it as the dead run's (I2).

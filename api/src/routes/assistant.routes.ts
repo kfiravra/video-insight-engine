@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { RateLimitedError, VideoNotFoundError } from '../utils/errors.js';
 import { disableSocketInactivityTimeout } from '../utils/sse.js';
 import { actionParamsSchema } from '../schemas/assistant.schema.js';
+import { readSessionId } from '../plugins/request-id.js';
 import type { AssistantAction } from '../services/assistant-client.js';
 
 const chatBodySchema = z.object({
@@ -73,6 +74,7 @@ export async function assistantRoutes(fastify: FastifyInstance) {
         conversationHistory: parsed.data.conversationHistory,
         confirmToken: parsed.data.confirmToken,
         requestId: req.id,
+        sessionId: readSessionId(req.headers),
         signal: upstreamAbort.signal,
       });
 
@@ -123,7 +125,7 @@ export async function assistantRoutes(fastify: FastifyInstance) {
       // The assistant's own rate limit is the user's to act on: let the global
       // handler answer 429 RATE_LIMITED instead of masking it as a 502.
       if (error instanceof RateLimitedError) throw error;
-      fastify.log.error(error, 'assistant chat failed');
+      req.log.error(error, 'assistant chat failed');
       return reply.status(502).send({
         error: 'SERVICE_UNAVAILABLE',
         message: 'Assistant service is temporarily unavailable. Please try again.',
@@ -160,11 +162,12 @@ export async function assistantRoutes(fastify: FastifyInstance) {
         action: parsed.data.action satisfies AssistantAction,
         params: parsed.data.params,
         requestId: req.id,
+        sessionId: readSessionId(req.headers),
       });
 
       return reply.status(status).send(body);
     } catch (error) {
-      fastify.log.error(error, 'assistant action failed');
+      req.log.error(error, 'assistant action failed');
       return reply.status(502).send({
         error: 'SERVICE_UNAVAILABLE',
         message: 'Assistant service is temporarily unavailable. Please try again.',

@@ -22,6 +22,7 @@ describe('use-admin-api hooks', () => {
     expect(typeof hooks.useAlertConfig).toBe('function');
     // New hooks
     expect(typeof hooks.useUsageByRun).toBe('function');
+    expect(typeof hooks.useUsageBySession).toBe('function');
     expect(typeof hooks.useUserActivity).toBe('function');
     // observability-fix 2.1 — previously unwired endpoints
     expect(typeof hooks.useUsageAnomalies).toBe('function');

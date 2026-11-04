@@ -124,6 +124,8 @@ export class QueuePublisher {
         priority: payload.priority,
         attempt: payload.attempt,
         requestId: payload.requestId,
+        runId: payload.runId,
+        ...(payload.chatSessionId ? { sessionId: payload.chatSessionId } : {}),
       },
       'Published video job to queue',
     );

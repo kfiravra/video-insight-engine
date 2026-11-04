@@ -74,7 +74,7 @@ export const videoJobPayloadSchema = z.object({
   /** This attempt's run id (P0b): the trace id is derived from it; the summarizer mints a fresh one on a retry. */
   runId: z.string().min(1).optional(),
   pipelineVersion: z.string().min(1).optional(),
-  /** P1 (D8): the chat session that asked for the run; no producer yet. */
+  /** The chat session that asked for the run (D8); the summarizer tags `chatSession:<id>`. */
   chatSessionId: z.string().min(1).optional(),
   attempt: z.number().int().min(1).default(1),
   createdAt: z.string().datetime(),

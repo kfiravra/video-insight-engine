@@ -2,6 +2,13 @@
 
 from datetime import UTC, datetime, timedelta
 
+from cachetools import TTLCache
+
+# The widest window the usage reports accept.
+USAGE_MAX_DAYS = 90
+# 30-second cache for the usage reports' expensive aggregations (usage + usage_runs).
+usage_cache: TTLCache = TTLCache(maxsize=64, ttl=30)
+
 
 def cutoff(days: int) -> datetime:
     """Return a UTC datetime ``days`` in the past, for date-range queries.

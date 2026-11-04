@@ -6,6 +6,18 @@ Everything is **best-effort**: every Langfuse call is wrapped in try/except, all
 
 The services use the Langfuse **Python SDK v4** (`langfuse>=4.7,<5`, OpenTelemetry underneath) through one shared client, `packages/llm-common/src/llm_common/observability/`; each service's `src/services/observability` re-exports it bound to its settings. Compose sets `LANGFUSE_TRACING_ENVIRONMENT` (`development` in dev, `production` in prod) and prod's `ENVIRONMENT=production` is passed to the SDK explicitly too, so dev and prod traces filter apart even inside one project.
 
+## The id model: run, session, request
+
+Three ids tie every surface together. Start from whichever one you have:
+
+| Id | One of | Minted by | Langfuse | Admin | Logs | Sentry | Grafana |
+|---|---|---|---|---|---|---|---|
+| `runId` | pipeline attempt (first run, bypass, regenerate, retry) | vie-api per dispatch; the summarizer for attempts the api did not start | the trace (id = `trace_id_for_run(runId)`), tag `run:<id>`; session `pipeline-<videoSummaryId>` groups a row's attempts | Usage → Pipeline Runs (one row per run, link to its trace and session); video detail → its runs | `runId` (pino), `run_id` (structlog) | tag `runId` (Python) | `pipeline_run_started` / `pipeline_run_finished` lines (Pipeline dashboard) |
+| `sessionId` | chat surface (one video chat or the library chat) | the web (`vie-chat` store), sent as `X-Session-Id` | session `chat-<id>`: one trace per turn (`turn:<n>`), tool spans inside; a video the chat generated carries `chatSession:<id>` | Usage → Chat Sessions (turns, tool LLM calls, cost, link) | `sessionId` / `session_id` | tag `sessionId` | `chat_turn_finished` lines (Chat dashboard) |
+| `requestId` | HTTP request | vie-api (`X-Request-ID`), forwarded to every service | tag `requestId:<id>` | the run row's request id | `requestId` / `request_id` | tag `requestId` | the raw log lines |
+
+`llm_usage` rows carry all of them (`run_id`, `trace_id`, `session_id`, `request_id`, plus `attempt`, `pipeline_version`, `bypass`); `scripts/find-request.sh <any of the three>` greps the logs of vie-api, vie-summarizer, vie-summarizer-worker, vie-assistant and vie-admin. Details: [Ids](#ids-run-trace-session-request), [Grafana Cloud](#grafana-cloud-logs-metrics-dashboards-alerts), [Request tracing & Sentry](#request-tracing--sentry).
+
 ## Quick start
 
 1. Sign up at https://cloud.langfuse.com (free tier: 50K observations/month — enough for ~500 videos/month).
@@ -61,7 +73,20 @@ Trace: pipeline:{youtubeId}   (id = trace_id_for_run(runId); session pipeline-{v
 └── (assembly itself makes no LLM call — pure code; the hero rewrite's wait (`phase:synthesis`), the quiz and moment fill run inside its `phase:assembly` wall)
 ```
 
-For the assistant, one chat turn = one trace named `chat:{videoId}` (`chat:library` for library chat), tagged `videoId:<id>`; the turns of one chat share the session `chat-<X-Session-Id>` when the caller sends that header. The user id follows `LANGFUSE_USER_ID_MODE` and is never a tag. Tool runs are `tool`-type observations nested under the loop span that called them (`tool:concept_explain`, `tool:quiz_generator`, …); the agentic loop's LLM calls are `library_generation` (answer) and `library_agent` (tool-selection) spans/generations — the same names for single-video RAG chat and library chat, since both run `run_agentic_loop`. Query translation logs as `query_translate`. `/action` dispatch opens its own trace (tags `action`, `action:{action}`) with an `action:{action}` span. Each named LLM call is a generation opened before the request; a provider failure ends it `ERROR`, a stream the client abandons ends it `WARNING` (`client disconnected`). The tool router owns the per-tool `llm_feature_var` (`assistant:tool:<name>`, set/reset around dispatch so siblings aren't mislabelled); endpoints set `assistant:rag_chat` / `assistant:library_chat` / `assistant:action:<action>` plus `user_id` / `video_id` / `request_id` so assistant `llm_usage` rows are attributable.
+For the assistant, one chat turn = one trace named `chat:{videoSummaryId}` (`chat:library` for library chat), tagged `videoSummaryId:<id>` and `youtubeId:<id>` (video chat), `requestId:<id>` and `turn:<n>` (the user messages in the history sent with the turn, plus one; the history is shared across surfaces, so a session that starts after the user chatted elsewhere does not start at `turn:1`). The web mints one session id per chat surface (one per video chat, one for the library chat; `sessionIds` in the `vie-chat` store, dropped with the transcript on "New chat" and logout) and sends it as `X-Session-Id` on every chat and action request; vie-api forwards it, so every turn of one surface — and every `/action` it sends — lands in the session `chat-<sessionId>`. The user id follows `LANGFUSE_USER_ID_MODE` and is never a tag. The agentic loop runs up to `MAX_TOOL_ITERS` rounds: each round is a `library_agent` span (the tool-selection generation; when the model calls no tool, its content is the answer), followed by one `tool:<name>` observation (type `tool`) per tool the model asked for, opened inside `execute_tool` as a sibling of the `library_agent` span under the turn's root (the LLM calls a tool makes, e.g. `organize_library`, nest under it; a tool that returns an error ends `WARNING` with the error as `statusMessage`). A `library_generation` span streams the answer only when tools are off (no vie-api client or no user) or the tool budget ran out — the same names for single-video RAG chat and library chat, since both run `run_agentic_loop`. Query translation logs as `query_translate`. `/action` dispatch opens its own trace (tags `action`, `action:{action}`, plus `videoSummaryId:` and `youtubeId:` for a video action and `requestId:`; no `turn:`) with an `action:{action}` span, in the chat session when the header is sent. A video the agent generates (`generate_video`) is dispatched with the chat's `X-Request-ID` and `X-Session-Id`, so its pipeline trace carries `chatSession:<sessionId>`. Each named LLM call is a generation opened before the request; a provider failure ends it `ERROR`, a stream the client abandons ends it `WARNING` (`client disconnected`). The tool router owns the per-tool `llm_feature_var` (`assistant:tool:<name>`, set/reset around dispatch so siblings aren't mislabelled); endpoints set `assistant:rag_chat` / `assistant:library_chat` / `assistant:action:<action>` plus the ledger ids below so assistant `llm_usage` rows are attributable.
+
+```
+Trace: chat:{videoSummaryId} | chat:library   (session chat-{sessionId}; tags videoSummaryId, youtubeId, requestId, turn:<n>)
+├── generation: query_translate      (non-English questions)
+├── span: library_agent              (round 1: tool selection; with no tool call its content is the answer)
+│   └── generation: library_agent
+├── tool: tool:<name>                (one per tool the round asked for; WARNING when the tool returned an error)
+│   └── generation: …                (a tool's own LLM call, e.g. organize_library)
+├── span: library_agent              (round 2 …)
+│   └── generation: library_agent
+└── span: library_generation         (only without tools, or after the tool budget ran out)
+    └── generation: library_generation
+```
 
 ### Ids: run, trace, session, request
 
@@ -69,14 +94,17 @@ For the assistant, one chat turn = one trace named `chat:{videoId}` (`chat:libra
 |---|---|---|
 | `runId` | vie-api mints one per dispatch (`dispatchPipeline`) and pushes a `dispatched` entry on `videoSummaryCache.runs[]`; the summarizer takes it over when the attempt starts (`running`). An attempt the api did not dispatch (worker retry, DLQ replay, `POST /regenerate`, a legacy message) or whose id already ran gets a fresh uuid with `retryOf` (`services/pipeline/run_registry.py`). The terminal status callback carries it and closes the entry. | tag `run:`, root metadata/input `runId`, `runs[]`, the `POST /api/videos` / `GET /api/videos/:id` responses |
 | trace id | `trace_id_for_run(runId)` (Python, llm-common) = `traceIdForRun(runId)` (TS, api) = `Langfuse.create_trace_id(seed=runId)` | the Langfuse trace id; `runs[].traceId`; responses next to `runId` |
-| session | `pipeline-{videoSummaryId}` | every attempt of one row |
+| session | `pipeline-{videoSummaryId}` (pipeline) / `chat-{sessionId}` (chat) | every attempt of one row / every turn and action of one chat surface |
+| `sessionId` | the web, one uuid per chat surface (`X-Session-Id`); vie-api validates it with the request-id pattern (a bad value is dropped) and forwards it to the assistant, and into `dispatchPipeline` → `runs[].chatSessionId` → queue/HTTP `chatSessionId` for a video the agent generates | Langfuse session `chat-<id>`, pipeline tag `chatSession:<id>`, `llm_usage.session_id`, log field `sessionId` (pino) / `session_id` (structlog), Sentry tag `sessionId` (api) |
 | `requestId` | the api request that dispatched | tag `requestId:`, `runs[].requestId`, `llm_usage.request_id` (billing settles by it, unchanged) |
+
+Every `llm_usage` row also carries the ids of its attempt or chat (D9): `run_id`, `trace_id`, `attempt`, `pipeline_version`, `bypass` (pipeline rows) and `session_id` (chat rows, and pipeline rows started from chat), next to `request_id`, `video_id` (always the YouTube id) and `video_summary_id`. They come from `llm_common.context` (`USAGE_ID_VARS`): the queue worker sets all of them per job in `usage_scope(...)` and restores them when the job ends (a worker process runs many jobs, so a job's ids must never reach the next one's rows), the runner re-binds the attempt's ids once it resolved the run, `run_trace` binds its trace id, and the assistant's middleware binds the session id. The admin and vie-api build `(run_id, timestamp)` and `(session_id, timestamp)` indexes; the 90-day scrub removes the three new ids with `user_id`, `request_id` and `prompt_preview`.
 
 ### Admin "Open in Langfuse" deep-link
 
-The vie-admin **backend** builds each run row's link from stored ids, with no Langfuse API call (P-6): `GET /usage/by-run` reads the run's `videoSummaryCache` doc (the same batched lookup as the degraded badge), takes the `traceId` of the newest `runs[]` entry with the run's `request_id` (retries of one request share it) and returns `{LANGFUSE_BASE_URL}/project/{LANGFUSE_PROJECT_ID}/traces/{traceId}` as `langfuse_url` (`services/admin/src/services/langfuse.py`; `session_url()` is ready for the P2 grouping). **`LANGFUSE_PROJECT_ID` is required**: blank → `null` links, never an error. Runs dispatched before P0b (no `runs[]`) and GDPR-stripped entries get no link. Whole `/usage/by-run` response cached 30 s. The old tag lookup (`GET /api/public/traces?tags=requestId:…`, deprecated by Langfuse) and the `/api/public/projects` resolver are gone.
+The vie-admin **backend** builds every link from stored ids, with no Langfuse API call (P-6, D10). `GET /usage/by-run` groups the summarizer's ledger rows by `run_id` (legacy rows by `request_id`), reads the run's `videoSummaryCache` doc (the same batched lookup as the degraded badge), takes the `runs[]` entry with the run's id (legacy rows: the newest entry with their `request_id`) and returns `{LANGFUSE_BASE_URL}/project/{LANGFUSE_PROJECT_ID}/traces/{traceId}` as `langfuse_url` (falling back to the rows' own `trace_id`) and `…/sessions/pipeline-{videoSummaryId}` as `session_url`. `GET /usage/by-session` returns `…/sessions/chat-{sessionId}` per chat session (`services/admin/src/services/langfuse.py`). **`LANGFUSE_PROJECT_ID` is required**: blank → `null` links, never an error. Runs dispatched before P0b (no `runs[]`, no `trace_id`) and GDPR-stripped entries get no trace link. Responses cached 30 s. The old tag lookup (`GET /api/public/traces?tags=requestId:…`, deprecated by Langfuse) and the `/api/public/projects` resolver are gone.
 
-`PipelineRunsPanel` renders `run.langfuse_url` and falls back to the build-time `buildLangfuseTraceUrl` helper (`services/admin/ui/src/lib/langfuse.ts`, `VITE_LANGFUSE_*`) only when the backend returns nothing; that fallback goes in P2.
+The admin UI renders only the links the backend returns (`RunsTable` / `SessionsPanel`: "Trace ↗", "Session ↗"); a `null` link renders nothing. The old build-time fallback (`lib/langfuse.ts`, `VITE_LANGFUSE_*`) is gone.
 
 ### Reading a trace
 
@@ -298,7 +326,7 @@ JSON logs in every service carry, at minimum:
 {
   "timestamp": "2026-05-20T10:30:00.000Z",
   "level": "info",
-  "service": "vie-api | vie-summarizer | vie-summarizer-worker | vie-assistant",
+  "service": "vie-api | vie-summarizer | vie-summarizer-worker | vie-assistant | vie-admin",
   "requestId": "<uuid>",
   "userId": "<optional>",
   "videoSummaryId": "<optional>",
@@ -307,9 +335,19 @@ JSON logs in every service carry, at minimum:
 }
 ```
 
-The `service` field is stamped by a structlog processor (or pino `base`) so log aggregators can filter without callers having to mention it. Other fields appear only when bound on contextvars (Python) or attached to `req.log` (Node).
+The `service` field is stamped by a structlog processor (or pino `base`) so log aggregators can filter without callers having to mention it. Other fields appear only when bound on contextvars (Python) or attached to `req.log` (Node): vie-api binds `sessionId` on every request logger that carries a valid `X-Session-Id`; the Python services bind `request_id`, `session_id` (middleware), `run_id` (worker + runner), `video_summary_id`, `youtube_id`, `user_id`, `attempt` (worker).
 
-In the summarizer and its worker the standard-library records — most modules log through `logging.getLogger(__name__)`, and so do uvicorn and the libraries — render through structlog's chain too (`structlog.stdlib.ProcessorFormatter` in `logging_config.py`; hotfix 4.1 — they used to print the bare message, with no time): `timestamp`, `level`, `service`, the bound contextvars (Python names: `event`, `request_id`, `video_summary_id`) and, on stdlib lines only, `logger` — JSON with `LOG_FORMAT=json` (UTF-8, not `\u`-escaped), a timestamped console line otherwise; console tracebacks are plain (no frame locals). Not covered: LiteLLM's own stderr handler (its WARNING+ lines also print once more, unformatted) and uvicorn's `--reload` supervisor.
+**Python: structlog through stdlib (D13).** Every Python service (summarizer, its worker, assistant, admin) configures logging through `llm_common.logging_setup.configure_logging` (the admin through its vendored copy `src/logging_bridge.py`): structlog events are handed to the standard library (`structlog.stdlib.LoggerFactory`), so they and every `logging.getLogger` record — the code's, uvicorn's, the libraries' — go to one root handler on stdout and render through one chain: `timestamp`, `level`, `service`, the bound contextvars (Python names: `event`, `request_id`, `run_id`, `session_id`, `video_summary_id`) and, on stdlib lines only, `logger` — JSON with `LOG_FORMAT=json` (UTF-8, not `\u`-escaped), a timestamped console line otherwise; console tracebacks are plain (no frame locals). The stdlib record's message is the event name and an exception rides on the record, so Sentry's logging integration sees structlog `ERROR` events, groups them by event and keeps their stack; the rendered line is the same as before. Not covered: LiteLLM's own stderr handler (its WARNING+ lines also print once more, unformatted) and uvicorn's `--reload` supervisor.
+
+**Run and chat events** (one JSON line each; the Grafana dashboards and the failure-rate alert read them with LogQL):
+
+| Event | Service | Fields |
+|---|---|---|
+| `pipeline_run_started` | vie-summarizer, vie-summarizer-worker | `run_id`, `video_summary_id`, `youtube_id`, `path` (`worker`/`sse`/`dev`), `attempt`, `bypass`, `retry_of` |
+| `pipeline_run_finished` | vie-summarizer, vie-summarizer-worker | `run_id`, `video_summary_id`, `youtube_id`, `path`, `status` (`completed`/`failed`/`cache_hit`/`interrupted`), `cache_hit`, `duration_ms`, `error_code` |
+| `chat_turn_finished` | vie-assistant | `session_id`, `surface` (`video`/`library`), `turn`, `status` (`completed`/`error`/`failed`/`interrupted`), `duration_ms`, `tool_calls` |
+
+A cache hit writes only `pipeline_run_finished` (`status: cache_hit`). The stall sweeper's `pipeline_stalled video=…` error line stays a plain stdlib line.
 
 ### Cross-system lookup
 
@@ -323,7 +361,7 @@ Given a `request-id`:
 | Langfuse trace | search traces by tag `requestId:<id>` |
 | Sentry event | search events by tag `requestId:<id>` |
 
-Or run `./scripts/find-request.sh <request-id>` from the repo root — it greps docker logs across all three services in parallel.
+Log lines and Langfuse also take a run id (`runId` on pino lines, `run_id` on structlog lines from the worker and the runner; Langfuse tag `run:<id>`) and a chat session id (`sessionId` / `session_id`; Langfuse session `chat-<id>`); Sentry tags them `runId` and `sessionId`. Or run `./scripts/find-request.sh <request-id | run-id | session-id>` from the repo root — it greps the docker logs of vie-api, vie-summarizer, vie-summarizer-worker, vie-assistant and vie-admin.
 
 ### Sentry init
 
@@ -342,7 +380,9 @@ The shared `llm_common.sentry_init` module hosts the Python init + `before_send`
 - Scrub URL query strings for credential params (`token`, `access_token`, `refresh_token`, `id_token`, `code`, `state`, `api_key`, `apikey`, `key`, `password`, `secret`) on `request.url`, `request.query_string`, and the `route` tag. Needed because the WebSocket upgrade path puts the JWT in `?token=`.
 - Drop `user.email`, and drop `user.id` / `user.username` if either embeds an email.
 - Recurse the email redactor over `request.data`, `extra`, `contexts`, `breadcrumbs[*].data`, and `exception.values[*].value` (so a logger that includes a body or stack message can't leak addresses).
-- Promote the `request_id` contextvar / `req.id` to a Sentry tag named `requestId`.
+- Promote the `request_id` contextvar / `req.id` to a Sentry tag named `requestId`; the Python scrub (and `capture_exception_with_context`) also promote `run_id` → `runId` and `session_id` → `sessionId`, and vie-api tags `sessionId` from a valid `X-Session-Id` header.
+
+vie-admin keeps its own `sentry_sdk.init` (it does not install llm-common, plan A3) with `before_send` = a verbatim copy of the shared scrub (`services/admin/src/sentry_scrub.py`, the block between the `scrub` markers in `sentry_init.py`); `tests/test_vendored_copies.py` fails the admin suite when the two drift. Structlog `ERROR` events in every Python service reach Sentry through the default logging integration (see [Log line shape](#log-line-shape)).
 
 The `X-Request-ID` header is validated on both sides — `^[A-Za-z0-9_-]{8,128}$`. Forged headers (newline injection, control chars, semicolons) fall through to a fresh UUID so they cannot pollute log lines or Sentry tag space.
 
@@ -357,6 +397,18 @@ The API's `onError` hook only captures errors whose effective status is ≥500. 
 Every error funneled through the global handler is logged: 5xx at `error` with the stack, everything else at `warn` as `request rejected` with `statusCode`, `errorCode`, `errMessage` (the client-facing message, not the raw error), `method`, `route`, `userId` (when authenticated), and the request's `requestId`. Previously 4xx branches returned before any log call, so a client-reported 400/401/429 was undiagnosable without reproducing it. The status→envelope mapping is the pure `resolveErrorEnvelope()` in `api/src/utils/error-envelope.ts`.
 
 pino `redact` (`LOG_REDACT_PATHS` in `api/src/app.ts`) is built from the **same header list the Sentry scrubber uses** — `authorization`, `cookie`, `set-cookie`, `x-internal-secret`, `x-admin-key`, `x-csrf-token`, `x-api-key`, `proxy-authorization` — matched under Fastify's `req.headers` serializer *and* a bare `headers` object logged by hand, plus `password` / `token` / `accessToken` / `refreshToken` / `apiKey` both top-level and one level deep (pino's `*` matches exactly one level). `defaultLoggerOptions()` is exported so the redaction test runs against the real production logger config rather than a copy.
+
+## Grafana Cloud (logs, metrics, dashboards, alerts)
+
+The whole box is watchable in a **Grafana Cloud Free** stack (D12; 10k active series, 50 GB logs, 14-day retention, alerting included). One container ships everything: `vie-alloy` (profile `monitoring`, `ops/alloy/config.alloy`; [INFRASTRUCTURE.md](./INFRASTRUCTURE.md#monitoring-grafana-alloy)).
+
+- **Logs (Loki):** every `vie-*` container's stdout, labels `service`, `level` (`trace debug info warn error fatal`; pino numbers and structlog names mapped) and `environment`. Query with LogQL, e.g. `{service="vie-summarizer-worker", environment="production"} | json | event="pipeline_run_finished" | status="failed"`.
+- **Metrics (Prometheus):** host (`node_*`: CPU, load, memory, filesystems), per container (`container_*`, label `name`: CPU, memory vs limit, disk, network — the box's traffic is their sum; restarts = `changes(container_start_time_seconds[…])`), RabbitMQ per queue (`rabbitmq_detailed_queue_messages`, `…_consumers`, label `queue`). A keep-list holds the stack to ≤ 3k active series; no Prometheus client library in app code — rates and durations come from LogQL over the run and chat events.
+- **Dashboards** (`ops/grafana/dashboards/`, folder `vie`): **Box** (RAM, CPU, disk, network, per-container memory vs limit, restarts, error-log rate), **Pipeline** (runs/h, cache hits, p50/p95 duration, failures and rate by `error_code`, stalls, jobs/DLQ depth, worker consumers), **Chat** (turns/h by surface, errors, tool calls, p95 turn duration). Each has `env` (production/development) and datasource variables.
+- **Alerts** (`ops/grafana/alerts/vie.json`, on `environment="production"` unless pushed with `--environment`): container restart loop (3+ restarts in 15 min), host RAM > 90 % for 10 min, container RAM > 90 % of its limit for 10 min, no consumer on `vie.pipeline.jobs` for 5 min, DLQ not empty for 5 min, pipeline failure rate > 30 % over the last hour (≥ 3 runs), and more than 8k of the free tier's 10k active series for 30 min (`grafanacloud_instance_active_series` from the stack's `grafanacloud-usage` datasource; left out when the stack has none). Missing data never fires (no page before prod ships metrics). All route to the Telegram contact point `vie-telegram`, built from `ALERT_WEBHOOK_URL` (`https://api.telegram.org/bot<TOKEN>/sendMessage?chat_id=<ID>`). The admin's own alert evaluator (Mongo `llm_alerts`, cost and failure alerts) keeps running unchanged beside them.
+- **Push:** `ops/grafana/push.sh` upserts the folder, dashboards, contact point, root notification policy and the `vie` rule group by uid (`GRAFANA_CLOUD_URL`, `GRAFANA_CLOUD_API_TOKEN` = a service-account token with role Editor; `--dry-run` sends nothing). `--test-alert` pushes the DLQ rule with a threshold that fires whenever the queue metric exists (one forced Telegram message; with `--environment development` before prod ships data); run it again without the flags to restore. A failed call prints Grafana's validation message. On a new stack the first run creates the folder and waits up to 2 min for it: Grafana answers 403 (not 404) for a missing folder, and the token's cached permissions take about a minute to include a new one. Each call times out after 60 s and retries twice (every call is idempotent by uid).
+
+LLM cost per day, calls by feature and p95 latency stay in the admin UsagePage (Grafana Cloud cannot read the box's Mongo; plan R2).
 
 ## Alerts & self-healing
 

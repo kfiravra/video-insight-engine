@@ -34,6 +34,7 @@ from contextvars import ContextVar
 from types import TracebackType
 from typing import Any
 
+from llm_common.context import llm_trace_id_var
 from llm_common.observability import prompts as _prompts
 from llm_common.observability.ids import normalize_user_id_mode, resolve_user_id
 from llm_common.observability.redaction import normalize_input, truncate_payload
@@ -252,6 +253,8 @@ async def run_trace(
         return
 
     trace_token = _trace_id.set(root_trace_id)
+    # Every ledger row written inside the trace carries its id (D9).
+    ledger_token = llm_trace_id_var.set(root_trace_id)
     root_token = _root_span.set(root)
     prompt_tokens = _prompts.open_scope()
     try:
@@ -262,6 +265,7 @@ async def run_trace(
         # loop's finalizer) raises ValueError; that copy is discarded anyway.
         try:
             _trace_id.reset(trace_token)
+            llm_trace_id_var.reset(ledger_token)
             _root_span.reset(root_token)
         except ValueError:
             pass

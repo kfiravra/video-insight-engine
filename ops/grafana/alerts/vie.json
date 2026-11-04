@@ -1,0 +1,476 @@
+{
+  "title": "vie",
+  "folderUid": "vie",
+  "interval": 60,
+  "rules": [
+    {
+      "uid": "vie-container-restart-loop",
+      "title": "Container restart loop",
+      "folderUID": "vie",
+      "ruleGroup": "vie",
+      "condition": "C",
+      "data": [
+        {
+          "refId": "A",
+          "relativeTimeRange": {
+            "from": 900,
+            "to": 0
+          },
+          "datasourceUid": "__PROM_UID__",
+          "model": {
+            "refId": "A",
+            "expr": "max by (name) (changes(container_start_time_seconds{environment=\"__ENVIRONMENT__\", name=~\"vie-.+\"}[15m]))",
+            "instant": true,
+            "range": false,
+            "intervalMs": 60000,
+            "maxDataPoints": 43200
+          }
+        },
+        {
+          "refId": "B",
+          "datasourceUid": "__expr__",
+          "model": {
+            "refId": "B",
+            "type": "reduce",
+            "expression": "A",
+            "reducer": "last",
+            "settings": {
+              "mode": "dropNN"
+            }
+          }
+        },
+        {
+          "refId": "C",
+          "datasourceUid": "__expr__",
+          "model": {
+            "refId": "C",
+            "type": "threshold",
+            "expression": "B",
+            "conditions": [
+              {
+                "evaluator": {
+                  "type": "gt",
+                  "params": [
+                    2
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "for": "0s",
+      "noDataState": "OK",
+      "execErrState": "Error",
+      "isPaused": false,
+      "labels": {
+        "severity": "critical",
+        "service": "vie"
+      },
+      "annotations": {
+        "summary": "{{ $labels.name }} restarted 3+ times in 15 minutes"
+      }
+    },
+    {
+      "uid": "vie-host-ram-high",
+      "title": "Host RAM above 90 %",
+      "folderUID": "vie",
+      "ruleGroup": "vie",
+      "condition": "C",
+      "data": [
+        {
+          "refId": "A",
+          "relativeTimeRange": {
+            "from": 600,
+            "to": 0
+          },
+          "datasourceUid": "__PROM_UID__",
+          "model": {
+            "refId": "A",
+            "expr": "1 - (node_memory_MemAvailable_bytes{environment=\"__ENVIRONMENT__\"} / node_memory_MemTotal_bytes{environment=\"__ENVIRONMENT__\"})",
+            "instant": true,
+            "range": false,
+            "intervalMs": 60000,
+            "maxDataPoints": 43200
+          }
+        },
+        {
+          "refId": "B",
+          "datasourceUid": "__expr__",
+          "model": {
+            "refId": "B",
+            "type": "reduce",
+            "expression": "A",
+            "reducer": "last",
+            "settings": {
+              "mode": "dropNN"
+            }
+          }
+        },
+        {
+          "refId": "C",
+          "datasourceUid": "__expr__",
+          "model": {
+            "refId": "C",
+            "type": "threshold",
+            "expression": "B",
+            "conditions": [
+              {
+                "evaluator": {
+                  "type": "gt",
+                  "params": [
+                    0.9
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "for": "10m",
+      "noDataState": "OK",
+      "execErrState": "Error",
+      "isPaused": false,
+      "labels": {
+        "severity": "critical",
+        "service": "vie"
+      },
+      "annotations": {
+        "summary": "The box has used more than 90 % of its RAM for 10 minutes"
+      }
+    },
+    {
+      "uid": "vie-container-ram-high",
+      "title": "Container RAM above 90 % of its limit",
+      "folderUID": "vie",
+      "ruleGroup": "vie",
+      "condition": "C",
+      "data": [
+        {
+          "refId": "A",
+          "relativeTimeRange": {
+            "from": 600,
+            "to": 0
+          },
+          "datasourceUid": "__PROM_UID__",
+          "model": {
+            "refId": "A",
+            "expr": "max by (name) (container_memory_working_set_bytes{environment=\"__ENVIRONMENT__\", name=~\"vie-.+\"} / (container_spec_memory_limit_bytes{environment=\"__ENVIRONMENT__\", name=~\"vie-.+\"} > 0))",
+            "instant": true,
+            "range": false,
+            "intervalMs": 60000,
+            "maxDataPoints": 43200
+          }
+        },
+        {
+          "refId": "B",
+          "datasourceUid": "__expr__",
+          "model": {
+            "refId": "B",
+            "type": "reduce",
+            "expression": "A",
+            "reducer": "last",
+            "settings": {
+              "mode": "dropNN"
+            }
+          }
+        },
+        {
+          "refId": "C",
+          "datasourceUid": "__expr__",
+          "model": {
+            "refId": "C",
+            "type": "threshold",
+            "expression": "B",
+            "conditions": [
+              {
+                "evaluator": {
+                  "type": "gt",
+                  "params": [
+                    0.9
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "for": "10m",
+      "noDataState": "OK",
+      "execErrState": "Error",
+      "isPaused": false,
+      "labels": {
+        "severity": "warning",
+        "service": "vie"
+      },
+      "annotations": {
+        "summary": "{{ $labels.name }} is above 90 % of its memory limit"
+      }
+    },
+    {
+      "uid": "vie-worker-consumers-zero",
+      "title": "No pipeline worker consuming",
+      "folderUID": "vie",
+      "ruleGroup": "vie",
+      "condition": "C",
+      "data": [
+        {
+          "refId": "A",
+          "relativeTimeRange": {
+            "from": 600,
+            "to": 0
+          },
+          "datasourceUid": "__PROM_UID__",
+          "model": {
+            "refId": "A",
+            "expr": "sum(rabbitmq_detailed_queue_consumers{environment=\"__ENVIRONMENT__\", queue=\"vie.pipeline.jobs\"})",
+            "instant": true,
+            "range": false,
+            "intervalMs": 60000,
+            "maxDataPoints": 43200
+          }
+        },
+        {
+          "refId": "B",
+          "datasourceUid": "__expr__",
+          "model": {
+            "refId": "B",
+            "type": "reduce",
+            "expression": "A",
+            "reducer": "last",
+            "settings": {
+              "mode": "dropNN"
+            }
+          }
+        },
+        {
+          "refId": "C",
+          "datasourceUid": "__expr__",
+          "model": {
+            "refId": "C",
+            "type": "threshold",
+            "expression": "B",
+            "conditions": [
+              {
+                "evaluator": {
+                  "type": "lt",
+                  "params": [
+                    1
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "for": "5m",
+      "noDataState": "OK",
+      "execErrState": "Error",
+      "isPaused": false,
+      "labels": {
+        "severity": "critical",
+        "service": "vie"
+      },
+      "annotations": {
+        "summary": "vie.pipeline.jobs has had no consumer for 5 minutes (the worker is down)"
+      }
+    },
+    {
+      "uid": "vie-dlq-not-empty",
+      "title": "Dead-letter queue not empty",
+      "folderUID": "vie",
+      "ruleGroup": "vie",
+      "condition": "C",
+      "data": [
+        {
+          "refId": "A",
+          "relativeTimeRange": {
+            "from": 600,
+            "to": 0
+          },
+          "datasourceUid": "__PROM_UID__",
+          "model": {
+            "refId": "A",
+            "expr": "sum(rabbitmq_detailed_queue_messages{environment=\"__ENVIRONMENT__\", queue=\"vie.pipeline.dlq\"})",
+            "instant": true,
+            "range": false,
+            "intervalMs": 60000,
+            "maxDataPoints": 43200
+          }
+        },
+        {
+          "refId": "B",
+          "datasourceUid": "__expr__",
+          "model": {
+            "refId": "B",
+            "type": "reduce",
+            "expression": "A",
+            "reducer": "last",
+            "settings": {
+              "mode": "dropNN"
+            }
+          }
+        },
+        {
+          "refId": "C",
+          "datasourceUid": "__expr__",
+          "model": {
+            "refId": "C",
+            "type": "threshold",
+            "expression": "B",
+            "conditions": [
+              {
+                "evaluator": {
+                  "type": "gt",
+                  "params": [
+                    0
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "for": "5m",
+      "noDataState": "OK",
+      "execErrState": "Error",
+      "isPaused": false,
+      "labels": {
+        "severity": "warning",
+        "service": "vie"
+      },
+      "annotations": {
+        "summary": "vie.pipeline.dlq holds {{ $values.B }} message(s): replay or purge them in vie-admin"
+      }
+    },
+    {
+      "uid": "vie-pipeline-failure-rate",
+      "title": "Pipeline failure rate above 30 %",
+      "folderUID": "vie",
+      "ruleGroup": "vie",
+      "condition": "C",
+      "data": [
+        {
+          "refId": "A",
+          "relativeTimeRange": {
+            "from": 3600,
+            "to": 0
+          },
+          "datasourceUid": "__LOKI_UID__",
+          "model": {
+            "refId": "A",
+            "expr": "sum(count_over_time({environment=\"__ENVIRONMENT__\", service=~\"vie-summarizer|vie-summarizer-worker\"} | json | event=\"pipeline_run_finished\" | status=\"failed\" [1h]))",
+            "queryType": "instant",
+            "editorMode": "code",
+            "intervalMs": 60000,
+            "maxDataPoints": 43200
+          }
+        },
+        {
+          "refId": "B",
+          "relativeTimeRange": {
+            "from": 3600,
+            "to": 0
+          },
+          "datasourceUid": "__LOKI_UID__",
+          "model": {
+            "refId": "B",
+            "expr": "sum(count_over_time({environment=\"__ENVIRONMENT__\", service=~\"vie-summarizer|vie-summarizer-worker\"} | json | event=\"pipeline_run_finished\" | status=~\"completed|failed\" [1h]))",
+            "queryType": "instant",
+            "editorMode": "code",
+            "intervalMs": 60000,
+            "maxDataPoints": 43200
+          }
+        },
+        {
+          "refId": "C",
+          "datasourceUid": "__expr__",
+          "model": {
+            "refId": "C",
+            "type": "math",
+            "expression": "($A / $B > 0.3) && ($B >= 3)"
+          }
+        }
+      ],
+      "for": "0s",
+      "noDataState": "OK",
+      "execErrState": "Error",
+      "isPaused": false,
+      "labels": {
+        "severity": "warning",
+        "service": "vie"
+      },
+      "annotations": {
+        "summary": "More than 30 % of the last hour's pipeline runs failed (3+ runs)"
+      }
+    },
+    {
+      "uid": "vie-active-series-high",
+      "title": "Grafana Cloud active series above 8k",
+      "folderUID": "vie",
+      "ruleGroup": "vie",
+      "condition": "C",
+      "for": "30m",
+      "noDataState": "OK",
+      "execErrState": "Error",
+      "isPaused": false,
+      "labels": {
+        "severity": "warning",
+        "service": "vie"
+      },
+      "annotations": {
+        "summary": "The stack holds more than 8k of the free tier's 10k active series: tighten the keep-list in ops/alloy/config.alloy"
+      },
+      "data": [
+        {
+          "refId": "A",
+          "relativeTimeRange": {
+            "from": 3600,
+            "to": 0
+          },
+          "datasourceUid": "__USAGE_UID__",
+          "model": {
+            "refId": "A",
+            "expr": "max(grafanacloud_instance_active_series)",
+            "instant": true,
+            "range": false,
+            "intervalMs": 60000,
+            "maxDataPoints": 43200
+          }
+        },
+        {
+          "refId": "B",
+          "datasourceUid": "__expr__",
+          "model": {
+            "refId": "B",
+            "type": "reduce",
+            "expression": "A",
+            "reducer": "last",
+            "settings": {
+              "mode": "dropNN"
+            }
+          }
+        },
+        {
+          "refId": "C",
+          "datasourceUid": "__expr__",
+          "model": {
+            "refId": "C",
+            "type": "threshold",
+            "expression": "B",
+            "conditions": [
+              {
+                "evaluator": {
+                  "type": "gt",
+                  "params": [
+                    8000
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
