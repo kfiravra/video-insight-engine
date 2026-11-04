@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { formatCost, formatDateTime, formatUsageVolume, shortId } from '../lib/format';
 import { LangfuseLink } from './LangfuseLink';
 import { TonePill } from './TonePill';
@@ -9,7 +10,8 @@ import type { PillTone } from './TonePill';
 const FROM_SM = 'hidden sm:table-cell';
 const FROM_MD = 'hidden md:table-cell';
 const FROM_LG = 'hidden lg:table-cell';
-const COLUMN_COUNT = 11;
+// The columns every run table has; the Usage page adds a Video column.
+const BASE_COLUMN_COUNT = 11;
 
 // Phones get 6px side padding so the id, status, cost and links fit 375px without scrolling.
 const CELL = 'px-1.5 py-3 sm:px-3';
@@ -96,6 +98,12 @@ function RunId({ run }: RunIdProps) {
   );
 }
 
+/** How screen readers name a row: its short run id, else request id, else the legacy bucket. */
+function runLabel(run: RunSummary): string {
+  const id = run.run_id ?? run.request_id;
+  return id ? shortId(id) : 'unattributed';
+}
+
 function formatBypass(bypass: boolean | null): string {
   if (bypass === null) return '—';
   return bypass ? 'yes' : 'no';
@@ -110,6 +118,9 @@ export function RunCallsTable({ calls }: RunCallsTableProps) {
   if (calls.length === 0) {
     return <div className="py-2 text-xs text-[var(--color-text-muted)]">No individual calls recorded.</div>;
   }
+
+  // A failed attempt's broken call is the first thing to read.
+  const ordered = [...calls].sort((a, b) => Number(a.success !== false) - Number(b.success !== false));
 
   return (
     <div className="rounded-lg border border-[var(--color-border)] overflow-hidden">
@@ -126,14 +137,21 @@ export function RunCallsTable({ calls }: RunCallsTableProps) {
             </tr>
           </thead>
           <tbody>
-            {calls.map((call) => (
+            {ordered.map((call) => (
               <tr
                 key={call.id}
-                className="border-b border-[var(--color-border)] last:border-0 hover:bg-[var(--color-surface-dim)] transition-colors"
+                className={`border-b border-[var(--color-border)] last:border-0 transition-colors ${
+                  call.success === false
+                    ? 'bg-[var(--color-danger-soft)]'
+                    : 'hover:bg-[var(--color-surface-dim)]'
+                }`}
               >
                 <td className="py-1.5 px-3">
-                  <span className="px-1.5 py-0.5 rounded text-[10px] bg-[var(--color-surface-dim)]">
-                    {call.feature ?? '—'}
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="px-1.5 py-0.5 rounded text-[10px] bg-[var(--color-surface-dim)]">
+                      {call.feature ?? '—'}
+                    </span>
+                    {call.success === false && <TonePill tone="danger">failed</TonePill>}
                   </span>
                 </td>
                 <td className="py-1.5 px-3 font-mono truncate max-w-[160px]">{call.model ?? '—'}</td>
@@ -160,9 +178,11 @@ interface RunRowProps {
   run: RunSummary;
   isOpen: boolean;
   onToggle: () => void;
+  showVideo: boolean;
 }
 
-function RunRow({ run, isOpen, onToggle }: RunRowProps) {
+function RunRow({ run, isOpen, onToggle, showVideo }: RunRowProps) {
+  const columnCount = BASE_COLUMN_COUNT + (showVideo ? 1 : 0);
   return (
     <>
       <tr
@@ -176,7 +196,7 @@ function RunRow({ run, isOpen, onToggle }: RunRowProps) {
             type="button"
             onClick={onToggle}
             className="flex items-center justify-center w-6 h-6 rounded-md hover:bg-[var(--color-surface-dim)] text-[var(--color-text-muted)] transition-colors"
-            aria-label={isOpen ? 'Collapse' : 'Expand'}
+            aria-label={`${isOpen ? 'Collapse' : 'Expand'} run ${runLabel(run)}`}
             aria-expanded={isOpen}
           >
             <span
@@ -196,11 +216,26 @@ function RunRow({ run, isOpen, onToggle }: RunRowProps) {
             {run.degraded === true && <DegradedBadge reasons={run.degraded_reasons} />}
           </div>
           {run.retry_of && (
-            <div className="mt-0.5 text-[10px] text-[var(--color-text-faint)]" title={`Retry of run ${run.retry_of}`}>
+            <div className="mt-0.5 text-[10px] text-[var(--color-text-muted)]" title={`Retry of run ${run.retry_of}`}>
               retry of <span className="font-mono whitespace-nowrap">{shortId(run.retry_of)}</span>
             </div>
           )}
         </td>
+
+        {showVideo && (
+          <td className={`${CELL} ${FROM_MD}`}>
+            {run.video_id ? (
+              <Link
+                to={`/videos/${run.video_id}`}
+                className="font-mono text-[11px] text-[var(--color-primary)] hover:underline whitespace-nowrap"
+              >
+                {run.video_id}
+              </Link>
+            ) : (
+              <span className="text-[var(--color-text-faint)]">—</span>
+            )}
+          </td>
+        )}
 
         <td className={`${CELL} text-[11px] text-[var(--color-text-muted)] whitespace-nowrap ${FROM_LG}`}>
           {formatDateTime(run.first_call)}
@@ -222,15 +257,23 @@ function RunRow({ run, isOpen, onToggle }: RunRowProps) {
         <td className={`${CELL} text-right text-[11px] text-[var(--color-text-muted)] ${FROM_SM}`}>{run.call_count}</td>
         <td className={`${CELL} sm:pr-4`}>
           <div className="flex flex-col items-end gap-1 sm:flex-row sm:justify-end sm:gap-3">
-            <LangfuseLink href={run.langfuse_url} label="Trace" description="Open trace in Langfuse" />
-            <LangfuseLink href={run.session_url} label="Session" description="Open session in Langfuse" />
+            <LangfuseLink
+              href={run.langfuse_url}
+              label="Trace"
+              description={`Open trace of run ${runLabel(run)} in Langfuse (opens in a new tab)`}
+            />
+            <LangfuseLink
+              href={run.session_url}
+              label="Session"
+              description={`Open session of run ${runLabel(run)} in Langfuse (opens in a new tab)`}
+            />
           </div>
         </td>
       </tr>
 
       {isOpen && (
         <tr style={{ borderLeft: '3px solid var(--color-primary)' }}>
-          <td colSpan={COLUMN_COUNT} className="bg-[var(--color-surface)] border-b border-[var(--color-border)] px-4 pt-1 pb-3">
+          <td colSpan={columnCount} className="bg-[var(--color-surface)] border-b border-[var(--color-border)] px-4 pt-1 pb-3">
             {/* Zero basis, full width: the calls table scrolls in its own frame instead of widening the runs table. */}
             <div className="w-0 min-w-full">
               <RunCallsTable calls={run.calls} />
@@ -249,10 +292,12 @@ function runKey(run: RunSummary, index: number): string {
 
 interface RunsTableProps {
   runs: RunSummary[];
+  /** Adds a Video column (the YouTube id, linking to its detail page): the Usage page mixes videos. */
+  showVideo?: boolean;
 }
 
 /** Pipeline attempts, one row each, expandable to their calls (Usage → Pipeline Runs, Video detail). */
-export function RunsTable({ runs }: RunsTableProps) {
+export function RunsTable({ runs, showVideo = false }: RunsTableProps) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   function handleToggle(key: string) {
@@ -271,6 +316,7 @@ export function RunsTable({ runs }: RunsTableProps) {
           <tr className="border-b border-[var(--color-border)] bg-[var(--color-surface-dim)]">
             <th className="w-8 py-3 pl-2 pr-0 sm:px-3" />
             <th className={`text-left ${HEAD_CELL}`}>Run</th>
+            {showVideo && <th className={`text-left ${HEAD_CELL} ${FROM_MD}`}>Video</th>}
             <th className={`text-left ${HEAD_CELL} ${FROM_LG}`}>Started</th>
             <th className={`text-right ${HEAD_CELL} ${FROM_SM}`}>Attempt</th>
             <th className={`text-left ${HEAD_CELL} ${FROM_MD}`}>Version</th>
@@ -285,7 +331,15 @@ export function RunsTable({ runs }: RunsTableProps) {
         <tbody>
           {runs.map((run, i) => {
             const key = runKey(run, i);
-            return <RunRow key={key} run={run} isOpen={expanded.has(key)} onToggle={() => handleToggle(key)} />;
+            return (
+              <RunRow
+                key={key}
+                run={run}
+                isOpen={expanded.has(key)}
+                onToggle={() => handleToggle(key)}
+                showVideo={showVideo}
+              />
+            );
           })}
         </tbody>
       </table>

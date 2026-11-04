@@ -286,7 +286,7 @@ export interface SessionSummary {
   first_call: string;
   last_call: string;
   /** The Langfuse session `chat-<session_id>`; null when unconfigured or for the legacy bucket. */
-  langfuse_url: string | null;
+  session_url: string | null;
 }
 
 // --- User-360 activity types (GET /users/{id}/activity) ---

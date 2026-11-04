@@ -67,6 +67,9 @@ function SummaryStats({ data }: { data: Array<{ calls: number; cost_usd: number 
   );
 }
 
+// The drawer's call list: the newest pipeline calls (the video detail page has every run).
+const DRAWER_CALLS_LIMIT = 50;
+
 /** Inline expanded call details fetched on demand */
 function VideoCallsPanel({ videoId }: { videoId: string }) {
   const { data, isLoading, isError, error, refetch } = useVideoDetail(videoId);
@@ -92,12 +95,14 @@ function VideoCallsPanel({ videoId }: { videoId: string }) {
   }
 
   const { runs, by_feature } = data;
-  // The drawer lists the pipeline's calls of every run, newest first; the pills cover every service.
+  // The pills cover every service (chat included); the list is the pipeline runs' calls
+  // (summarizer only, last 90 days), newest first, capped like the old flat list.
   const calls = runs
     .flatMap((run) => run.calls)
-    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+    .slice(0, DRAWER_CALLS_LIMIT);
 
-  if (calls.length === 0) {
+  if (calls.length === 0 && by_feature.length === 0) {
     return (
       <div className="px-4 py-3 text-xs text-[var(--color-text-muted)]">
         No individual calls recorded.
@@ -123,7 +128,11 @@ function VideoCallsPanel({ videoId }: { videoId: string }) {
         </div>
       )}
 
-      <RunCallsTable calls={calls} />
+      {calls.length > 0 ? (
+        <RunCallsTable calls={calls} />
+      ) : (
+        <div className="text-xs text-[var(--color-text-muted)]">No pipeline calls in the last 90 days.</div>
+      )}
     </div>
   );
 }

@@ -289,7 +289,7 @@ export const mockUsageBySession = [
     total_cost_usd: 0.0187,
     first_call: '2026-02-26T15:00:00Z',
     last_call: '2026-02-26T15:06:00Z',
-    langfuse_url: 'https://cloud.langfuse.com/project/proj-e2e/sessions/chat-5b1e2c3d-4f5a-4b6c-8d7e-9f0a1b2c3d4e',
+    session_url: 'https://cloud.langfuse.com/project/proj-e2e/sessions/chat-5b1e2c3d-4f5a-4b6c-8d7e-9f0a1b2c3d4e',
   },
   {
     session_id: '8d9e0f1a-2b3c-4d4e-9f5a-6b7c8d9e0f1a',
@@ -301,7 +301,7 @@ export const mockUsageBySession = [
     total_cost_usd: 0.0093,
     first_call: '2026-02-25T18:20:00Z',
     last_call: '2026-02-25T18:24:00Z',
-    langfuse_url: 'https://cloud.langfuse.com/project/proj-e2e/sessions/chat-8d9e0f1a-2b3c-4d4e-9f5a-6b7c8d9e0f1a',
+    session_url: 'https://cloud.langfuse.com/project/proj-e2e/sessions/chat-8d9e0f1a-2b3c-4d4e-9f5a-6b7c8d9e0f1a',
   },
   {
     session_id: null,
@@ -313,7 +313,7 @@ export const mockUsageBySession = [
     total_cost_usd: 0.1042,
     first_call: '2026-02-10T09:00:00Z',
     last_call: '2026-02-19T17:45:00Z',
-    langfuse_url: null,
+    session_url: null,
   },
 ];
 

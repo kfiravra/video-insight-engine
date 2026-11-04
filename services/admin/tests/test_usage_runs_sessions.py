@@ -13,7 +13,8 @@ from httpx import ASGITransport, AsyncClient
 from src.config import settings
 from src.main import app
 from src.routes import usage as usage_module
-from src.routes.usage import (
+from src.routes import usage_runs as usage_runs_module
+from src.routes.usage_runs import (
     _attach_cache_fields,
     _build_run_summary,
     _build_session_summary,
@@ -69,16 +70,11 @@ class TestRunKeyedSummary:
         assert (run.run_id, run.request_id) == ("run-1", "req-1")
         assert (run.attempt, run.pipeline_version, run.bypass) == (2, "v11", True)
 
-    def test_should_read_the_request_id_from_the_key_when_a_legacy_group_has_no_run_id(
-        self,
-    ) -> None:
-        group = {
-            k: v for k, v in _run_group(_id="req-legacy", run_id=None).items() if k != "request_id"
-        }
+    def test_should_name_no_user_or_video_for_the_unattributed_bucket(self) -> None:
+        run = _build_run_summary(_run_group(_id=None, run_id=None, request_id=None), [], None)
 
-        run = _build_run_summary(group, [], ordinal=None)
-
-        assert (run.run_id, run.request_id) == (None, "req-legacy")
+        assert (run.run_id, run.request_id, run.video_id, run.user_id) == (None, None, None, None)
+        assert run.video_summary_id is None
 
     def test_should_take_the_attempt_fields_from_the_runs_entry_with_its_run_id(
         self, project: None
@@ -117,7 +113,7 @@ class TestRunKeyedSummary:
     ) -> None:
         run = _build_run_summary(_run_group(), [], None)
 
-        _attach_cache_fields([run], {"vs-1": {"runs": []}}, {0: "t-ledger"})
+        _attach_cache_fields([run], {"vs-1": {"runs": []}})
 
         assert run.langfuse_url == "https://lf.example/project/proj-1/traces/t-ledger"
         assert run.status is None
@@ -127,23 +123,52 @@ class TestRunKeyedSummary:
     ) -> None:
         run = _build_run_summary(_run_group(), [], None)
 
-        _attach_cache_fields([run], {}, {0: "t-ledger"})
+        _attach_cache_fields([run], {})
 
         assert run.langfuse_url == "https://lf.example/project/proj-1/traces/t-ledger"
         assert run.degraded is None
 
 
 class TestCallsFilter:
-    def test_should_match_the_run_id_when_the_group_has_one(self) -> None:
-        assert _calls_filter(_run_group()) == {"service": "summarizer", "run_id": "run-1"}
+    def test_should_match_the_run_id_within_the_window_when_the_group_has_one(self) -> None:
+        match = _calls_filter(_run_group(), days=30, video_id=None)
+
+        assert (match["service"], match["run_id"]) == ("summarizer", "run-1")
+        assert "$gte" in match["timestamp"]
 
     def test_should_match_legacy_rows_of_the_request_when_the_group_has_no_run_id(self) -> None:
-        group = _run_group(_id="req-legacy", run_id=None)
-        assert _calls_filter(group) == {
-            "service": "summarizer",
-            "run_id": None,
-            "request_id": "req-legacy",
-        }
+        match = _calls_filter(_run_group(_id="req-legacy", run_id=None), days=30, video_id=None)
+
+        assert (match["run_id"], match["request_id"]) == (None, "req-legacy")
+
+    def test_should_keep_the_unattributed_bucket_to_the_reports_video(self) -> None:
+        bucket = _run_group(_id=None, run_id=None, request_id=None)
+
+        match = _calls_filter(bucket, days=90, video_id="FTha4zARGN4")
+
+        assert (match["video_id"], match["request_id"], match["run_id"]) == (
+            "FTha4zARGN4",
+            None,
+            None,
+        )
+
+
+class TestCacheInvalidation:
+    def test_should_drop_every_cached_report_of_the_video(self) -> None:
+        usage_module._cache.clear()
+        for key in (
+            "video:yt1:False",
+            "video:yt1:True",
+            "by-run:30:20:0:yt1",
+            "by-run:30:20:0:None",
+            "video:yt2:False",
+        ):
+            usage_module._cache[key] = []
+
+        usage_module.invalidate_video_cache("yt1")
+
+        assert sorted(usage_module._cache) == ["by-run:30:20:0:None", "video:yt2:False"]
+        usage_module._cache.clear()
 
 
 # ─── Session rows ───
@@ -169,13 +194,13 @@ class TestSessionSummary:
         session = _build_session_summary(self._group())
 
         assert (session.session_id, session.turns, session.tool_llm_calls) == ("sess-1", 3, 1)
-        assert session.langfuse_url == "https://lf.example/project/proj-1/sessions/chat-sess-1"
+        assert session.session_url == "https://lf.example/project/proj-1/sessions/chat-sess-1"
         assert session.first_call == T0.isoformat()
 
     def test_should_have_no_link_for_the_unattributed_bucket(self, project: None) -> None:
         session = _build_session_summary(self._group(_id=None))
 
-        assert (session.session_id, session.langfuse_url) == (None, None)
+        assert (session.session_id, session.session_url, session.user_id) == (None, None, None)
 
 
 # ─── Endpoints ───
@@ -193,6 +218,7 @@ def mock_db(monkeypatch: pytest.MonkeyPatch) -> Iterator[MagicMock]:
     )
     db.videoSummaryCache.find_one = AsyncMock(return_value=None)
     monkeypatch.setattr(usage_module, "get_database", lambda: db)
+    monkeypatch.setattr(usage_runs_module, "get_database", lambda: db)
     usage_module._cache.clear()
     yield db
     usage_module._cache.clear()

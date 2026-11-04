@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import type { RunSummary } from '../lib/api';
 
@@ -26,7 +27,9 @@ function makeWrapper() {
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
   });
   return ({ children }: { children: ReactNode }) => (
-    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    <MemoryRouter>
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    </MemoryRouter>
   );
 }
 
@@ -35,9 +38,11 @@ async function renderPanel() {
   return render(<PipelineRunsPanel days={7} />, { wrapper: makeWrapper() });
 }
 
-/** The tone of the status pill that reads `label`. */
-function pillTone(label: string): string | null {
-  return screen.getByText(label).closest('[data-slot="tone-pill"]')?.getAttribute('data-tone') ?? null;
+/** The tone of the (`index`-th) status pill that reads `label`. */
+function pillTone(label: string, index = 0): string | null {
+  return (
+    screen.getAllByText(label)[index].closest('[data-slot="tone-pill"]')?.getAttribute('data-tone') ?? null
+  );
 }
 
 const LEGACY_FIELDS = {
@@ -281,10 +286,10 @@ describe('PipelineRunsPanel', () => {
   it('should link the run trace and the row session in Langfuse', async () => {
     mockByRun.mockResolvedValue([RUN_1]);
     await renderPanel();
-    const trace = await screen.findByRole('link', { name: 'Open trace in Langfuse' });
+    const trace = await screen.findByRole('link', { name: /^Open trace of run .+ in Langfuse/ });
     expect(trace.getAttribute('href')).toBe(RUN_1.langfuse_url);
     expect(trace.getAttribute('target')).toBe('_blank');
-    const session = screen.getByRole('link', { name: 'Open session in Langfuse' });
+    const session = screen.getByRole('link', { name: /^Open session of run .+ in Langfuse/ });
     expect(session.getAttribute('href')).toBe(RUN_1.session_url);
   });
 
@@ -292,7 +297,7 @@ describe('PipelineRunsPanel', () => {
     mockByRun.mockResolvedValue([REQUEST_KEYED_RUN, UNATTRIBUTED_RUN]);
     await renderPanel();
     await screen.findByText('req-old111');
-    expect(screen.queryAllByRole('link')).toHaveLength(0);
+    expect(screen.queryAllByRole('link', { name: /in Langfuse/ })).toHaveLength(0);
   });
 
   it('should show a regen badge for regen_ordinal > 1', async () => {
@@ -337,6 +342,31 @@ describe('PipelineRunsPanel', () => {
 
     expect(screen.getByText('plan')).toBeTruthy();
     expect(expandBtn.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('should link each run to its video, since the Usage page mixes videos', async () => {
+    mockByRun.mockResolvedValue([RUN_1]);
+    await renderPanel();
+
+    const link = await screen.findByRole('link', { name: 'ytid-abc' });
+    expect(link.getAttribute('href')).toBe('/videos/ytid-abc');
+  });
+
+  it('should list a failed call first and mark it failed', async () => {
+    const run: RunSummary = {
+      ...RUN_1,
+      status: 'failed',
+      calls: [RUN_1.calls[0], { ...RETRY_RUN.calls[0], id: 'call-broken', feature: 'extract' }],
+    };
+    mockByRun.mockResolvedValue([run]);
+    await renderPanel();
+    await screen.findByText('run-aaa111');
+
+    fireEvent.click(screen.getByRole('button', { name: /expand/i }));
+
+    const features = screen.getAllByText(/^(plan|extract)$/).map((el) => el.textContent);
+    expect(features).toEqual(['extract', 'plan']);
+    expect(pillTone('failed', 1)).toBe('danger');
   });
 
   it('should collapse call details when expanded row is clicked again', async () => {

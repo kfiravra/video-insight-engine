@@ -44,7 +44,7 @@ const VIDEO_SESSION: SessionSummary = {
   total_cost_usd: 0.0412,
   first_call: '2026-11-03T10:00:00.000Z',
   last_call: '2026-11-03T10:06:00.000Z',
-  langfuse_url: 'https://cloud.langfuse.com/project/proj-1/sessions/chat-5b1e2c3d-4f5a-4b6c-8d7e-9f0a1b2c3d4e',
+  session_url: 'https://cloud.langfuse.com/project/proj-1/sessions/chat-5b1e2c3d-4f5a-4b6c-8d7e-9f0a1b2c3d4e',
 };
 
 const LIBRARY_SESSION: SessionSummary = {
@@ -55,7 +55,7 @@ const LIBRARY_SESSION: SessionSummary = {
   tool_llm_calls: 0,
   call_count: 1,
   total_cost_usd: 0.0031,
-  langfuse_url: null,
+  session_url: null,
 };
 
 const LEGACY_BUCKET: SessionSummary = {
@@ -66,7 +66,7 @@ const LEGACY_BUCKET: SessionSummary = {
   tool_llm_calls: 4,
   call_count: 40,
   total_cost_usd: 0.251,
-  langfuse_url: null,
+  session_url: null,
 };
 
 beforeEach(() => {
@@ -139,8 +139,8 @@ describe('SessionsPanel', () => {
   it('should link the session in Langfuse', async () => {
     mockBySession.mockResolvedValue([VIDEO_SESSION]);
     await renderPanel();
-    const link = await screen.findByRole('link', { name: 'Open session in Langfuse' });
-    expect(link.getAttribute('href')).toBe(VIDEO_SESSION.langfuse_url);
+    const link = await screen.findByRole('link', { name: /^Open chat session .+ in Langfuse/ });
+    expect(link.getAttribute('href')).toBe(VIDEO_SESSION.session_url);
     expect(link.getAttribute('rel')).toContain('noopener');
   });
 

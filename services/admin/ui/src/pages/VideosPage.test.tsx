@@ -152,4 +152,63 @@ describe('VideosPage', () => {
     const afterToggleOrder = readOrder();
     expect(afterToggleOrder).toBe('alpha-first');
   });
+
+  it("should keep a chat-only video's cost pills when it has no pipeline calls", () => {
+    vi.mocked(useUsageByVideo).mockReturnValue({
+      data: [makeVideo({ video_id: 'v1', title: 'Chat only' })],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof useUsageByVideo>);
+    vi.mocked(useVideoDetail).mockReturnValue({
+      data: {
+        video: null,
+        summary: {},
+        by_feature: [{ feature: 'assistant:rag_chat', calls: 4, cost_usd: 0.002 }],
+        runs: [],
+      },
+      isLoading: false,
+      isError: false,
+    } as unknown as ReturnType<typeof useVideoDetail>);
+
+    render(<VideosPage />, { wrapper });
+    fireEvent.click(screen.getByRole('button', { name: 'Expand' }));
+
+    expect(screen.getByText('assistant:rag_chat')).toBeTruthy();
+    expect(screen.getByText('No pipeline calls in the last 90 days.')).toBeTruthy();
+  });
+
+  it('should list at most 50 calls in the drawer', () => {
+    const calls = Array.from({ length: 60 }, (_, i) => ({
+      id: `call-${i}`,
+      feature: `feature-${i}`,
+      model: 'm',
+      cost_usd: 0.001,
+      tokens_in: 1,
+      tokens_out: 1,
+      duration_ms: 1,
+      success: true,
+      timestamp: new Date(Date.UTC(2026, 0, 1, 0, i)).toISOString(),
+    }));
+    vi.mocked(useUsageByVideo).mockReturnValue({
+      data: [makeVideo({ video_id: 'v1', title: 'Busy video' })],
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof useUsageByVideo>);
+    vi.mocked(useVideoDetail).mockReturnValue({
+      data: { video: null, summary: {}, by_feature: [], runs: [{ calls }] },
+      isLoading: false,
+      isError: false,
+    } as unknown as ReturnType<typeof useVideoDetail>);
+
+    render(<VideosPage />, { wrapper });
+    fireEvent.click(screen.getByRole('button', { name: 'Expand' }));
+
+    expect(screen.getAllByText(/^feature-\d+$/)).toHaveLength(50);
+    expect(screen.getByText('feature-59')).toBeTruthy();
+    expect(screen.queryByText('feature-0')).toBeNull();
+  });
 });

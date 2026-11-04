@@ -63,7 +63,11 @@ function SessionRow({ session }: SessionRowProps) {
         {timeAgo(session.last_call)}
       </td>
       <td className="p-3 pr-4 text-right">
-        <LangfuseLink href={session.langfuse_url} label="Session" description="Open session in Langfuse" />
+        <LangfuseLink
+          href={session.session_url}
+          label="Session"
+          description={`Open chat session ${session.session_id ? shortId(session.session_id) : ''} in Langfuse (opens in a new tab)`}
+        />
       </td>
     </tr>
   );

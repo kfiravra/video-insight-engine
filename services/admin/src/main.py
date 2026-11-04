@@ -24,6 +24,7 @@ from src.routes.queue import router as queue_router
 from src.routes.shares import router as shares_router
 from src.routes.tiers import router as tiers_router
 from src.routes.usage import router as usage_router
+from src.routes.usage_runs import router as usage_runs_router
 from src.routes.users import router as users_router
 from src.routes.videos import router as videos_router
 from src.sentry_scrub import scrub_event_payload
@@ -169,6 +170,7 @@ app.add_middleware(ApiKeyMiddleware)
 # Register routers
 app.include_router(auth_router)
 app.include_router(usage_router)
+app.include_router(usage_runs_router)
 app.include_router(health_router)
 app.include_router(alerts_router)
 app.include_router(shares_router)

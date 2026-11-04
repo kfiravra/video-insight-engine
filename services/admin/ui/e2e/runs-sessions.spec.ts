@@ -9,7 +9,7 @@ import type { Locator, Page, TestInfo } from '@playwright/test';
 const SCREENSHOT_DIR = process.env.E2E_SCREENSHOT_DIR;
 
 const [RETRY_RUN, FIRST_ATTEMPT] = mockVideoDetail.runs;
-const VIDEO_SESSION_URL = mockUsageBySession[0].langfuse_url ?? '';
+const VIDEO_SESSION_URL = mockUsageBySession[0].session_url ?? '';
 
 function panel(page: Page, title: string | RegExp): Locator {
   return page
@@ -44,18 +44,18 @@ test.describe('Usage Page — pipeline runs', () => {
     await expect(retry.getByText('7c1d2e…d4e5')).toBeVisible();
     await expect(retry.getByText('retry of b4e8f0…1a2b')).toBeVisible();
     await expect(retry.getByText('completed')).toBeVisible();
-    await expect(retry.getByRole('link', { name: 'Open trace in Langfuse' })).toHaveAttribute('href', RETRY_RUN.langfuse_url);
-    await expect(retry.getByRole('link', { name: 'Open session in Langfuse' })).toHaveAttribute('href', RETRY_RUN.session_url);
+    await expect(retry.getByRole('link', { name: /^Open trace of run .+ in Langfuse/ })).toHaveAttribute('href', RETRY_RUN.langfuse_url);
+    await expect(retry.getByRole('link', { name: /^Open session of run .+ in Langfuse/ })).toHaveAttribute('href', RETRY_RUN.session_url);
     await expect(rows.nth(1).getByText('failed')).toBeVisible();
-    await expect(rows.nth(1).getByRole('link', { name: 'Open trace in Langfuse' })).toHaveAttribute('href', FIRST_ATTEMPT.langfuse_url);
+    await expect(rows.nth(1).getByRole('link', { name: /^Open trace of run .+ in Langfuse/ })).toHaveAttribute('href', FIRST_ATTEMPT.langfuse_url);
 
     // Legacy rows: one keyed by its request id, then the unattributed bucket; neither has links.
     const requestKeyed = rows.nth(4);
     const unattributed = rows.nth(5);
     await expect(requestKeyed.getByText('0b1c2d…2d3e')).toBeVisible();
     await expect(unattributed.getByText('unattributed (legacy)')).toBeVisible();
-    await expect(requestKeyed.getByRole('link')).toHaveCount(0);
-    await expect(unattributed.getByRole('link')).toHaveCount(0);
+    await expect(requestKeyed.getByRole('link', { name: /in Langfuse/ })).toHaveCount(0);
+    await expect(unattributed.getByRole('link', { name: /in Langfuse/ })).toHaveCount(0);
 
     await retry.getByRole('button', { name: 'Expand' }).click();
     await expect(runs.getByText('claude-sonnet-4-6')).toBeVisible();
@@ -83,7 +83,7 @@ test.describe('Usage Page — chat sessions', () => {
     await expect(rows.nth(0).getByText('video', { exact: true })).toHaveCount(1);
     await expect(rows.nth(1).getByText('library', { exact: true })).toHaveCount(1);
 
-    await expect(rows.nth(0).getByRole('link', { name: 'Open session in Langfuse' })).toHaveAttribute('href', VIDEO_SESSION_URL);
+    await expect(rows.nth(0).getByRole('link', { name: /^Open chat session .+ in Langfuse/ })).toHaveAttribute('href', VIDEO_SESSION_URL);
     await expect(rows.nth(2).getByRole('link')).toHaveCount(0);
 
     await shoot(adminPage, 'p2-sessions', testInfo, sessions);
@@ -99,7 +99,7 @@ test.describe('Video Detail Page — runs', () => {
     const rows = runs.locator('tbody > tr');
     await expect(rows.nth(0).getByText('7c1d2e…d4e5')).toBeVisible();
     await expect(rows.nth(1).getByText('b4e8f0…1a2b')).toBeVisible();
-    await expect(rows.nth(0).getByRole('link', { name: 'Open trace in Langfuse' })).toHaveAttribute('href', RETRY_RUN.langfuse_url);
+    await expect(rows.nth(0).getByRole('link', { name: /^Open trace of run .+ in Langfuse/ })).toHaveAttribute('href', RETRY_RUN.langfuse_url);
 
     await rows.nth(0).getByRole('button', { name: 'Expand' }).click();
     await expect(runs.getByText('claude-sonnet-4-6')).toBeVisible();

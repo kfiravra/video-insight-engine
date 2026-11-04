@@ -138,9 +138,9 @@ describe('VideoDetailPage', () => {
     mockForVideo.mockResolvedValue(makeDetail([NEWEST_RUN, OLDER_RUN]));
     await renderPage();
     await screen.findByText('run-new222');
-    const traces = screen.getAllByRole('link', { name: 'Open trace in Langfuse' });
+    const traces = screen.getAllByRole('link', { name: /^Open trace of run .+ in Langfuse/ });
     expect(traces.map((a) => a.getAttribute('href'))).toEqual([NEWEST_RUN.langfuse_url, OLDER_RUN.langfuse_url]);
-    expect(screen.getAllByRole('link', { name: 'Open session in Langfuse' })).toHaveLength(2);
+    expect(screen.getAllByRole('link', { name: /^Open session of run .+ in Langfuse/ })).toHaveLength(2);
   });
 
   it('should show a run calls when its row is expanded', async () => {

@@ -28,7 +28,7 @@ export function PipelineRunsPanel({ days = 30, limit = 20 }: PipelineRunsPanelPr
           No pipeline runs found in the last {days} days.
         </div>
       ) : (
-        <RunsTable runs={data} />
+        <RunsTable runs={data} showVideo />
       )}
     </Panel>
   );
