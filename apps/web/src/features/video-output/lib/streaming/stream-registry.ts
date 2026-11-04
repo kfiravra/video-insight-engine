@@ -88,6 +88,27 @@ async function readSSE(
   }
 }
 
+/**
+ * The error event for a stream the gateway refused. The `{ error, ... }`
+ * envelope's code and fields ride along, so a billing refusal (402
+ * INSUFFICIENT_TOKENS, 403 ACCOUNT_BLOCKED) reaches the error card as itself
+ * instead of a bare "HTTP 402". The message stays the status line: the card
+ * words a known code itself and never shows the server's text.
+ */
+async function refusalEvent(response: Response): Promise<StreamEvent> {
+  const event: StreamEvent = { event: "error", message: `HTTP ${response.status}: ${response.statusText}` };
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    // Not JSON (a proxy's HTML error page, an empty body): the status line is all there is.
+    return event;
+  }
+  if (typeof body !== "object" || body === null) return event;
+  const { error: code, ...fields } = body as Record<string, unknown>;
+  return typeof code === "string" ? { ...fields, ...event, code } : event;
+}
+
 async function attemptTokenRefresh(): Promise<string | null> {
   const refreshed = await refreshToken();
   return refreshed ? getAccessToken() : null;
@@ -119,7 +140,7 @@ async function startFetch(
     }
 
     if (!response.ok) {
-      broadcast(entry, { event: "error", message: `HTTP ${response.status}: ${response.statusText}` });
+      broadcast(entry, await refusalEvent(response));
       return;
     }
 

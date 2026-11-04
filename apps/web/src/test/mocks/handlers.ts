@@ -110,6 +110,26 @@ export const handlers = [
     });
   }),
 
+  // A fresh account: the signup grant and nothing else (the estimate hint reads it).
+  http.get(`${API_URL}/users/me/usage`, () =>
+    HttpResponse.json({
+      plan: { id: "free", periodEnd: null },
+      balance: 1000,
+      planTokens: null,
+      credits: { available: 1000, lots: [{ tokens: 1000, expiresAt: null }] },
+      debt: 0,
+      holds: [],
+      maxVideoMinutes: 180,
+      blocked: false,
+      signupGrantTokens: 1000,
+    }),
+  ),
+
+  // Before `/videos/:id`, which would otherwise answer it with id "estimate".
+  http.get(`${API_URL}/videos/estimate`, () =>
+    HttpResponse.json({ youtubeId: "dQw4w9WgXcQ", durationSec: 600, tokens: 840, free: false }),
+  ),
+
   http.get(`${API_URL}/videos/:id`, ({ params }) => {
     const { id } = params;
     return HttpResponse.json({

@@ -1,47 +1,36 @@
 import { describe, it, expect } from 'vitest';
 import { ApiError } from '@/api/client';
-import { classifyBillingCode, classifyBillingError } from '../billing-errors';
+import { classifyBillingCode, classifyBillingError, isTokensNotice } from '../billing-errors';
 
 describe('classifyBillingCode', () => {
-  it('should read the fields of INSUFFICIENT_MINUTES', () => {
-    const notice = classifyBillingCode('INSUFFICIENT_MINUTES', {
-      needed: 31,
-      available: 12,
-      nextFreeAt: '2026-10-29T10:00:00.000Z',
-    });
-
-    expect(notice).toEqual({
+  it('should read the fields of INSUFFICIENT_TOKENS', () => {
+    expect(classifyBillingCode('INSUFFICIENT_TOKENS', { needed: 840, available: 300 })).toEqual({
       kind: 'insufficient',
-      needed: 31,
-      available: 12,
-      nextFreeAt: '2026-10-29T10:00:00.000Z',
+      needed: 840,
+      available: 300,
     });
   });
 
-  it('should leave missing INSUFFICIENT_MINUTES fields null', () => {
-    expect(classifyBillingCode('INSUFFICIENT_MINUTES')).toEqual({
+  it('should keep a negative balance (an account in debt)', () => {
+    expect(classifyBillingCode('INSUFFICIENT_TOKENS', { needed: 1, available: -120 })).toEqual({
       kind: 'insufficient',
-      needed: null,
-      available: null,
-      nextFreeAt: null,
+      needed: 1,
+      available: -120,
     });
+  });
+
+  it('should leave missing INSUFFICIENT_TOKENS fields null', () => {
+    expect(classifyBillingCode('INSUFFICIENT_TOKENS')).toEqual({ kind: 'insufficient', needed: null, available: null });
   });
 
   it('should ignore fields of the wrong type', () => {
-    const notice = classifyBillingCode('INSUFFICIENT_MINUTES', {
-      needed: '31',
-      available: Number.NaN,
-      nextFreeAt: 5,
-    });
+    const notice = classifyBillingCode('INSUFFICIENT_TOKENS', { needed: '840', available: Number.NaN });
 
-    expect(notice).toEqual({ kind: 'insufficient', needed: null, available: null, nextFreeAt: null });
+    expect(notice).toEqual({ kind: 'insufficient', needed: null, available: null });
   });
 
-  it('should read maxMinutes from VIDEO_TOO_LONG_FOR_PLAN', () => {
-    expect(classifyBillingCode('VIDEO_TOO_LONG_FOR_PLAN', { maxMinutes: 180 })).toEqual({
-      kind: 'too_long',
-      maxMinutes: 180,
-    });
+  it('should read maxMinutes from VIDEO_TOO_LONG', () => {
+    expect(classifyBillingCode('VIDEO_TOO_LONG', { maxMinutes: 180 })).toEqual({ kind: 'too_long', maxMinutes: 180 });
   });
 
   it('should map ACCOUNT_BLOCKED', () => {
@@ -75,31 +64,27 @@ describe('classifyBillingCode', () => {
     expect(notice).not.toHaveProperty('message');
   });
 
-  it('should read nextAt from CHAT_LIMIT_REACHED', () => {
-    expect(classifyBillingCode('CHAT_LIMIT_REACHED', { nextAt: '2026-10-29T10:00:00.000Z' })).toEqual({
-      kind: 'chat_limit',
-      nextAt: '2026-10-29T10:00:00.000Z',
-    });
-  });
-
-  it.each([undefined, 'NOT_FOUND', 'VALIDATION_ERROR'])('should return null for %s', (code) => {
+  it.each([undefined, null, 'NOT_FOUND', 'VALIDATION_ERROR'])('should return null for %s', (code) => {
     expect(classifyBillingCode(code)).toBeNull();
   });
+
+  it.each(['INSUFFICIENT_MINUTES', 'VIDEO_TOO_LONG_FOR_PLAN', 'CHAT_LIMIT_REACHED'])(
+    'should not know the retired minutes-era code %s',
+    (code) => {
+      expect(classifyBillingCode(code, { needed: 31, available: 12, nextAt: '2026-10-29T10:00:00.000Z' })).toBeNull();
+    },
+  );
 });
 
 describe('classifyBillingError', () => {
   it('should classify an ApiError by its code and body', () => {
-    const err = new ApiError(402, 'This video needs 31 minutes', 'INSUFFICIENT_MINUTES', {
-      needed: 31,
-      available: 12,
+    const err = new ApiError(402, 'This needs 840 tokens; 300 available', 'INSUFFICIENT_TOKENS', {
+      error: 'INSUFFICIENT_TOKENS',
+      needed: 840,
+      available: 300,
     });
 
-    expect(classifyBillingError(err)).toEqual({
-      kind: 'insufficient',
-      needed: 31,
-      available: 12,
-      nextFreeAt: null,
-    });
+    expect(classifyBillingError(err)).toEqual({ kind: 'insufficient', needed: 840, available: 300 });
   });
 
   it('should return null for an ApiError that is not a billing refusal', () => {
@@ -107,6 +92,18 @@ describe('classifyBillingError', () => {
   });
 
   it('should return null for a plain Error', () => {
-    expect(classifyBillingError(new Error('INSUFFICIENT_MINUTES'))).toBeNull();
+    expect(classifyBillingError(new Error('INSUFFICIENT_TOKENS'))).toBeNull();
+  });
+});
+
+describe('isTokensNotice', () => {
+  it.each([
+    [{ kind: 'insufficient', needed: 1, available: 0 } as const, true],
+    [{ kind: 'too_long', maxMinutes: 180 } as const, true],
+    [{ kind: 'blocked' } as const, false],
+    [{ kind: 'too_many_runs', maxConcurrent: 2 } as const, false],
+    [{ kind: 'rate_limited', retryAfterSec: 60 } as const, false],
+  ])('should say whether %j opens the tokens callout', (notice, expected) => {
+    expect(isTokensNotice(notice)).toBe(expected);
   });
 });

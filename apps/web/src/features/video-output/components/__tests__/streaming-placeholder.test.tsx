@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, act } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import {
   StreamingPlaceholder,
   StreamErrorCard,
@@ -164,6 +165,29 @@ describe("StreamErrorCard", () => {
     render(<StreamErrorCard onRetry={() => {}} />);
 
     expect(screen.getByText(/something went wrong while processing/i)).toBeInTheDocument();
+  });
+
+  describe("for a stream the gateway refused for billing (402 / 403)", () => {
+    it("should say tokens are short, link to the billing page and keep Retry", () => {
+      const onRetry = vi.fn();
+      render(
+        <MemoryRouter>
+          <StreamErrorCard message="HTTP 402: Payment Required" code="INSUFFICIENT_TOKENS" onRetry={onRetry} />
+        </MemoryRouter>,
+      );
+
+      expect(screen.getByText("You don't have enough tokens for this video.")).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Add tokens" })).toHaveAttribute("href", "/settings/billing");
+      screen.getByRole("button", { name: /retry/i }).click();
+      expect(onRetry).toHaveBeenCalledTimes(1);
+    });
+
+    it("should say the account is blocked, with no billing link, and never the status line", () => {
+      render(<StreamErrorCard message="HTTP 403: Forbidden" code="ACCOUNT_BLOCKED" onRetry={() => {}} />);
+
+      expect(screen.getByText("This account can't start new videos right now.")).toBeInTheDocument();
+      expect([screen.queryByRole("link"), screen.queryByText(/HTTP 403/)]).toEqual([null, null]);
+    });
   });
 
   describe("for a video whose run already failed (VIDEO_FAILED)", () => {

@@ -17,46 +17,51 @@ export interface DurationLabels {
   minutes: string;
 }
 
-/** The minutes UI: usage tile, "not enough minutes" callout, /settings/billing and
- *  the playlist import result. Placeholders in braces are interpolated by the
+/** The tokens UI: usage tile, "not enough tokens" callout, /settings/billing,
+ *  the estimate under the submit forms, the token line on a video and the
+ *  playlist import result. Placeholders in braces are interpolated by the
  *  caller; `{when}` is a countdown from `formatDurationUntil`, `{date}` a
- *  formatted date, and `{minutes}` / `{needed}` / `{available}` / `{max}` /
- *  `{total}` / `{running}` a noun phrase from the plural forms. */
+ *  formatted date, `{price}` a price formatted by the plan and pack cards, and
+ *  `{tokens}` / `{needed}` / `{available}` / `{max}` / `{months}` /
+ *  `{running}` a noun phrase from the plural forms. `{left}` / `{total}` /
+ *  `{added}` are bare numbers. */
 export interface BillingLabels {
+  tokens: PluralForms;
   minutes: PluralForms;
   videos: PluralForms;
-  /** The same nouns after a preposition ("up to {minutes}", "from {total}"). Only Arabic
+  /** Only the pack card's expiry ("Expires {months} after purchase"). */
+  months: PluralForms;
+  /** The same nouns after a preposition ("needs {needed}", "up to {max}"). Only Arabic
    *  differs: its dual takes the oblique case there (دقيقتين), not the nominative (دقيقتان). */
+  tokensOblique: PluralForms;
   minutesOblique: PluralForms;
   videosOblique: PluralForms;
   duration: DurationLabels;
-  // Usage tile
+  /** An estimate, not a final charge: "≈ 840 tokens". {tokens} is a tokens phrase. */
+  approxTokens: string;
+  // Usage tile (also the "Your tokens" section of /settings/billing)
   tileTitle: string;
   tileAria: string;
   tileLoading: string;
   tileError: string;
   planFree: string;
   planPro: string;
-  freeVideo: string;
-  freeVideoReady: string;
-  freeVideoNext: string;
-  /** The server says unavailable but the countdown reads zero (a fast clock): about to open. */
-  freeVideoOpeningSoon: string;
-  freeVideoUnavailable: string;
-  freeVideoUpTo: string;
-  planMinutes: string;
-  /** {left} is a bare number, {total} a minutes phrase: "412 of 600 minutes left". */
-  planMinutesLeft: string;
-  planMinutesResets: string;
+  /** The Pro cycle row's label and its progress bar's name. */
+  planTokens: string;
+  /** {left} and {total} are bare numbers: "12,400 of 20,000 left". */
+  planTokensLeft: string;
+  planTokensResets: string;
   credits: string;
   inProgress: string;
+  /** A negative balance (overdraft); {tokens} is how far below zero it is. */
+  debtShort: string;
   blocked: string;
   manageLink: string;
-  // Not-enough-minutes callout (402 / 422)
-  calloutFreeUsed: string;
-  calloutFreeNext: string;
+  // Not-enough-tokens callout (402) and the too-long refusal (422)
   calloutNeeds: string;
   calloutNeedsUnknown: string;
+  /** Under `debtShort` when a video is refused while the balance is negative. */
+  calloutDebtDetail: string;
   calloutTooLong: string;
   calloutTooLongUnknown: string;
   calloutCta: string;
@@ -66,22 +71,43 @@ export interface BillingLabels {
   errorRateLimited: string;
   /** {when} is a countdown from the server's `retryAfterSec`. */
   errorRateLimitedIn: string;
-  errorChatLimit: string;
-  /** {time} is a clock time (and date, when not today), so saved chat text stays true. */
-  errorChatLimitAt: string;
+  // Chat refusals (sidebar): a turn needs a positive balance
+  chatInsufficient: string;
+  chatBlocked: string;
+  // Estimate under the submit forms
+  /** Accessible name of the estimate line. */
+  estimateLabel: string;
+  /** The video is served free: the user's own copy, or one already summarized for everyone. */
+  estimateFree: string;
+  // Token line on a video page
+  videoTokensLabel: string;
+  /** {tokens} is a tokens phrase; the run holds an estimate until it settles. */
+  videoHeld: string;
+  videoFree: string;
+  /** The run failed and its hold was given back in full. */
+  videoReleased: string;
   // /settings/billing
   pageTitle: string;
   pageIntro: string;
   back: string;
-  planSection: string;
   planTermEnds: string;
-  planFreeNote: string;
-  /** The free video is switched off for this account (`free.perWindow` is 0). */
-  planFreeNoteOff: string;
-  /** More than one free video per window; used for counts above 1. */
-  planFreeNoteMany: PluralForms;
   cycleEnds: string;
-  minutesSection: string;
+  offersSection: string;
+  proCardTitle: string;
+  /** {price} is the formatted monthly price. */
+  proCardPrice: string;
+  /** {tokens} is a tokens phrase: "20,000 tokens every month". */
+  proCardTokens: string;
+  proCardNote: string;
+  proCardCta: string;
+  /** On the Pro card when the account is already on Pro. */
+  proCardCurrent: string;
+  packCardTitle: string;
+  packCardNote: string;
+  /** {months} is a months phrase: "Expires 12 months after purchase". */
+  packCardExpiry: string;
+  packCardCta: string;
+  paymentsPlaceholder: string;
   lotsSection: string;
   lotsEmpty: string;
   lotExpires: string;
@@ -92,7 +118,7 @@ export interface BillingLabels {
   teamNote: string;
   // Playlist import result
   playlistResult: string;
-  /** The up-front quote for the whole playlist; {needed} and {available} are minutes phrases. */
+  /** The up-front quote for the whole playlist; {needed} and {available} are tokens phrases. */
   playlistNeeds: string;
   playlistFailedHeading: string;
   playlistDismiss: string;
@@ -258,6 +284,6 @@ export interface Labels {
   // ships are listed in EN below; callers fall back gracefully when a key
   // is absent, so translators can stage coverage incrementally.
   tabPreviews: Record<string, string>;
-  // Minutes, plan and billing page
+  // Tokens, plan and billing page
   billing: BillingLabels;
 }

@@ -42,7 +42,7 @@ describe('AppHeader user menu', () => {
     usageSpy?.mockRestore();
   });
 
-  it('should list Minutes & plan as a menu item beside the usage tile', async () => {
+  it('should list Tokens & plan as a menu item beside the usage tile', async () => {
     usageSpy = vi.spyOn(usageHook, 'useUserUsage').mockReturnValue({
       data: usageSummary(),
       isError: false,
@@ -51,7 +51,7 @@ describe('AppHeader user menu', () => {
 
     await openUserMenu();
 
-    expect(screen.getByRole('menuitem', { name: 'Minutes & plan' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Tokens & plan' })).toBeInTheDocument();
     expect(screen.getByTestId('usage-tile')).toBeInTheDocument();
   });
 
@@ -64,7 +64,7 @@ describe('AppHeader user menu', () => {
 
     await openUserMenu();
 
-    expect(screen.getByRole('menuitem', { name: 'Minutes & plan' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Tokens & plan' })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: /Sign out/ })).toBeInTheDocument();
     expect(screen.queryByTestId('usage-tile')).toBeNull();
     consoleError.mockRestore();

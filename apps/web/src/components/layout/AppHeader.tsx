@@ -99,8 +99,8 @@ export function AppHeader({ slotRef }: AppHeaderProps) {
 
         <div className="flex-1" />
 
-        {/* A page's own control (the video page's language toggle), portalled in. */}
-        <div ref={slotRef} className="flex items-center empty:hidden" />
+        {/* A page's own controls (the video page's language toggle and token line), portalled in. */}
+        <div ref={slotRef} className="flex items-center gap-2 empty:hidden" />
 
         {/* Right: command-palette hint + theme + user.
             The chip is a discoverable surface for power users — clicking it

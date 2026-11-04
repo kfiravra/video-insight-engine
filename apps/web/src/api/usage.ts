@@ -4,7 +4,7 @@ import { request } from "./client";
 export type { UsageSummary };
 
 export const usageApi = {
-  /** The signed-in user's minutes: plan, free video, credits, open holds. */
+  /** The signed-in user's tokens: balance, plan, the Pro cycle, credits, debt, open holds. */
   me(): Promise<UsageSummary> {
     return request<UsageSummary>("/users/me/usage");
   },

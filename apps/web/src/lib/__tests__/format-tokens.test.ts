@@ -4,30 +4,29 @@ import {
   formatDate,
   formatDurationSeconds,
   formatDurationUntil,
-  formatMoment,
-  formatMinutes,
   formatNumber,
   formatPlural,
-} from '../format-minutes';
+} from '../format-tokens';
 import { getLabels } from '../i18n';
 
 const NOW = Date.UTC(2026, 9, 28, 12, 0, 0);
 const minutesIn = (n: number) => new Date(NOW + n * 60_000).toISOString();
 
-describe('formatMinutes', () => {
-  describe('English', () => {
+describe('formatPlural', () => {
+  describe('tokens in English', () => {
     it.each([
-      [0, '0 minutes'],
-      [1, '1 minute'],
-      [2, '2 minutes'],
-      [150, '150 minutes'],
-      [1250, '1,250 minutes'],
+      [0, '0 tokens'],
+      [1, '1 token'],
+      [2, '2 tokens'],
+      [840, '840 tokens'],
+      [20000, '20,000 tokens'],
+      [-120, '-120 tokens'],
     ])('should format %i as "%s"', (count, expected) => {
-      expect(formatMinutes(count, 'en', getLabels('en').billing.minutes)).toBe(expected);
+      expect(formatPlural(count, 'en', getLabels('en').billing.tokens)).toBe(expected);
     });
   });
 
-  describe('Hebrew', () => {
+  describe('minutes in Hebrew', () => {
     it.each([
       [1, 'דקה אחת'],
       [2, 'שתי דקות'],
@@ -35,11 +34,11 @@ describe('formatMinutes', () => {
       [11, '11 דקות'],
       [150, '150 דקות'],
     ])('should format %i as "%s"', (count, expected) => {
-      expect(formatMinutes(count, 'he', getLabels('he').billing.minutes)).toBe(expected);
+      expect(formatPlural(count, 'he', getLabels('he').billing.minutes)).toBe(expected);
     });
   });
 
-  describe('Arabic', () => {
+  describe('minutes in Arabic', () => {
     it.each([
       [0, '0 دقيقة'],
       [1, 'دقيقة واحدة'],
@@ -49,8 +48,21 @@ describe('formatMinutes', () => {
       [11, '11 دقيقة'],
       [100, '100 دقيقة'],
     ])('should format %i as "%s"', (count, expected) => {
-      expect(formatMinutes(count, 'ar', getLabels('ar').billing.minutes)).toBe(expected);
+      expect(formatPlural(count, 'ar', getLabels('ar').billing.minutes)).toBe(expected);
     });
+  });
+
+  it('should pick the Arabic category from Intl.PluralRules, so the tokens table only fills forms', () => {
+    const forms = { zero: 'z {count}', one: 'o', two: 't', few: 'f {count}', many: 'm {count}', other: 'x {count}' };
+
+    expect([0, 1, 2, 3, 11, 100].map((count) => formatPlural(count, 'ar', forms))).toEqual([
+      'z 0',
+      'o',
+      't',
+      'f 3',
+      'm 11',
+      'x 100',
+    ]);
   });
 
   it('should fall back to the other form when a category has no form', () => {
@@ -62,15 +74,19 @@ describe('formatNumber', () => {
   it.each(['en', 'he', 'ar'])('should use Latin digits and grouping in %s', (language) => {
     expect(formatNumber(1250, language)).toBe('1,250');
   });
+
+  it('should print a balance in debt with its sign', () => {
+    expect(formatNumber(-1250, 'en')).toBe('-1,250');
+  });
 });
 
 describe('fillTemplate', () => {
   it('should replace every placeholder', () => {
-    expect(fillTemplate('{a} of {b}', { a: 1, b: '2 minutes' })).toBe('1 of 2 minutes');
+    expect(fillTemplate('{a} of {b}', { a: 1, b: '2 tokens' })).toBe('1 of 2 tokens');
   });
 
   it('should leave a placeholder without a value as written', () => {
-    expect(fillTemplate('next in {when}', {})).toBe('next in {when}');
+    expect(fillTemplate('resets in {when}', {})).toBe('resets in {when}');
   });
 });
 
@@ -138,27 +154,5 @@ describe('formatDurationSeconds', () => {
 
   it('should use the language unit templates', () => {
     expect(formatDurationSeconds(2 * 3600, NOW, 'ar', getLabels('ar').billing.duration)).toBe('2 س');
-  });
-});
-
-describe('formatMoment', () => {
-  // Local times, so "same day" holds in whatever time zone the tests run in.
-  const now = new Date(2026, 9, 28, 10, 0).getTime();
-
-  it('should give only the clock time for a moment later today', () => {
-    expect(formatMoment(new Date(2026, 9, 28, 15, 15).toISOString(), now, 'en')).toBe('3:15 PM');
-  });
-
-  it('should add the date for a moment on another day', () => {
-    expect(formatMoment(new Date(2026, 10, 2, 15, 15).toISOString(), now, 'en')).toBe('Nov 2, 2026, 3:15 PM');
-  });
-
-  it.each([null, undefined, '', 'not a date'])('should return null for %s', (value) => {
-    expect(formatMoment(value, now, 'en')).toBeNull();
-  });
-
-  it.each(['he', 'ar'])('should use Latin digits in %s', (language) => {
-    expect(formatMoment(new Date(2026, 9, 28, 15, 15).toISOString(), now, language)).toMatch(/15|3/);
-    expect(formatMoment(new Date(2026, 9, 28, 15, 15).toISOString(), now, language)).not.toMatch(/[٠-٩]/);
   });
 });

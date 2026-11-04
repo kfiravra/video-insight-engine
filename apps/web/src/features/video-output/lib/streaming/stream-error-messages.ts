@@ -15,6 +15,10 @@ const CODE_MESSAGES: Record<string, string> = {
   // The gateway answers the stream of a failed video with this and runs nothing; the card
   // offers Retry, which starts a new, billed run (the stored raw message is never shown).
   VIDEO_FAILED: "This video didn't finish processing. Retry starts it again as a new run.",
+  // The gateway refused to open the stream (stream-registry keeps the envelope's code).
+  INSUFFICIENT_TOKENS: "You don't have enough tokens to process this video. Add tokens, then retry.",
+  ACCOUNT_BLOCKED: "This account can't start new videos right now.",
+  TOO_MANY_RUNS: "You already have videos running. Wait for one to finish, then retry.",
   LLM_ERROR: "Our AI service encountered an issue. Please try again in a few moments.",
   RATE_LIMITED: "Too many requests. Please wait a moment and try again.",
   UNKNOWN_ERROR: "Something went wrong while processing this video. Please try again.",

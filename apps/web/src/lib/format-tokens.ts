@@ -1,6 +1,6 @@
 import type { DurationLabels, PluralForms } from "@/lib/i18n/labels";
 
-// Number, plural and relative-time formatting for the minutes UI. Plural
+// Number, plural and relative-time formatting for the tokens UI. Plural
 // categories come from Intl.PluralRules, so Hebrew (one / two / other) and
 // Arabic (zero / one / two / few / many / other) get their own noun forms
 // instead of English's singular-or-plural split. Digits stay Latin in every
@@ -15,25 +15,21 @@ function latinLocale(language: string): string {
   return `${language}-u-nu-latn`;
 }
 
-/** `1,250` in the language's grouping style. */
+/** `1,250` (or `-120` for a balance in debt) in the language's grouping style. */
 export function formatNumber(count: number, language: string): string {
   return new Intl.NumberFormat(latinLocale(language)).format(count);
 }
 
 /**
- * The noun phrase for `count` in the form its language needs. `{count}` in the
- * form is replaced by the formatted number; forms without it ("דקה אחת") are
- * returned as written. A category the table does not fill falls back to `other`.
+ * The noun phrase for `count` in the form its language needs: "840 tokens",
+ * "1 token", Hebrew "שתי דקות", Arabic "دقيقتان". `{count}` in the form is
+ * replaced by the formatted number; forms without it ("דקה אחת") are returned
+ * as written. A category the table does not fill falls back to `other`.
  */
 export function formatPlural(count: number, language: string, forms: PluralForms): string {
   const category = new Intl.PluralRules(language).select(count);
   const form = forms[category] ?? forms.other;
   return form.replace("{count}", formatNumber(count, language));
-}
-
-/** "1 minute" / "150 minutes" / Hebrew "שתי דקות" / Arabic "دقيقتان". */
-export function formatMinutes(count: number, language: string, forms: PluralForms): string {
-  return formatPlural(count, language, forms);
 }
 
 /** Replace `{name}` placeholders; a placeholder with no value is left as written. */
@@ -50,7 +46,7 @@ function unitText(template: string, count: number, language: string): string {
 /**
  * How long until `iso`, in the two largest units that apply: "7h 30m", "2d 3h",
  * "12m". Under a minute reads as "1m". Returns null for an unparseable
- * timestamp and for one already past, so callers can show "shortly" copy.
+ * timestamp and for one already past, so callers can drop the countdown.
  */
 export function formatDurationUntil(
   iso: string,
@@ -92,22 +88,6 @@ export function formatDurationSeconds(
 ): string | null {
   if (seconds === null || seconds === undefined || !Number.isFinite(seconds) || seconds <= 0) return null;
   return formatDurationUntil(new Date(nowMs + seconds * 1000).toISOString(), nowMs, language, units);
-}
-
-/**
- * When something happens, as a clock time ("3:15 PM"), with the date ("Nov 2, 3:15 PM")
- * when it is not today. Unlike a countdown it stays true in text saved for later.
- */
-export function formatMoment(iso: string | null | undefined, nowMs: number, language: string): string | null {
-  if (!iso) return null;
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return null;
-  const locale = latinLocale(language);
-  const sameDay = date.toDateString() === new Date(nowMs).toDateString();
-  const options: Intl.DateTimeFormatOptions = sameDay
-    ? { timeStyle: "short" }
-    : { dateStyle: "medium", timeStyle: "short" };
-  return new Intl.DateTimeFormat(locale, options).format(date);
 }
 
 /** "Nov 1, 2026" in the language's date style; "—" for a missing or invalid date. */

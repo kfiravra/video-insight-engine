@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Check, AlertCircle, RefreshCw, Loader2 } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Check, AlertCircle, RefreshCw, Loader2, Coins } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getLabels, useLabels } from '@/lib/i18n';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import { EmojiMarker } from '@/components/vie';
 import { DOMAIN_META } from '@/components/vie/cards/domain-meta';
 import { accentStyle } from './output/lib/content-accent';
@@ -16,6 +17,7 @@ import type {
   FrameInfo,
 } from '@/features/video-output/hooks/use-summary-stream';
 import type { TriageResult } from '@vie/types';
+import type { BillingLabels } from '@/lib/i18n';
 
 interface StreamingPlaceholderProps {
   streamPhase?: StreamPhase;
@@ -382,7 +384,8 @@ function StreamVisuals({ frames, totalFrames, thumbnailUrl }: StreamVisualsProps
 
 interface StreamErrorCardProps {
   message?: string | null;
-  /** The server's code for the error. VIDEO_FAILED (the run had already failed) is worded in the page's language. */
+  /** The server's code for the error. VIDEO_FAILED (the run had already failed) and the
+   *  billing refusals the gateway answers a stream with are worded in the page's language. */
   code?: string | null;
   onRetry?: () => void;
   retrying?: boolean;
@@ -390,12 +393,29 @@ interface StreamErrorCardProps {
 
 /** The gateway's code for opening the stream of a video whose run already failed. */
 const VIDEO_FAILED_CODE = 'VIDEO_FAILED';
+/** The gateway refused the stream: the balance cannot cover the run (402). */
+const INSUFFICIENT_TOKENS_CODE = 'INSUFFICIENT_TOKENS';
+/** The gateway refused the stream: the account is blocked (403). */
+const ACCOUNT_BLOCKED_CODE = 'ACCOUNT_BLOCKED';
+
+function errorCardText(
+  code: string | null | undefined,
+  message: string | null | undefined,
+  billing: BillingLabels,
+): string | null | undefined {
+  if (code === VIDEO_FAILED_CODE) return billing.videoFailedRetry;
+  if (code === INSUFFICIENT_TOKENS_CODE) return billing.calloutNeedsUnknown;
+  if (code === ACCOUNT_BLOCKED_CODE) return billing.blocked;
+  return message;
+}
 
 /** Mid-stream failure card. Shown when the SSE stream reports an error before
- *  the video record flips to "failed" (which has its own full-page state). */
+ *  the video record flips to "failed" (which has its own full-page state). A
+ *  stream refused for want of tokens also links to /settings/billing. */
 export function StreamErrorCard({ message, code, onRetry, retrying }: StreamErrorCardProps) {
   const { billing } = useLabels();
-  const text = code === VIDEO_FAILED_CODE ? billing.videoFailedRetry : message;
+  const text = errorCardText(code, message, billing);
+  const needsTokens = code === INSUFFICIENT_TOKENS_CODE;
 
   return (
     <section className="rounded-2xl border border-border/60 bg-card px-6 py-10 text-center">
@@ -404,16 +424,28 @@ export function StreamErrorCard({ message, code, onRetry, retrying }: StreamErro
       <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground text-pretty">
         {text || 'Something went wrong while processing this video.'}
       </p>
-      {onRetry && (
-        <div className="mt-5 flex justify-center">
-          <Button onClick={onRetry} disabled={retrying}>
-            {retrying ? (
-              <Loader2 className="me-2 h-4 w-4 animate-spin motion-reduce:animate-none" />
-            ) : (
-              <RefreshCw className="me-2 h-4 w-4" />
-            )}
-            Retry
-          </Button>
+      {(onRetry || needsTokens) && (
+        <div className="mt-5 flex flex-wrap justify-center gap-2">
+          {needsTokens && (
+            <Link
+              to="/settings/billing"
+              className={buttonVariants({ variant: onRetry ? 'outline' : 'default' })}
+              data-testid="stream-error-tokens-link"
+            >
+              <Coins className="h-4 w-4" aria-hidden="true" />
+              {billing.calloutCta}
+            </Link>
+          )}
+          {onRetry && (
+            <Button onClick={onRetry} disabled={retrying}>
+              {retrying ? (
+                <Loader2 className="me-2 h-4 w-4 animate-spin motion-reduce:animate-none" />
+              ) : (
+                <RefreshCw className="me-2 h-4 w-4" />
+              )}
+              Retry
+            </Button>
+          )}
         </div>
       )}
     </section>

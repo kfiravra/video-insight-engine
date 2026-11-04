@@ -55,7 +55,7 @@ describe('/settings/billing route', () => {
 
     renderAppAt('/settings/billing');
 
-    expect(await screen.findByRole('heading', { level: 1, name: 'Minutes & plan' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Tokens & plan' })).toBeInTheDocument();
     expect(window.location.pathname).toBe('/settings/billing');
   });
 

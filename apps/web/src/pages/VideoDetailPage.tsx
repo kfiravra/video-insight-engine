@@ -16,6 +16,7 @@ import { VideoPlayerProvider } from "@/features/video-output/contexts/VideoPlaye
 
 import { Confetti } from "@/components/ui/Confetti";
 import { RetryErrorNotice } from "@/components/usage/RetryErrorNotice";
+import { VideoTokenLine } from "@/components/usage/VideoTokenLine";
 import { buildSynthesisFromMeta } from "@/features/video-output/lib/synthesis-utils";
 import { shouldOpenStreamForStatus } from "@/features/video-output/lib/streaming/should-open-stream";
 import { resolveDisplayTabs } from "@/features/video-output/lib/streaming/resolve-display-tabs";
@@ -403,6 +404,7 @@ export function VideoDetailPage() {
           </div>
           <RetryErrorNotice error={retryVideo.error} className="mt-4 text-center" />
         </div>
+        <VideoTokenLine billing={video.billing} />
       </Layout>
     );
   }
@@ -482,6 +484,7 @@ export function VideoDetailPage() {
     <ErrorBoundary key={id} fallback={errorFallback}>
       <VideoPlayerProvider>
         <Layout>
+          <VideoTokenLine billing={video.billing} />
           <RetryErrorNotice error={retryVideo.error} className="mx-auto max-w-2xl px-4" />
           {isDegraded && !isStreaming && (
             <DegradedNotice

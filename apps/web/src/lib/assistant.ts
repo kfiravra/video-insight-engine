@@ -109,22 +109,27 @@ async function streamAssistantChat(
   await readAssistantSSEStream(response, onEvent);
 }
 
+/** Pre-stream refusals the chat words itself: billing (402 / 403) and the burst limits (429). */
+const REFUSAL_STATUSES = new Set([402, 403, 429]);
+
 /**
- * The gateway answers 429 RATE_LIMITED when the user is sending too fast, and
- * 429 CHAT_LIMIT_REACHED (with `nextAt`) when a free account has used its
- * messages for the last 24 hours. Both get a typed `ApiError` so the chat can
- * say which one happened rather than the generic connection-failure copy;
- * other statuses stay a plain transport error.
+ * The gateway refuses a turn before any stream starts: 402 INSUFFICIENT_TOKENS
+ * (`{needed: 1, available}`; a turn needs a positive balance), 403
+ * ACCOUNT_BLOCKED, and 429 RATE_LIMITED when the user is sending too fast.
+ * Those get a typed `ApiError` carrying the envelope (code and fields), so the
+ * chat can say which one happened rather than the generic connection-failure
+ * copy; other statuses stay a plain transport error.
  */
-async function chatRequestFailure(response: Response): Promise<Error> {
-  if (response.status !== 429) {
-    return new Error(`Assistant chat failed: ${response.status}`);
+async function chatRequestFailure(response: Response, what = "Assistant chat"): Promise<Error> {
+  if (!REFUSAL_STATUSES.has(response.status)) {
+    return new Error(`${what} failed: ${response.status}`);
   }
   const body = await readErrorBody(response);
-  if (body?.error === "CHAT_LIMIT_REACHED") {
-    return new ApiError(429, "Chat limit reached", "CHAT_LIMIT_REACHED", { nextAt: body.nextAt });
-  }
-  return new ApiError(429, "Too many messages", "RATE_LIMITED");
+  // A 429 without a code is still the burst limit.
+  const fallbackCode = response.status === 429 ? "RATE_LIMITED" : undefined;
+  const code = typeof body?.error === "string" ? body.error : fallbackCode;
+  const message = typeof body?.message === "string" && body.message ? body.message : `${what} refused`;
+  return new ApiError(response.status, message, code, body ?? undefined);
 }
 
 /** The gateway's `{ error, message, ... }` body, or null when it is missing or not JSON. */
@@ -133,7 +138,7 @@ async function readErrorBody(response: Response): Promise<Record<string, unknown
     const body: unknown = await response.json();
     return typeof body === "object" && body !== null ? (body as Record<string, unknown>) : null;
   } catch {
-    // A 429 without a JSON body is still a 429; the caller falls back to RATE_LIMITED.
+    // A refusal without a JSON body keeps its status; the caller falls back to a code-less error.
     return null;
   }
 }
@@ -210,7 +215,8 @@ export interface AssistantActionResult {
  * Invoke an assistant action through the API gateway at /assistant/action.
  *
  * Mirrors the Bearer + single 401-refresh flow used by the chat transport.
- * Returns the parsed result envelope; throws on transport/auth failures only.
+ * Returns the parsed result envelope; throws on transport/auth failures and on
+ * the gateway's pre-run refusals (402 / 403 / 429, as a typed `ApiError`).
  */
 export async function runAssistantAction(
   action: string,
@@ -241,7 +247,7 @@ export async function runAssistantAction(
   }
 
   if (!response.ok) {
-    throw new Error(`Assistant action failed: ${response.status}`);
+    throw await chatRequestFailure(response, "Assistant action");
   }
 
   return (await response.json()) as AssistantActionResult;

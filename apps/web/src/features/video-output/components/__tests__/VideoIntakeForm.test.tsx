@@ -12,17 +12,16 @@ const API_URL = "http://localhost:3000/api";
 const VIDEO_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
 const PLAYLIST_URL = "https://www.youtube.com/playlist?list=PLrAXtmErZgOeiKm4sgNOknGvNjby9efdf";
 
-function rejectWithInsufficientMinutes(): void {
+function rejectWithInsufficientTokens(): void {
   server.use(
     http.post(`${API_URL}/videos`, () =>
       HttpResponse.json(
         {
-          error: "INSUFFICIENT_MINUTES",
-          message: "This video needs 31 minutes; 12 available",
+          error: "INSUFFICIENT_TOKENS",
+          message: "This needs 840 tokens; 300 available",
           statusCode: 402,
-          needed: 31,
-          available: 12,
-          nextFreeAt: null,
+          needed: 840,
+          available: 300,
         },
         { status: 402 },
       ),
@@ -80,12 +79,12 @@ describe("VideoIntakeForm", () => {
       await waitFor(() => expect(window.location.pathname).toBe("/video/video-42"));
     });
 
-    it("should show the minutes callout when the account cannot pay for the video", async () => {
-      rejectWithInsufficientMinutes();
+    it("should show the tokens callout when the balance cannot cover the video", async () => {
+      rejectWithInsufficientTokens();
 
       renderWithProviders(<VideoIntakeForm initialUrl={VIDEO_URL} />, { route: "/generate" });
 
-      expect(await screen.findByTestId("minutes-callout")).toBeInTheDocument();
+      expect(await screen.findByTestId("tokens-callout")).toBeInTheDocument();
     });
   });
 
@@ -106,8 +105,8 @@ describe("VideoIntakeForm", () => {
       expect(submissions.urls).toEqual([VIDEO_URL]);
     });
 
-    it("should unlock the input again after a not-enough-minutes response", async () => {
-      rejectWithInsufficientMinutes();
+    it("should unlock the input again after a not-enough-tokens response", async () => {
+      rejectWithInsufficientTokens();
 
       renderWithProviders(
         <StrictMode>
@@ -116,7 +115,7 @@ describe("VideoIntakeForm", () => {
         { route: "/generate" },
       );
 
-      await screen.findByTestId("minutes-callout");
+      await screen.findByTestId("tokens-callout");
       expect(screen.getByLabelText("YouTube URL")).toBeEnabled();
     });
   });

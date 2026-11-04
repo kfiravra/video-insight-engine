@@ -3,12 +3,29 @@ import { join, relative, resolve } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import ts from 'typescript';
 
-// Users are billed in minutes. The dollar-era usage UI (daily USD limit, "$1.25
-// of $2.00", "Upgrade to Pro for $20/day") is gone, and nothing may bring it back.
+// Users spend tokens. The dollar-era usage UI (daily USD limit, "$1.25 of
+// $2.00", "Upgrade to Pro for $20/day") is gone, and nothing may bring it back.
+// The one place a price may appear is the Pro and pack cards on
+// /settings/billing (`formatPrice(priceUsdCents)`), and only there.
 // This gate reads every source file under apps/web/src, tests included.
 
 const SRC_ROOT = resolve(__dirname, '../..');
 const THIS_FILE = resolve(__dirname, 'no-dollar-ui.test.ts');
+
+/** The only files that may format a price: the plan and pack cards on /settings/billing. */
+const PRICE_FILES = ['components/billing/PackCard.tsx', 'components/billing/PlanCard.tsx'];
+/**
+ * What formatting one of our prices reads like: the plans' and packs' cents field and the
+ * cards' formatter. (Amounts inside a video's own content, such as a budget breakdown, are not
+ * our prices; the strict rule below keeps currency formatting out of the billing surfaces.)
+ */
+const PRICE_FORMATTING = /formatPrice|priceUsdCents/;
+/** The money findings a price formatter needs, allowed in PRICE_FILES and nowhere else. */
+const PRICE_FINDINGS = new Set(['name: priceUsdCents', 'name: currency', 'text: currency', 'text: USD']);
+
+function srcName(path: string): string {
+  return relative(SRC_ROOT, path).split('\\').join('/');
+}
 
 const FORBIDDEN: Array<{ name: string; pattern: RegExp }> = [
   { name: 'limitUsd', pattern: /limitUsd/ },
@@ -43,16 +60,26 @@ describe('no dollar amounts in the web app', () => {
 
     expect(offenders).toEqual([]);
   });
+
+  it('should format prices only in the plan and pack cards', () => {
+    const formatting = files
+      .filter((file) => PRICE_FORMATTING.test(file.text))
+      .map((file) => file.name.split('\\').join('/'))
+      .sort();
+
+    expect(formatting).toEqual(PRICE_FILES);
+  });
 });
 
 // ─── The strict rule for the billing surfaces ───
 //
 // The whole-tree rule above catches the dollar-era code by name. This one is
-// stricter and scoped to the files that show a user their minutes: no string
+// stricter and scoped to the files that show a user their tokens: no string
 // they render may hold a `$`, `Usd` or `currency`, and no identifier in them
 // may be named after money. It reads the code as code (TypeScript's parser), so
 // the `${…}` of a template literal and a regex's `$` anchor are not mistaken for
-// a dollar sign, but every string, template text and JSX text is checked.
+// a dollar sign, but every string, template text and JSX text is checked. The
+// plan and pack cards may hold exactly what a price formatter needs, no more.
 
 const MONEY = /\$|Usd|currency/i;
 const MONEY_IDENTIFIER = /Usd|currency/i;
@@ -92,20 +119,28 @@ function billingBlock(source: string): string {
 
 function billingSurfaceFiles(): string[] {
   const inScope = (path: string): boolean => {
-    const name = relative(SRC_ROOT, path).split('\\').join('/');
+    const name = srcName(path);
     if (isInTests(name)) return false;
     return (
       name.startsWith('components/usage/') ||
+      name.startsWith('components/billing/') ||
       name === 'components/playlists/PlaylistImportSummary.tsx' ||
       name === 'pages/BillingPage.tsx' ||
       name.startsWith('lib/billing-') ||
-      name === 'lib/format-minutes.ts' ||
-      name === 'lib/free-video.ts' ||
+      name === 'lib/format-tokens.ts' ||
       name === 'hooks/use-billing-text.ts' ||
+      name === 'hooks/use-video-estimate.ts' ||
       name === 'api/usage.ts'
     );
   };
   return sourceFiles(SRC_ROOT).filter(inScope);
+}
+
+/** The money findings of a billing surface, minus the price formatting its file is allowed. */
+function unexpectedMoney(path: string): string[] {
+  const name = srcName(path);
+  const findings = moneyFindings(readFileSync(path, 'utf8'), path);
+  return PRICE_FILES.includes(name) ? findings.filter((finding) => !PRICE_FINDINGS.has(finding)) : findings;
 }
 
 describe('the checker for money in billing surfaces', () => {
@@ -125,7 +160,8 @@ describe('the checker for money in billing surfaces', () => {
     ['a template literal substitution', 'const a = `${count} minutes`;'],
     ['a regex end anchor', 'const a = /^[A-Z]+$/;'],
     ['a regex with a dollar and a group', 'const a = /(foo|bar)$/i;'],
-    ['plain minutes copy', 'const a = <p>412 of 600 minutes left</p>;'],
+    ['plain tokens copy', 'const a = <p>12,400 of 20,000 left</p>;'],
+    ['an approximate token count', 'const a = "≈ 840 tokens";'],
   ])('should not flag %s', (_name, source) => {
     expect(moneyFindings(source)).toEqual([]);
   });
@@ -133,25 +169,37 @@ describe('the checker for money in billing surfaces', () => {
 
 describe('no money on the billing surfaces', () => {
   it('should cover the billing components, page and libraries', () => {
-    const names = billingSurfaceFiles().map((path) => relative(SRC_ROOT, path).split('\\').join('/'));
+    const names = billingSurfaceFiles().map(srcName);
 
     expect(names).toEqual(
       expect.arrayContaining([
         'components/usage/UsageTile.tsx',
-        'components/usage/MinutesCallout.tsx',
+        'components/usage/TokensCallout.tsx',
+        'components/usage/EstimateHint.tsx',
+        'components/usage/VideoTokenLine.tsx',
+        'components/billing/PlanCard.tsx',
+        'components/billing/PackCard.tsx',
+        'components/billing/PaymentsPlaceholderNotice.tsx',
         'pages/BillingPage.tsx',
         'lib/billing-errors.ts',
         'lib/billing-notice-text.ts',
+        'lib/format-tokens.ts',
       ]),
     );
   });
 
-  it('should hold no dollar sign, Usd or currency in any rendered string or name', () => {
+  it('should hold no dollar sign, Usd or currency in any rendered string or name, outside the price formatting of the cards', () => {
     const offenders = billingSurfaceFiles().flatMap((path) =>
-      moneyFindings(readFileSync(path, 'utf8'), path).map((finding) => `${relative(SRC_ROOT, path)} ${finding}`),
+      unexpectedMoney(path).map((finding) => `${srcName(path)} ${finding}`),
     );
 
     expect(offenders).toEqual([]);
+  });
+
+  it.each(PRICE_FILES)('should find the price formatting the allowance exists for in %s', (name) => {
+    const findings = moneyFindings(readFileSync(resolve(SRC_ROOT, name), 'utf8'), name);
+
+    expect(findings).toEqual(expect.arrayContaining(['name: priceUsdCents', 'text: currency', 'text: USD']));
   });
 
   it.each(['en', 'he', 'ar'])('should hold no dollar sign, Usd or currency in the %s billing labels', (language) => {

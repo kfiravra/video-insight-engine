@@ -20,7 +20,7 @@ function trackUsageReads(): { urls: string[] } {
   server.use(
     http.get(`${API_URL}/users/me/usage`, ({ request }) => {
       tracker.urls.push(request.url);
-      return HttpResponse.json(usageSummary({ credits: { available: 150, lots: [] } }));
+      return HttpResponse.json(usageSummary({ balance: 150, credits: { available: 150, lots: [] } }));
     }),
   );
   return tracker;
@@ -41,12 +41,12 @@ describe('useUserUsage', () => {
     setAccessToken('test-access-token');
   });
 
-  it('should read the minutes summary from the default usage endpoint', async () => {
+  it('should read the tokens summary from the default usage endpoint', async () => {
     const reads = trackUsageReads();
 
     const { result } = renderHook(() => useUserUsage(), { wrapper });
 
-    await waitFor(() => expect(result.current.data?.credits.available).toBe(150));
+    await waitFor(() => expect(result.current.data?.balance).toBe(150));
     expect(reads.urls).toEqual([`${API_URL}/users/me/usage`]);
   });
 
@@ -109,7 +109,7 @@ describe('useUserUsage', () => {
     const reads = trackUsageReads();
     server.use(
       http.post(`${API_URL}/videos`, () =>
-        HttpResponse.json({ error: 'INSUFFICIENT_MINUTES', message: 'x', statusCode: 402 }, { status: 402 }),
+        HttpResponse.json({ error: 'INSUFFICIENT_TOKENS', message: 'x', statusCode: 402, needed: 840, available: 300 }, { status: 402 }),
       ),
     );
     const { result } = renderHook(() => ({ usage: useUserUsage(), retry: useRetryVideo() }), { wrapper });

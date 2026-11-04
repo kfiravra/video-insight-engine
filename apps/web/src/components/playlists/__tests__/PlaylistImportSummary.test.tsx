@@ -3,6 +3,7 @@ import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { PlaylistImportSummary } from '../PlaylistImportSummary';
 import { renderIn } from '@/components/usage/__tests__/usage-fixtures';
+import { getLabels } from '@/lib/i18n';
 import type { FailedVideoImport, PlaylistImportResult } from '@/api/playlists';
 
 function failed(overrides: Partial<FailedVideoImport> = {}): FailedVideoImport {
@@ -38,7 +39,7 @@ describe('PlaylistImportSummary', () => {
 
   describe('when nothing landed and the import left no folder (folder is null)', () => {
     const nothingLanded = () =>
-      result([failed({ error: 'INSUFFICIENT_MINUTES' }), failed({ position: 1, youtubeId: 'def', error: 'ACCOUNT_BLOCKED' })], 0, 2);
+      result([failed({ error: 'INSUFFICIENT_TOKENS' }), failed({ position: 1, youtubeId: 'def', error: 'ACCOUNT_BLOCKED' })], 0, 2);
 
     it('should carry no folder', () => {
       expect(nothingLanded().folder).toBeNull();
@@ -54,15 +55,15 @@ describe('PlaylistImportSummary', () => {
       renderIn(<PlaylistImportSummary result={nothingLanded()} onDismiss={vi.fn()} />);
 
       expect(screen.getAllByRole('listitem').map((li) => li.textContent)).toEqual([
-        'A videoNot enough minutes',
+        'A videoNot enough tokens',
         'A videoAccount can\'t start videos',
       ]);
     });
 
-    it('should still link to the billing page when minutes were the reason', () => {
+    it('should still link to the billing page when tokens were the reason', () => {
       renderIn(<PlaylistImportSummary result={nothingLanded()} onDismiss={vi.fn()} />);
 
-      expect(screen.getByTestId('playlist-import-minutes-link')).toHaveAttribute('href', '/settings/billing');
+      expect(screen.getByTestId('playlist-import-tokens-link')).toHaveAttribute('href', '/settings/billing');
     });
   });
 
@@ -85,8 +86,8 @@ describe('PlaylistImportSummary', () => {
   });
 
   it.each([
-    ['INSUFFICIENT_MINUTES', 'Not enough minutes'],
-    ['VIDEO_TOO_LONG_FOR_PLAN', 'Too long for this account'],
+    ['INSUFFICIENT_TOKENS', 'Not enough tokens'],
+    ['VIDEO_TOO_LONG', 'Too long for this account'],
     ['ACCOUNT_BLOCKED', "Account can't start videos"],
     ['TOO_MANY_RUNS', 'Too many videos running'],
     ['RATE_LIMITED', 'Too many requests'],
@@ -105,47 +106,49 @@ describe('PlaylistImportSummary', () => {
   it('should not link to the billing page when the only failure is an unreadable video', () => {
     renderIn(<PlaylistImportSummary result={result([failed({ error: 'METADATA_UNAVAILABLE' })])} onDismiss={vi.fn()} />);
 
-    expect(screen.queryByTestId('playlist-import-minutes-link')).toBeNull();
+    expect(screen.queryByTestId('playlist-import-tokens-link')).toBeNull();
   });
 
   describe('the up-front quote', () => {
-    const withQuote = (needed: number, available: number, failures = [failed({ error: 'INSUFFICIENT_MINUTES' })]) => ({
+    const withQuote = (needed: number, available: number, failures = [failed({ error: 'INSUFFICIENT_TOKENS' })]) => ({
       ...result(failures),
-      billing: { neededMinutes: needed, availableMinutes: available, freeVideoAvailable: false },
+      billing: { neededTokens: needed, availableTokens: available },
     });
 
     it('should say what the whole playlist needs against what the account has', () => {
-      renderIn(<PlaylistImportSummary result={withQuote(340, 120)} onDismiss={vi.fn()} />);
+      renderIn(<PlaylistImportSummary result={withQuote(3_400, 1_200)} onDismiss={vi.fn()} />);
 
       expect(screen.getByTestId('playlist-import-summary')).toHaveTextContent(
-        'The whole playlist needs 340 minutes; you have 120 minutes.',
+        'The whole playlist needs ≈ 3,400 tokens; you have 1,200 tokens.',
       );
     });
 
-    it('should stay quiet when the account could pay for the whole playlist', () => {
-      renderIn(<PlaylistImportSummary result={withQuote(100, 120)} onDismiss={vi.fn()} />);
+    it('should stay quiet when the account could cover the whole playlist', () => {
+      renderIn(<PlaylistImportSummary result={withQuote(1_000, 1_200)} onDismiss={vi.fn()} />);
 
       expect(screen.getByTestId('playlist-import-summary')).not.toHaveTextContent('The whole playlist needs');
     });
 
-    it('should stay quiet when the failures were not about minutes', () => {
-      renderIn(<PlaylistImportSummary result={withQuote(340, 120, [failed()])} onDismiss={vi.fn()} />);
+    it('should stay quiet when the failures were not about tokens', () => {
+      renderIn(<PlaylistImportSummary result={withQuote(3_400, 1_200, [failed()])} onDismiss={vi.fn()} />);
 
       expect(screen.getByTestId('playlist-import-summary')).not.toHaveTextContent('The whole playlist needs');
     });
 
     it('should work with a server that sends no quote', () => {
-      renderIn(<PlaylistImportSummary result={result([failed({ error: 'INSUFFICIENT_MINUTES' })])} onDismiss={vi.fn()} />);
+      renderIn(<PlaylistImportSummary result={result([failed({ error: 'INSUFFICIENT_TOKENS' })])} onDismiss={vi.fn()} />);
 
       expect(screen.getByTestId('playlist-import-summary')).not.toHaveTextContent('The whole playlist needs');
     });
 
-    it('should word the quote in Arabic with the oblique dual after "needs"', () => {
+    it("should fill the Arabic quote from the oblique token forms after \"needs\" and the plain ones after \"you have\"", () => {
       renderIn(<PlaylistImportSummary result={withQuote(2, 1)} onDismiss={vi.fn()} />, 'ar');
+      const { playlistNeeds, tokens, tokensOblique } = getLabels('ar').billing;
+      const expected = playlistNeeds
+        .replace('{needed}', (tokensOblique.two ?? tokensOblique.other).replace('{count}', '2'))
+        .replace('{available}', (tokens.one ?? tokens.other).replace('{count}', '1'));
 
-      expect(screen.getByTestId('playlist-import-summary')).toHaveTextContent(
-        'تحتاج القائمة كاملةً إلى دقيقتين ولديك دقيقة واحدة.',
-      );
+      expect(screen.getByTestId('playlist-import-summary')).toHaveTextContent(expected);
     });
   });
 
@@ -175,16 +178,28 @@ describe('PlaylistImportSummary', () => {
     expect(row).toHaveTextContent("Couldn't be added");
   });
 
-  it('should link to the billing page when a video was stopped by minutes', () => {
-    renderIn(<PlaylistImportSummary result={result([failed({ error: 'INSUFFICIENT_MINUTES' })])} onDismiss={vi.fn()} />);
+  it('should link to the billing page with "Add tokens" when a video was stopped for want of tokens', () => {
+    renderIn(<PlaylistImportSummary result={result([failed({ error: 'INSUFFICIENT_TOKENS' })])} onDismiss={vi.fn()} />);
 
-    expect(screen.getByTestId('playlist-import-minutes-link')).toHaveAttribute('href', '/settings/billing');
+    expect(screen.getByRole('link', { name: 'Add tokens' })).toHaveAttribute('href', '/settings/billing');
   });
 
-  it('should not link to the billing page when no failure was about minutes', () => {
+  it('should not link to the billing page for a video that is too long, which tokens cannot fix', () => {
+    renderIn(<PlaylistImportSummary result={result([failed({ error: 'VIDEO_TOO_LONG' })])} onDismiss={vi.fn()} />);
+
+    expect(screen.queryByTestId('playlist-import-tokens-link')).toBeNull();
+  });
+
+  it('should keep the link pointing at billing', () => {
+    renderIn(<PlaylistImportSummary result={result([failed({ error: 'INSUFFICIENT_TOKENS' })])} onDismiss={vi.fn()} />);
+
+    expect(screen.getByTestId('playlist-import-tokens-link')).toHaveAttribute('href', '/settings/billing');
+  });
+
+  it('should not link to the billing page when no failure was about tokens', () => {
     renderIn(<PlaylistImportSummary result={result([failed()])} onDismiss={vi.fn()} />);
 
-    expect(screen.queryByTestId('playlist-import-minutes-link')).toBeNull();
+    expect(screen.queryByTestId('playlist-import-tokens-link')).toBeNull();
   });
 
   it('should call onDismiss when the user dismisses it', async () => {
@@ -209,10 +224,10 @@ describe('PlaylistImportSummary', () => {
       expect(screen.getByTestId('playlist-import-summary')).toHaveTextContent('أُضيف 2 من 5 فيديوهات');
     });
 
-    it('should explain a failure in Arabic', () => {
-      renderIn(<PlaylistImportSummary result={result([failed({ error: 'INSUFFICIENT_MINUTES' })])} onDismiss={vi.fn()} />, 'ar');
+    it('should explain a failure from the Arabic table', () => {
+      renderIn(<PlaylistImportSummary result={result([failed({ error: 'TOO_MANY_RUNS' })])} onDismiss={vi.fn()} />, 'ar');
 
-      expect(screen.getByRole('listitem')).toHaveTextContent('دقائق غير كافية');
+      expect(screen.getByRole('listitem')).toHaveTextContent('عدد كبير من الفيديوهات قيد المعالجة');
     });
   });
 });

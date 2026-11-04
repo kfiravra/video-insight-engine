@@ -1,21 +1,19 @@
 import { describe, it, expect } from 'vitest';
 import { screen } from '@testing-library/react';
 import { BillingNoticeAlert } from '../BillingNoticeAlert';
-import { HOUR, inMs, renderIn } from './usage-fixtures';
+import { renderIn } from './usage-fixtures';
 
 describe('BillingNoticeAlert', () => {
-  it('should show the minutes callout for not enough minutes', () => {
-    renderIn(
-      <BillingNoticeAlert notice={{ kind: 'insufficient', needed: 9, available: 3, nextFreeAt: null }} />,
-    );
+  it('should show the tokens callout for not enough tokens', () => {
+    renderIn(<BillingNoticeAlert notice={{ kind: 'insufficient', needed: 840, available: 300 }} />);
 
-    expect(screen.getByTestId('minutes-callout')).toBeInTheDocument();
+    expect(screen.getByTestId('tokens-callout')).toBeInTheDocument();
   });
 
-  it('should show the minutes callout for a video that is too long', () => {
-    renderIn(<BillingNoticeAlert notice={{ kind: 'too_long', maxMinutes: 30 }} />);
+  it('should show the tokens callout for a video that is too long', () => {
+    renderIn(<BillingNoticeAlert notice={{ kind: 'too_long', maxMinutes: 180 }} />);
 
-    expect(screen.getByTestId('minutes-callout')).toBeInTheDocument();
+    expect(screen.getByTestId('tokens-callout')).toBeInTheDocument();
   });
 
   it('should say the account cannot start videos when it is blocked', () => {
@@ -58,14 +56,6 @@ describe('BillingNoticeAlert', () => {
     renderIn(<BillingNoticeAlert notice={{ kind: 'rate_limited', retryAfterSec: 2 * 3600 }} />, 'ar');
 
     expect(screen.getByRole('alert')).toHaveTextContent('تضيف الفيديوهات بسرعة كبيرة. حاول مجددًا بعد 2 س.');
-  });
-
-  it('should say at what time more chat messages open up, not a countdown', () => {
-    renderIn(<BillingNoticeAlert notice={{ kind: 'chat_limit', nextAt: inMs(3 * HOUR + 30_000) }} />);
-
-    const alert = screen.getByRole('alert');
-    expect(alert.textContent).toMatch(/^You've used your free chat messages for now\. More open up at .*\d/);
-    expect(alert.textContent).not.toMatch(/ in \d/);
   });
 
   it('should translate a plain refusal into Hebrew', () => {

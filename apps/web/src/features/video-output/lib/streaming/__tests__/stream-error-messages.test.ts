@@ -57,4 +57,18 @@ describe("getUserFriendlyError", () => {
       expect(getUserFriendlyError("request timed out", "VIDEO_FAILED")).toMatch(/Retry starts it again/);
     });
   });
+
+  describe("a stream the gateway refused (402 / 403)", () => {
+    it.each([
+      ["INSUFFICIENT_TOKENS", /enough tokens/],
+      ["ACCOUNT_BLOCKED", /can't start new videos/],
+      ["TOO_MANY_RUNS", /already have videos running/],
+    ])("words %s instead of the bare status line", (code, copy) => {
+      expect(getUserFriendlyError("HTTP 402: Payment Required", code)).toMatch(copy);
+    });
+
+    it("never names a dollar amount or a per-video price", () => {
+      expect(getUserFriendlyError("HTTP 402: Payment Required", "INSUFFICIENT_TOKENS")).not.toMatch(/\$|\d/);
+    });
+  });
 });

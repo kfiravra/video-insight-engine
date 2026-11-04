@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { http, HttpResponse } from "msw";
+import { delay, http, HttpResponse } from "msw";
 import { renderWithProviders, screen, userEvent, waitFor, within } from "@/test/test-utils";
 import { server } from "@/test/mocks/server";
 import { useAuthStore } from "@/stores/auth-store";
@@ -77,65 +77,64 @@ describe("VideoIntakeForm billing refusals", () => {
   });
 
   describe("single video", () => {
-    it("should show how many minutes the video needs and the account has (402)", async () => {
+    it("should show the video's estimate and the balance (402)", async () => {
       rejectSubmit(402, {
-        error: "INSUFFICIENT_MINUTES",
+        error: "INSUFFICIENT_TOKENS",
         message: "x",
         statusCode: 402,
-        needed: 31,
-        available: 12,
+        needed: 840,
+        available: 300,
       });
 
       await submitVideo();
 
-      expect(await screen.findByTestId("minutes-callout")).toHaveTextContent(
-        "This video needs 31 minutes and you have 12 minutes to spend.",
+      expect(await screen.findByTestId("tokens-callout")).toHaveTextContent(
+        "This video needs ≈ 840 tokens and you have 300 tokens.",
       );
     });
 
-    it("should say when the next free video opens when the free video is used (402)", async () => {
+    it("should lead with the shortfall when the balance is below zero (402)", async () => {
       rejectSubmit(402, {
-        error: "INSUFFICIENT_MINUTES",
+        error: "INSUFFICIENT_TOKENS",
         message: "x",
         statusCode: 402,
-        needed: 20,
-        available: 0,
-        nextFreeAt: new Date(Date.now() + 7 * 3_600_000 + 30_000).toISOString(),
+        needed: 840,
+        available: -120,
       });
 
       await submitVideo();
 
-      const callout = await screen.findByTestId("minutes-callout");
-      expect(callout).toHaveTextContent("You've used your free video.");
-      expect(callout).toHaveTextContent("The next one opens in 7h");
+      const callout = await screen.findByTestId("tokens-callout");
+      expect(callout).toHaveTextContent("You're 120 tokens short — add tokens to continue.");
+      expect(callout).toHaveTextContent("This video needs ≈ 840 tokens on top of that.");
     });
 
     it("should show the video length limit when the video is too long (422)", async () => {
-      rejectSubmit(422, { error: "VIDEO_TOO_LONG_FOR_PLAN", message: "x", statusCode: 422, maxMinutes: 180 });
+      rejectSubmit(422, { error: "VIDEO_TOO_LONG", message: "x", statusCode: 422, maxMinutes: 180 });
 
       await submitVideo();
 
-      expect(await screen.findByTestId("minutes-callout")).toHaveTextContent("up to 180 minutes long");
+      expect(await screen.findByTestId("tokens-callout")).toHaveTextContent("up to 180 minutes long");
     });
 
     it("should link the callout to the billing page", async () => {
-      rejectSubmit(402, { error: "INSUFFICIENT_MINUTES", message: "x", statusCode: 402, needed: 3, available: 0 });
+      rejectSubmit(402, { error: "INSUFFICIENT_TOKENS", message: "x", statusCode: 402, needed: 750, available: 0 });
 
       await submitVideo();
 
-      expect(await screen.findByRole("link", { name: "See your minutes" })).toHaveAttribute(
+      expect(await screen.findByRole("link", { name: "Add tokens" })).toHaveAttribute(
         "href",
         "/settings/billing",
       );
     });
 
-    it("should say the account is blocked (403) without the minutes callout", async () => {
+    it("should say the account is blocked (403) without the tokens callout", async () => {
       rejectSubmit(403, { error: "ACCOUNT_BLOCKED", message: "x", statusCode: 403 });
 
       await submitVideo();
 
       expect(await screen.findByTestId("billing-notice")).toHaveTextContent("can't start new videos");
-      expect(screen.queryByTestId("minutes-callout")).toBeNull();
+      expect(screen.queryByTestId("tokens-callout")).toBeNull();
     });
 
     it("should say too many videos are running (429)", async () => {
@@ -167,7 +166,7 @@ describe("VideoIntakeForm billing refusals", () => {
       await submitVideo();
 
       expect(await screen.findByText("Something broke")).toBeInTheDocument();
-      expect(screen.queryByTestId("minutes-callout")).toBeNull();
+      expect(screen.queryByTestId("tokens-callout")).toBeNull();
     });
   });
 
@@ -176,7 +175,7 @@ describe("VideoIntakeForm billing refusals", () => {
       await previewPlaylist(() =>
         HttpResponse.json(
           importResult([
-            { youtubeId: "a", title: "Too big", position: 3, error: "INSUFFICIENT_MINUTES" },
+            { youtubeId: "a", title: "Too big", position: 3, error: "INSUFFICIENT_TOKENS" },
             { youtubeId: "b", title: "Gone", position: 4, error: "Video not found" },
           ]),
         ),
@@ -186,7 +185,7 @@ describe("VideoIntakeForm billing refusals", () => {
 
       expect(summary).toHaveTextContent("3 of 5 videos added");
       expect(within(summary).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
-        "Too bigNot enough minutes",
+        "Too bigNot enough tokens",
         "GoneVideo not found",
       ]);
     });
@@ -196,39 +195,39 @@ describe("VideoIntakeForm billing refusals", () => {
         HttpResponse.json({
           ...importResult(
             [
-              { youtubeId: "a", title: "First", position: 0, error: "INSUFFICIENT_MINUTES" },
-              { youtubeId: "b", title: "Second", position: 1, error: "INSUFFICIENT_MINUTES" },
+              { youtubeId: "a", title: "First", position: 0, error: "INSUFFICIENT_TOKENS" },
+              { youtubeId: "b", title: "Second", position: 1, error: "INSUFFICIENT_TOKENS" },
             ],
             0,
           ),
-          billing: { neededMinutes: 90, availableMinutes: 0, freeVideoAvailable: false },
+          billing: { neededTokens: 2_400, availableTokens: 0 },
         }),
       );
 
       const summary = await screen.findByTestId("playlist-import-summary");
 
       expect(summary).toHaveTextContent("0 of 5 videos added");
-      expect(summary).toHaveTextContent("The whole playlist needs 90 minutes; you have 0 minutes.");
+      expect(summary).toHaveTextContent("The whole playlist needs ≈ 2,400 tokens; you have 0 tokens.");
       expect(within(summary).getAllByRole("listitem")).toHaveLength(2);
     });
 
     it("should keep the form usable after an import that left no folder", async () => {
       await previewPlaylist(() =>
-        HttpResponse.json(importResult([{ youtubeId: "a", title: "First", position: 0, error: "INSUFFICIENT_MINUTES" }], 0)),
+        HttpResponse.json(importResult([{ youtubeId: "a", title: "First", position: 0, error: "INSUFFICIENT_TOKENS" }], 0)),
       );
       await screen.findByTestId("playlist-import-summary");
 
       expect(screen.getByLabelText("YouTube URL")).toBeEnabled();
     });
 
-    it("should link to the billing page when minutes stopped part of the import", async () => {
+    it("should link to the billing page when tokens stopped part of the import", async () => {
       await previewPlaylist(() =>
         HttpResponse.json(
-          importResult([{ youtubeId: "a", title: "Too big", position: 3, error: "INSUFFICIENT_MINUTES" }]),
+          importResult([{ youtubeId: "a", title: "Too big", position: 3, error: "INSUFFICIENT_TOKENS" }]),
         ),
       );
 
-      expect(await screen.findByTestId("playlist-import-minutes-link")).toHaveAttribute(
+      expect(await screen.findByTestId("playlist-import-tokens-link")).toHaveAttribute(
         "href",
         "/settings/billing",
       );
@@ -275,51 +274,137 @@ describe("VideoIntakeForm billing refusals", () => {
       await previewPlaylist(() =>
         HttpResponse.json({
           ...importResult([
-            { youtubeId: "a", title: "Too big", position: 3, error: "INSUFFICIENT_MINUTES" },
+            { youtubeId: "a", title: "Too big", position: 3, error: "INSUFFICIENT_TOKENS" },
             { youtubeId: "b", title: "No length", position: 4, error: "METADATA_UNAVAILABLE" },
           ]),
-          billing: { neededMinutes: 340, availableMinutes: 120, freeVideoAvailable: false },
+          billing: { neededTokens: 3_400, availableTokens: 1_200 },
         }),
       );
 
       const summary = await screen.findByTestId("playlist-import-summary");
 
-      expect(summary).toHaveTextContent("The whole playlist needs 340 minutes; you have 120 minutes.");
+      expect(summary).toHaveTextContent("The whole playlist needs ≈ 3,400 tokens; you have 1,200 tokens.");
       expect(within(summary).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
-        "Too bigNot enough minutes",
+        "Too bigNot enough tokens",
         "No lengthCouldn't read this video",
       ]);
     });
   });
-  describe("a refusal does not outlive the next attempt", () => {
-    const INSUFFICIENT = { error: "INSUFFICIENT_MINUTES", message: "x", statusCode: 402, needed: 9, available: 1 };
+  describe("estimate before submit", () => {
+    function estimateReturns(body: () => Response | Promise<Response>): { urls: string[] } {
+      const seen: { urls: string[] } = { urls: [] };
+      server.use(
+        http.get(`${API_URL}/videos/estimate`, ({ request }) => {
+          seen.urls.push(new URL(request.url).searchParams.get("url") ?? "");
+          return body();
+        }),
+      );
+      return seen;
+    }
 
-    it("should clear the minutes callout when the user edits the URL", async () => {
+    async function pasteVideoUrl(url = VIDEO_URL): Promise<void> {
+      renderWithProviders(<VideoIntakeForm />, { route: "/generate" });
+      await userEvent.setup().type(screen.getByLabelText("YouTube URL"), url);
+    }
+
+    it("should show what the video would hold once the pasted URL settles", async () => {
+      const seen = estimateReturns(() =>
+        HttpResponse.json({ youtubeId: "dQw4w9WgXcQ", durationSec: 600, tokens: 840, free: false }),
+      );
+
+      await pasteVideoUrl();
+
+      expect(await screen.findByTestId("estimate-hint")).toHaveTextContent("≈ 840 tokens");
+      expect(seen.urls).toEqual([VIDEO_URL]);
+    });
+
+    it("should say a video that is served free costs nothing", async () => {
+      estimateReturns(() => HttpResponse.json({ youtubeId: "dQw4w9WgXcQ", durationSec: 600, tokens: 0, free: true }));
+
+      await pasteVideoUrl();
+
+      expect(await screen.findByTestId("estimate-hint")).toHaveTextContent("Already summarized — free");
+    });
+
+    it("should stay silent when the estimate is rate limited (429)", async () => {
+      const seen = estimateReturns(() =>
+        HttpResponse.json({ error: "RATE_LIMITED", message: "x", statusCode: 429, retryAfterSec: 60 }, { status: 429 }),
+      );
+
+      await pasteVideoUrl();
+      await waitFor(() => expect(seen.urls).toHaveLength(1));
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      expect([screen.queryByTestId("estimate-hint"), screen.queryByRole("alert")]).toEqual([null, null]);
+    });
+
+    it("should not estimate a playlist link", async () => {
+      const seen = estimateReturns(() =>
+        HttpResponse.json({ youtubeId: "x", durationSec: 60, tokens: 750, free: false }),
+      );
+
+      await pasteVideoUrl(PLAYLIST_URL);
+      await new Promise((resolve) => setTimeout(resolve, 600));
+
+      expect([seen.urls, screen.queryByTestId("estimate-hint")]).toEqual([[], null]);
+    });
+
+    it("should never hold up a submit while the estimate is still loading", async () => {
+      const seen = estimateReturns(async () => {
+        await delay("infinite");
+        return HttpResponse.json({});
+      });
+      rejectSubmit(402, { error: "INSUFFICIENT_TOKENS", message: "x", statusCode: 402, needed: 840, available: 0 });
+      await pasteVideoUrl();
+      await waitFor(() => expect(seen.urls).toHaveLength(1));
+
+      await userEvent.setup().click(screen.getByRole("button", { name: /summarize/i }));
+
+      expect(await screen.findByTestId("tokens-callout")).toBeInTheDocument();
+    });
+
+    it("should step aside while a refusal explains the cost", async () => {
+      estimateReturns(() => HttpResponse.json({ youtubeId: "dQw4w9WgXcQ", durationSec: 600, tokens: 840, free: false }));
+      rejectSubmit(402, { error: "INSUFFICIENT_TOKENS", message: "x", statusCode: 402, needed: 840, available: 0 });
+      await pasteVideoUrl();
+      await screen.findByTestId("estimate-hint");
+
+      await userEvent.setup().click(screen.getByRole("button", { name: /summarize/i }));
+
+      await screen.findByTestId("tokens-callout");
+      expect(screen.queryByTestId("estimate-hint")).toBeNull();
+    });
+  });
+
+  describe("a refusal does not outlive the next attempt", () => {
+    const INSUFFICIENT = { error: "INSUFFICIENT_TOKENS", message: "x", statusCode: 402, needed: 840, available: 10 };
+
+    it("should clear the tokens callout when the user edits the URL", async () => {
       rejectSubmit(402, INSUFFICIENT);
       await submitVideo();
-      await screen.findByTestId("minutes-callout");
+      await screen.findByTestId("tokens-callout");
 
       await userEvent.setup().type(screen.getByLabelText("YouTube URL"), "x");
 
-      expect(screen.queryByTestId("minutes-callout")).toBeNull();
+      expect(screen.queryByTestId("tokens-callout")).toBeNull();
     });
 
     it("should show a newer plain error instead of the earlier refusal", async () => {
       rejectSubmit(402, INSUFFICIENT);
       await submitVideo();
-      await screen.findByTestId("minutes-callout");
+      await screen.findByTestId("tokens-callout");
       rejectSubmit(500, { error: "INTERNAL_ERROR", message: "Something broke", statusCode: 500 });
 
       await userEvent.setup().click(screen.getByRole("button", { name: /summarize/i }));
 
       expect(await screen.findByText("Something broke")).toBeInTheDocument();
-      expect(screen.queryByTestId("minutes-callout")).toBeNull();
+      expect(screen.queryByTestId("tokens-callout")).toBeNull();
     });
 
     it("should clear the refusal when the next submit is a playlist preview", async () => {
       rejectSubmit(402, INSUFFICIENT);
       await submitVideo();
-      await screen.findByTestId("minutes-callout");
+      await screen.findByTestId("tokens-callout");
       server.use(http.post(`${API_URL}/playlists/preview`, () => HttpResponse.json(PREVIEW)));
       const user = userEvent.setup();
 
@@ -328,7 +413,7 @@ describe("VideoIntakeForm billing refusals", () => {
       await user.click(screen.getByRole("button", { name: /summarize/i }));
 
       expect(await screen.findByRole("button", { name: "Import Playlist" })).toBeInTheDocument();
-      expect(screen.queryByTestId("minutes-callout")).toBeNull();
+      expect(screen.queryByTestId("tokens-callout")).toBeNull();
     });
 
     it("should clear a refusal of the playlist import when the import is tried again and works", async () => {

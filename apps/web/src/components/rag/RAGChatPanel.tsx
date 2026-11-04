@@ -1,5 +1,6 @@
 import { memo, useState, useCallback, useRef, useEffect } from 'react';
-import { MessageCircle, Send, Loader2, User, Bot, Sparkles, ExternalLink, Check, SquarePen, Film, Library } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { MessageCircle, Send, Loader2, User, Bot, Sparkles, ExternalLink, Check, SquarePen, Film, Library, Coins } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { ScrollContainer } from '@/components/ui/scroll-container';
@@ -24,6 +25,8 @@ interface RAGMessage {
   /** Agent tool steps (e.g. "Created folder \"Series\"") shown as ✓ lines. */
   steps?: string[];
   isStreaming?: boolean;
+  /** A billing refusal (402 / 403): the reply links to /settings/billing. */
+  billingLink?: boolean;
   createdAt: string;
 }
 
@@ -102,6 +105,7 @@ const MessageBubble = memo(function MessageBubble({
   onSeek?: (seconds: number) => void;
 }) {
   const isUser = message.role === 'user';
+  const { billing } = useLabels();
 
   return (
     <div
@@ -170,6 +174,16 @@ const MessageBubble = memo(function MessageBubble({
                   'prose-code:text-xs prose-pre:text-xs prose-pre:p-2',
                 )}
               />
+              {message.billingLink && (
+                <Link
+                  to="/settings/billing"
+                  data-testid="chat-billing-link"
+                  className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-primary underline-offset-4 hover:underline"
+                >
+                  <Coins className="h-3 w-3 shrink-0" aria-hidden="true" />
+                  {billing.manageLink}
+                </Link>
+              )}
             </>
           )}
           {message.isStreaming && (

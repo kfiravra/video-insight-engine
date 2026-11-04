@@ -7,6 +7,7 @@ import { useSidebarChat } from "../use-sidebar-chat";
 import { useChatStore } from "@/stores/chat-store";
 import { ApiError } from "@/api/client";
 import { DirectionProvider } from "@/contexts/DirectionContext";
+import { getLabels } from "@/lib/i18n";
 import {
   sendAssistantMessage,
   sendLibraryMessage,
@@ -205,8 +206,8 @@ describe("useSidebarChat", () => {
     });
   });
 
-  describe("usage refresh after the agent spends minutes", () => {
-    function runTurn(action: string) {
+  describe("usage refresh after every turn", () => {
+    function runTurn(events: AssistantChatEvent[]) {
       const { queryClient, wrapper } = makeWrapper();
       const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
       const { result } = renderHook(() => useSidebarChat(), { wrapper });
@@ -215,44 +216,47 @@ describe("useSidebarChat", () => {
       });
       const handleEvent = mockedSendLibraryMessage.mock.calls[0][2] as (event: AssistantChatEvent) => void;
       act(() => {
-        handleEvent({ type: "tool", content: "Started", metadata: { status: "done", action } });
-        handleEvent({ type: "done" });
+        for (const event of events) handleEvent(event);
       });
       return invalidateSpy;
     }
 
-    it("should re-read the usage tile when the agent starts a video", () => {
-      const invalidateSpy = runTurn("generate_video");
+    function usageRefreshes(invalidateSpy: ReturnType<typeof vi.spyOn>): number {
+      return invalidateSpy.mock.calls.filter(([filters]) => {
+        const key = (filters as { queryKey?: readonly string[] } | undefined)?.queryKey;
+        return key?.[0] === "usage";
+      }).length;
+    }
+
+    it("should re-read the usage tile after a plain chat reply, which is charged after it lands", () => {
+      const invalidateSpy = runTurn([{ type: "text", content: "Here is the answer." }, { type: "done" }]);
 
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["usage", "me"] });
     });
 
-    it("should leave the usage tile alone for an action that costs no minutes", () => {
-      const invalidateSpy = runTurn("create_folder");
+    it("should re-read the usage tile when the agent starts a video", () => {
+      const invalidateSpy = runTurn([
+        { type: "tool", content: "Started", metadata: { status: "done", action: "generate_video" } },
+        { type: "done" },
+      ]);
 
-      expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ["usage", "me"] });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["usage", "me"] });
     });
 
     it("should refresh the usage once per turn, not once per tool call", () => {
-      const { queryClient, wrapper } = makeWrapper();
-      const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
-      const { result } = renderHook(() => useSidebarChat(), { wrapper });
-      act(() => {
-        result.current.sendMessage("summarize both");
-      });
-      const handleEvent = mockedSendLibraryMessage.mock.calls[0][2] as (event: AssistantChatEvent) => void;
+      const invalidateSpy = runTurn([
+        { type: "tool", content: "A", metadata: { status: "done", action: "generate_video" } },
+        { type: "tool", content: "B", metadata: { status: "done", action: "create_folder" } },
+        { type: "done" },
+      ]);
 
-      act(() => {
-        handleEvent({ type: "tool", content: "A", metadata: { status: "done", action: "generate_video" } });
-        handleEvent({ type: "tool", content: "B", metadata: { status: "done", action: "generate_video" } });
-        handleEvent({ type: "done" });
-      });
+      expect(usageRefreshes(invalidateSpy)).toBe(1);
+    });
 
-      const usageCalls = invalidateSpy.mock.calls.filter(([filters]) => {
-        const key = (filters as { queryKey?: readonly string[] } | undefined)?.queryKey;
-        return key?.[0] === "usage";
-      });
-      expect(usageCalls).toHaveLength(1);
+    it("should not refresh the usage before the turn is done", () => {
+      const invalidateSpy = runTurn([{ type: "text", content: "Still writing" }]);
+
+      expect(usageRefreshes(invalidateSpy)).toBe(0);
     });
   });
 
@@ -447,7 +451,7 @@ describe("useSidebarChat", () => {
       });
     });
 
-    it("should NOT invalidate when no mutating tool ran", () => {
+    it("should NOT invalidate the library trees when no mutating tool ran", () => {
       const { queryClient, wrapper } = makeWrapper();
       const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
       const { result } = renderHook(() => useSidebarChat(), { wrapper });
@@ -465,7 +469,8 @@ describe("useSidebarChat", () => {
         handleEvent({ type: "done" });
       });
 
-      expect(invalidateSpy).not.toHaveBeenCalled();
+      expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ["folders", "list"] });
+      expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ["videos", "list"] });
     });
   });
 
@@ -637,88 +642,93 @@ describe("useSidebarChat", () => {
       expect(reply).toBe("Too many messages. Please wait a moment and try again.");
     });
 
-    describe("when the free chat allowance is used up (CHAT_LIMIT_REACHED)", () => {
-      const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
-
-      function rejectWithChatLimit(nextAt: string | undefined): void {
-        const limitReached = new ApiError(
-          429,
-          "Chat limit reached",
-          "CHAT_LIMIT_REACHED",
-          nextAt === undefined ? undefined : { nextAt },
-        );
-        mockedSendAssistantMessage.mockRejectedValueOnce(limitReached);
-        mockedSendLibraryMessage.mockRejectedValueOnce(limitReached);
+    describe("billing refusals before the turn starts (402 / 403)", () => {
+      function refuseWith(error: ApiError): void {
+        mockedSendAssistantMessage.mockRejectedValueOnce(error);
+        mockedSendLibraryMessage.mockRejectedValueOnce(error);
       }
 
-      const inThreeHours = () => new Date(Date.now() + THREE_HOURS_MS).toISOString();
+      const outOfTokens = (available: number) =>
+        new ApiError(402, "x", "INSUFFICIENT_TOKENS", { error: "INSUFFICIENT_TOKENS", needed: 1, available });
 
       it.each([
         ["single-video", { videoSummaryId: "vid-123" }],
         ["library", {}],
-      ])("should say at what time more messages open up when the %s chat hits the limit", async (_name, options) => {
-        rejectWithChatLimit(inThreeHours());
+      ])("should say the tokens ran out when the %s chat is refused with a zero balance", async (_name, options) => {
+        refuseWith(outOfTokens(0));
 
         const reply = await sendAndGetAssistantReply(options);
 
-        expect(reply).toMatch(/^You've used your free chat messages for now\. More open up at .*\d/);
+        expect(reply).toBe("You're out of tokens — add tokens to keep chatting.");
       });
 
-      it("should save a clock time in the transcript, never a countdown that would go stale", async () => {
-        rejectWithChatLimit(inThreeHours());
+      it("should name the shortfall when the balance is below zero", async () => {
+        refuseWith(outOfTokens(-75));
 
         const reply = await sendAndGetAssistantReply({});
 
-        expect(reply).not.toMatch(/ in \d+\s?[hm]/);
-        expect(useChatStore.getState().messages.find((m) => m.role === "assistant")?.content).toBe(reply);
+        expect(reply).toBe("You're 75 tokens short — add tokens to continue.");
       });
 
-      it("should name the date when the next message opens on another day", async () => {
-        rejectWithChatLimit(new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString());
+      it("should say chats are off for a blocked account (403)", async () => {
+        refuseWith(new ApiError(403, "x", "ACCOUNT_BLOCKED"));
 
         const reply = await sendAndGetAssistantReply({});
 
-        expect(reply).toMatch(/More open up at [A-Z][a-z]{2} \d{1,2}, \d{4}/);
+        expect(reply).toBe("This account can't start new chats right now.");
       });
 
-      it("should say only that the messages are used up when the gateway sends no nextAt", async () => {
-        rejectWithChatLimit(undefined);
+      it("should mark the refused reply so the sidebar links it to the billing page", async () => {
+        refuseWith(outOfTokens(0));
 
-        const reply = await sendAndGetAssistantReply({});
+        await sendAndGetAssistantReply({});
 
-        expect(reply).toBe("You've used your free chat messages for now.");
+        expect(useChatStore.getState().messages.find((m) => m.role === "assistant")?.billingLink).toBe(true);
       });
 
-      it("should say only that the messages are used up when nextAt has already passed", async () => {
-        rejectWithChatLimit(new Date(Date.now() - 60_000).toISOString());
+      it("should re-read the usage tile, whose balance the refusal shows is stale", async () => {
+        refuseWith(outOfTokens(0));
+        const { queryClient, wrapper } = makeWrapper();
+        const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+        const { result } = renderHook(() => useSidebarChat(), { wrapper });
 
-        const reply = await sendAndGetAssistantReply({});
+        await act(async () => {
+          result.current.sendMessage("hello");
+        });
 
-        expect(reply).toBe("You've used your free chat messages for now.");
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["usage", "me"] });
       });
 
-      it("should say it in Hebrew under a Hebrew direction context", async () => {
-        rejectWithChatLimit(inThreeHours());
-
-        const reply = await sendAndGetAssistantReply({}, "he");
-
-        expect(reply).toMatch(/^ניצלתם את הודעות הצ׳אט החינמיות לעת עתה\. הודעות נוספות ייפתחו ב־/);
-      });
-
-      it("should say it in Arabic under an Arabic direction context", async () => {
-        rejectWithChatLimit(inThreeHours());
+      it("should read the wording from the billing table of the surrounding language", async () => {
+        refuseWith(outOfTokens(0));
 
         const reply = await sendAndGetAssistantReply({}, "ar");
 
-        expect(reply).toMatch(/^لقد استخدمت رسائل الدردشة المجانية حاليًا\. ستتوفر رسائل أخرى في /);
+        expect(reply).toBe(getLabels("ar").billing.chatInsufficient);
       });
 
       it("should put the chat into the error state", async () => {
-        rejectWithChatLimit(inThreeHours());
+        refuseWith(outOfTokens(0));
 
         await sendAndGetAssistantReply({});
 
         expect(useChatStore.getState().status).toBe("error");
+      });
+
+      it("should not mark a rate-limited reply as a billing refusal", async () => {
+        mockedSendLibraryMessage.mockRejectedValueOnce(new ApiError(429, "Too many messages", "RATE_LIMITED"));
+
+        await sendAndGetAssistantReply({});
+
+        expect(useChatStore.getState().messages.find((m) => m.role === "assistant")?.billingLink).toBeUndefined();
+      });
+
+      it("should treat the retired CHAT_LIMIT_REACHED code as a plain rate limit", async () => {
+        mockedSendLibraryMessage.mockRejectedValueOnce(new ApiError(429, "Chat limit reached", "CHAT_LIMIT_REACHED"));
+
+        const reply = await sendAndGetAssistantReply({});
+
+        expect(reply).toBe("Too many messages. Please wait a moment and try again.");
       });
     });
 

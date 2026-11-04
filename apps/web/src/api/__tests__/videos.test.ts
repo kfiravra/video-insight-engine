@@ -208,6 +208,50 @@ describe("videosApi", () => {
     });
   });
 
+  describe("estimate", () => {
+    it("should send the pasted URL, encoded, as the url query parameter", async () => {
+      let seen: string | null = null;
+      server.use(
+        http.get(`${API_URL}/videos/estimate`, ({ request }) => {
+          seen = new URL(request.url).searchParams.get("url");
+          return HttpResponse.json({ youtubeId: "dQw4w9WgXcQ", durationSec: 600, tokens: 840, free: false });
+        })
+      );
+
+      const result = await videosApi.estimate("https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=42s");
+
+      expect(seen).toBe("https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=42s");
+      expect(result).toEqual({ youtubeId: "dQw4w9WgXcQ", durationSec: 600, tokens: 840, free: false });
+    });
+
+    it("should surface the hourly limit as a typed error", async () => {
+      server.use(
+        http.get(`${API_URL}/videos/estimate`, () =>
+          HttpResponse.json({ error: "RATE_LIMITED", message: "x", statusCode: 429, retryAfterSec: 60 }, { status: 429 })
+        )
+      );
+
+      await expect(videosApi.estimate("https://www.youtube.com/watch?v=dQw4w9WgXcQ")).rejects.toMatchObject({
+        status: 429,
+        code: "RATE_LIMITED",
+      });
+    });
+  });
+
+  describe("get - billing", () => {
+    it("should pass the token view of the user's latest run through", async () => {
+      server.use(
+        http.get(`${API_URL}/videos/:id`, () =>
+          HttpResponse.json({ id: "v1", billing: { state: "charged", estimatedTokens: 840, chargedTokens: 758 } })
+        )
+      );
+
+      const result = await videosApi.get("v1");
+
+      expect(result.billing).toEqual({ state: "charged", estimatedTokens: 840, chargedTokens: 758 });
+    });
+  });
+
   describe("updateToLatest", () => {
     it("should post the url and folder with updateToLatest set", async () => {
       let capturedBody: unknown = null;
@@ -239,7 +283,7 @@ describe("videosApi", () => {
       server.use(
         http.post(`${API_URL}/videos`, () => {
           return HttpResponse.json(
-            { error: "INSUFFICIENT_MINUTES", message: "Not enough minutes", needed: 31, available: 12 },
+            { error: "INSUFFICIENT_TOKENS", message: "This needs 840 tokens; 300 available", needed: 840, available: 300 },
             { status: 402 }
           );
         })
@@ -249,8 +293,8 @@ describe("videosApi", () => {
         videosApi.updateToLatest("https://www.youtube.com/watch?v=abc123")
       ).rejects.toMatchObject({
         status: 402,
-        code: "INSUFFICIENT_MINUTES",
-        details: { needed: 31, available: 12 },
+        code: "INSUFFICIENT_TOKENS",
+        details: { needed: 840, available: 300 },
       });
     });
   });

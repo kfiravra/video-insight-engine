@@ -7,18 +7,44 @@ import { DirectionProvider } from '@/contexts/DirectionContext';
 
 const RTL_LANGUAGES = new Set(['he', 'ar']);
 
-/** A free account with its free video open, nothing else. */
+/** A new free account: the 1,000-token signup grant as one never-expiring lot, nothing else. */
 export function usageSummary(overrides: Partial<UsageSummary> = {}): UsageSummary {
   return {
     plan: { id: 'free', periodEnd: null },
-    free: { available: true, nextFreeAt: null, maxVideoMinutes: 30, perWindow: 1 },
-    planMinutes: { granted: 0, used: 0, remaining: 0, cycleEnd: null },
-    credits: { available: 0, lots: [] },
+    balance: 1000,
+    planTokens: null,
+    credits: { available: 1000, lots: [{ tokens: 1000, expiresAt: null }] },
+    debt: 0,
     holds: [],
-    maxVideoMinutes: 30,
+    maxVideoMinutes: 180,
     blocked: false,
+    signupGrantTokens: 1000,
     ...overrides,
   };
+}
+
+interface ProOptions {
+  remaining?: number;
+  cycleEnd?: string | null;
+  periodEnd?: string | null;
+}
+
+/** A Pro account mid-cycle (20,000 a month), with one 5,000-token pack lot on top. */
+export function proSummary(options: ProOptions = {}, overrides: Partial<UsageSummary> = {}): UsageSummary {
+  const { remaining = 12_400, cycleEnd = inMs(12 * DAY + 30 * MINUTE), periodEnd = inMs(200 * DAY) } = options;
+  const granted = 20_000;
+  return usageSummary({
+    plan: { id: 'pro', periodEnd },
+    balance: remaining + 5_000,
+    planTokens: { granted, used: granted - remaining, remaining, cycleEnd },
+    credits: { available: 5_000, lots: [{ tokens: 5_000, expiresAt: '2027-10-01T00:00:00.000Z' }] },
+    ...overrides,
+  });
+}
+
+/** An account a run overdrew: the balance is `-debt` and every new execution waits for a top-up. */
+export function debtSummary(debt = 120, overrides: Partial<UsageSummary> = {}): UsageSummary {
+  return usageSummary({ balance: -debt, credits: { available: 0, lots: [] }, debt, ...overrides });
 }
 
 /** Render inside the router, a query client and the direction context of `language`. */
@@ -35,27 +61,6 @@ export function renderIn(ui: ReactElement, language = 'en') {
   );
 }
 
-interface FreeVideoOptions {
-  available?: boolean;
-  nextFreeAt?: string | null;
-  maxVideoMinutes?: number;
-  /** Effective free videos per window; 1 by default, 0 when caps switch the free video off. */
-  perWindow?: number;
-}
-
-/** A `free` block of the summary. */
-export function freeVideo(options: FreeVideoOptions = {}): UsageSummary['free'] {
-  const { available = true, nextFreeAt = null, maxVideoMinutes = 30, perWindow = 1 } = options;
-  return { available, nextFreeAt, maxVideoMinutes, perWindow };
-}
-
-/** A `free` block as a server that predates `perWindow` sends it. */
-export function freeVideoWithoutCount(options: Omit<FreeVideoOptions, 'perWindow'> = {}): UsageSummary['free'] {
-  const free: Partial<UsageSummary['free']> = freeVideo(options);
-  delete free.perWindow;
-  return free as UsageSummary['free'];
-}
-
 /** ISO time `ms` from now. */
 export function inMs(ms: number): string {
   return new Date(Date.now() + ms).toISOString();
@@ -63,3 +68,4 @@ export function inMs(ms: number): string {
 
 export const MINUTE = 60_000;
 export const HOUR = 60 * MINUTE;
+export const DAY = 24 * HOUR;

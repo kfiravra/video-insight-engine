@@ -5,7 +5,7 @@ import { describeRetryFailure } from "@/lib/billing-notice-text";
 import type { Video } from "@/types";
 
 interface Resummarize {
-  /** Re-summarize `video`; a refusal (not enough minutes, blocked, rate limited, …) shows as a toast. */
+  /** Re-summarize `video`; a refusal (not enough tokens, blocked, rate limited, …) shows as a toast. */
   resummarize: (video: Pick<Video, "youtubeId" | "folderId">) => void;
   isPending: boolean;
 }

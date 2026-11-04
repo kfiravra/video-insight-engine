@@ -201,20 +201,20 @@ describe('VideoDetailPage retry', () => {
   });
 
   describe('a refused retry', () => {
-    it('should show the minutes callout above the output when the retry needs more minutes (402)', () => {
-      mocks.retryState.error = new ApiError(402, 'x', 'INSUFFICIENT_MINUTES', { needed: 31, available: 12 });
+    it('should show the tokens callout above the output when the retry needs more tokens (402)', () => {
+      mocks.retryState.error = new ApiError(402, 'x', 'INSUFFICIENT_TOKENS', { needed: 840, available: 300 });
       renderPage();
 
-      expect(screen.getByTestId('minutes-callout')).toHaveTextContent(
-        'This video needs 31 minutes and you have 12 minutes to spend.',
+      expect(screen.getByTestId('tokens-callout')).toHaveTextContent(
+        'This video needs ≈ 840 tokens and you have 300 tokens.',
       );
     });
 
     it('should link the callout to the billing page', () => {
-      mocks.retryState.error = new ApiError(402, 'x', 'INSUFFICIENT_MINUTES', { needed: 31, available: 12 });
+      mocks.retryState.error = new ApiError(402, 'x', 'INSUFFICIENT_TOKENS', { needed: 840, available: 300 });
       renderPage();
 
-      expect(screen.getByRole('link', { name: 'See your minutes' })).toHaveAttribute('href', '/settings/billing');
+      expect(screen.getByRole('link', { name: 'Add tokens' })).toHaveAttribute('href', '/settings/billing');
     });
 
     it('should show the wait when the burst limit refuses it (429)', () => {
@@ -227,7 +227,7 @@ describe('VideoDetailPage retry', () => {
     it('should show nothing when no retry has failed', () => {
       renderPage();
 
-      expect(screen.queryByTestId('minutes-callout')).toBeNull();
+      expect(screen.queryByTestId('tokens-callout')).toBeNull();
       expect(screen.queryByTestId('billing-notice')).toBeNull();
       expect(screen.queryByTestId('retry-error')).toBeNull();
     });
@@ -248,10 +248,10 @@ describe('VideoDetailPage retry', () => {
     });
 
     it('should show why when the retry is refused (402)', () => {
-      mocks.retryState.error = new ApiError(402, 'x', 'INSUFFICIENT_MINUTES', { needed: 5, available: 0 });
+      mocks.retryState.error = new ApiError(402, 'x', 'INSUFFICIENT_TOKENS', { needed: 750, available: 0 });
       renderPage();
 
-      expect(screen.getByTestId('minutes-callout')).toBeInTheDocument();
+      expect(screen.getByTestId('tokens-callout')).toBeInTheDocument();
     });
 
     it('should show why when the account is blocked (403)', () => {
@@ -266,6 +266,49 @@ describe('VideoDetailPage retry', () => {
       renderPage();
 
       expect(screen.getByTestId('retry-error')).toHaveTextContent('Server error');
+    });
+  });
+
+  describe('the token line', () => {
+    it('should show the estimate a running video holds', () => {
+      setVideo({ billing: { state: 'held', estimatedTokens: 840, chargedTokens: null } });
+      renderPage();
+
+      expect(screen.getByTestId('video-token-line')).toHaveTextContent('≈ 840 tokens, in progress');
+    });
+
+    it('should show what a settled run cost', () => {
+      setVideo({ status: 'completed', billing: { state: 'charged', estimatedTokens: 840, chargedTokens: 758 } });
+      renderPage();
+
+      expect(screen.getByTestId('video-token-line')).toHaveTextContent(/^Tokens for this video: 758 tokens$/);
+    });
+
+    it('should say a video this user ran nothing for is free', () => {
+      setVideo({ status: 'completed', billing: { state: 'free', estimatedTokens: 0, chargedTokens: null } });
+      renderPage();
+
+      expect(screen.getByTestId('video-token-line')).toHaveTextContent('Free');
+    });
+
+    it('should say a failed run was not charged on the failure page', () => {
+      setVideo({ status: 'failed', billing: { state: 'released', estimatedTokens: 840, chargedTokens: null } });
+      renderPage();
+
+      expect(screen.getByTestId('video-token-line')).toHaveTextContent('Not charged');
+    });
+
+    it('should show nothing for a server that sends no billing', () => {
+      renderPage();
+
+      expect(screen.queryByTestId('video-token-line')).toBeNull();
+    });
+
+    it('should show nothing for a state it does not know', () => {
+      setVideo({ billing: { state: 'refunded', estimatedTokens: 840, chargedTokens: null } });
+      renderPage();
+
+      expect(screen.queryByTestId('video-token-line')).toBeNull();
     });
   });
 });
