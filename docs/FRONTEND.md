@@ -640,6 +640,14 @@ interface AuthState {
 }
 ```
 
+**Sign-in is awaited.** `login()`, `loginDemo()` and `register()` wait for a sign-out
+still in flight, store the token, then wait for `GET /auth/me` before flipping
+`isAuthenticated`; the forms navigate only after that and keep their button disabled until
+the board replaces the page (route transitions suspend without a fallback, so a re-enabled
+button would invite a second login). `api/client.ts` keeps a session epoch: a 401 that
+lands for a request sent under an earlier session is neither refreshed nor allowed to end
+the live one, and `refreshToken()` is single-flight.
+
 **Sign-out wipes the client.** `logout()` and `forceLogout()` call
 `resetClientSession()` (`src/lib/session-reset.ts`), which cancels and clears the React
 Query cache, aborts every open pipeline and chat stream, empties the processing store and

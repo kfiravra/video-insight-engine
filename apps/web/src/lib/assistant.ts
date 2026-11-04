@@ -1,4 +1,4 @@
-import { ApiError, getAccessToken, refreshToken } from "@/api/client";
+import { ApiError, getAccessToken, getSessionEpoch, isSessionCurrent, refreshToken } from "@/api/client";
 import { useAuthStore } from "@/stores/auth-store";
 import { LIBRARY_CHAT_SURFACE, useChatStore } from "@/stores/chat-store";
 
@@ -99,10 +99,13 @@ async function streamAssistantChat(
   onEvent: (event: AssistantChatEvent) => void,
 ): Promise<void> {
   const token = getAccessToken();
+  const epoch = getSessionEpoch();
   const response = await buildRequest(token);
 
   // Handle 401 — try token refresh once (mirrors api/client.ts pattern)
   if (response.status === 401 && token) {
+    // Sent under a session that has since ended: never touch the live one.
+    if (!isSessionCurrent(epoch)) throw new Error("Session ended");
     const refreshed = await refreshToken();
     if (refreshed) {
       const retryResponse = await buildRequest(getAccessToken());
@@ -112,7 +115,9 @@ async function streamAssistantChat(
       await readAssistantSSEStream(retryResponse, onEvent);
       return;
     }
-    useAuthStore.getState().forceLogout("Session expired. Please log in again.");
+    if (isSessionCurrent(epoch)) {
+      useAuthStore.getState().forceLogout("Session expired. Please log in again.");
+    }
     throw new Error("Session expired");
   }
 
@@ -240,12 +245,16 @@ export async function runAssistantAction(
     });
 
   const token = getAccessToken();
+  const epoch = getSessionEpoch();
   let response = await buildRequest(token);
 
   if (response.status === 401 && token) {
+    if (!isSessionCurrent(epoch)) throw new Error("Session ended");
     const refreshed = await refreshToken();
     if (!refreshed) {
-      useAuthStore.getState().forceLogout("Session expired. Please log in again.");
+      if (isSessionCurrent(epoch)) {
+        useAuthStore.getState().forceLogout("Session expired. Please log in again.");
+      }
       throw new Error("Session expired");
     }
     response = await buildRequest(getAccessToken());

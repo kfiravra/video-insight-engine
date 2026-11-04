@@ -6,6 +6,7 @@ import {
   getAccessToken,
   setAccessToken,
   refreshToken,
+  markSessionChange,
   ApiError,
 } from "../client";
 import { useAuthStore } from "@/stores/auth-store";
@@ -105,6 +106,100 @@ describe("API Client", () => {
       await refreshToken();
 
       expect(useAuthStore.getState().accessToken).toBe("refreshed-token");
+    });
+  });
+
+  describe("session guards", () => {
+    it("should share one refresh between concurrent 401s", async () => {
+      let refreshCalls = 0;
+      let served = 0;
+      server.use(
+        http.get(`${API_URL}/burst`, ({ request: req }) => {
+          if (req.headers.get("Authorization") === "Bearer fresh-token") {
+            served += 1;
+            return HttpResponse.json({ ok: true });
+          }
+          return new HttpResponse(null, { status: 401 });
+        }),
+        http.post(`${API_URL}/auth/refresh`, async () => {
+          refreshCalls += 1;
+          await new Promise((r) => setTimeout(r, 10));
+          return HttpResponse.json({ accessToken: "fresh-token" });
+        }),
+      );
+      setAccessToken("expired-token");
+
+      await Promise.all([request("/burst"), request("/burst"), request("/burst")]);
+
+      expect(refreshCalls).toBe(1);
+      expect(served).toBe(3);
+    });
+
+    it("should retry with the current token when a sibling already refreshed", async () => {
+      let refreshCalls = 0;
+      server.use(
+        http.get(`${API_URL}/late`, async ({ request: req }) => {
+          if (req.headers.get("Authorization") === "Bearer newer-token") {
+            return HttpResponse.json({ ok: true });
+          }
+          // The expired request answers after another request refreshed.
+          await new Promise((r) => setTimeout(r, 10));
+          setAccessToken("newer-token");
+          return new HttpResponse(null, { status: 401 });
+        }),
+        http.post(`${API_URL}/auth/refresh`, () => {
+          refreshCalls += 1;
+          return HttpResponse.json({ accessToken: "unexpected" });
+        }),
+      );
+      setAccessToken("expired-token");
+
+      await expect(request("/late")).resolves.toEqual({ ok: true });
+
+      expect(refreshCalls).toBe(0);
+    });
+
+    it("should neither refresh nor end the session for a 401 from a previous session", async () => {
+      let refreshCalls = 0;
+      server.use(
+        http.get(`${API_URL}/stale`, async () => {
+          await new Promise((r) => setTimeout(r, 10));
+          return new HttpResponse(null, { status: 401 });
+        }),
+        http.post(`${API_URL}/auth/refresh`, () => {
+          refreshCalls += 1;
+          return new HttpResponse(null, { status: 401 });
+        }),
+      );
+      setAccessToken("previous-user-token");
+      const stale = request("/stale");
+      // Another user signs in while the old request is in flight.
+      markSessionChange();
+      setAccessToken("next-user-token");
+      useAuthStore.setState({ accessToken: "next-user-token", isAuthenticated: true });
+
+      await expect(stale).rejects.toMatchObject({ status: 401, code: "SESSION_ENDED" });
+
+      expect(refreshCalls).toBe(0);
+      expect(useAuthStore.getState().isAuthenticated).toBe(true);
+      expect(getAccessToken()).toBe("next-user-token");
+    });
+
+    it("should drop a refreshed token minted for a session that ended meanwhile", async () => {
+      server.use(
+        http.post(`${API_URL}/auth/refresh`, async () => {
+          await new Promise((r) => setTimeout(r, 10));
+          return HttpResponse.json({ accessToken: "late-token" });
+        }),
+      );
+      setAccessToken("old-token");
+      const refreshing = refreshToken();
+      markSessionChange();
+      setAccessToken(null);
+
+      await expect(refreshing).resolves.toBe(false);
+
+      expect(getAccessToken()).toBeNull();
     });
   });
 

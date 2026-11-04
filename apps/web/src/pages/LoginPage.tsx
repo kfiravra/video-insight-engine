@@ -1,4 +1,4 @@
-import { useState, useMemo, type FormEvent } from "react";
+import { useState, useMemo, useRef, useEffect, type FormEvent } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Loader2, AlertCircle } from "lucide-react";
 import { useAuthStore } from "@/stores/auth-store";
@@ -28,6 +28,16 @@ export function LoginPage() {
   const [submitError, setSubmitError] = useState("");
   const [loading, setLoading] = useState(false);
   const [demoLoading, setDemoLoading] = useState(false);
+  // One request per click: state updates are batched, so a second submit in
+  // the same tick would read a stale `loading`. The ref is read synchronously.
+  const submittingRef = useRef(false);
+
+  // Fetch the board's chunk while the user types. Navigations run in a
+  // transition, and a suspended lazy route keeps this page on screen with no
+  // fallback until its chunk arrives; a warm chunk makes the hand-off instant.
+  useEffect(() => {
+    void import("@/pages/BoardPage");
+  }, []);
 
   const login = useAuthStore((s) => s.login);
   const loginDemo = useAuthStore((s) => s.loginDemo);
@@ -61,21 +71,28 @@ export function LoginPage() {
 
   const handleSubmit = async (e: FormEvent): Promise<void> => {
     e.preventDefault();
+    if (submittingRef.current) return;
     setTouched({ email: true, password: true });
     if (Object.keys(errors).length > 0) return;
+    submittingRef.current = true;
     setSubmitError("");
     setLoading(true);
     try {
       await login(values.email, values.password);
+      // The session is established (/auth/me answered). Stay pending: this
+      // page unmounts once the board renders, and re-enabling the button
+      // during a slow route transition invites a second login.
       navigateAfterLogin();
     } catch (err) {
       setSubmitError(translateAuthError(err, "login"));
-    } finally {
       setLoading(false);
+      submittingRef.current = false;
     }
   };
 
   const handleDemoLogin = async (): Promise<void> => {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setSubmitError("");
     setDemoLoading(true);
     try {
@@ -83,8 +100,8 @@ export function LoginPage() {
       navigateAfterLogin();
     } catch (err) {
       setSubmitError(translateDemoError(err));
-    } finally {
       setDemoLoading(false);
+      submittingRef.current = false;
     }
   };
 

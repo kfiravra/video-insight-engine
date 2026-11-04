@@ -65,14 +65,28 @@ test.describe("Smoke — real stack with seeded MongoDB", () => {
   test("should land on the board after logging in through the login form", async ({
     page,
   }) => {
+    const loginCalls: string[] = [];
+    page.on("request", (req) => {
+      if (req.method() === "POST" && req.url().endsWith("/auth/login")) loginCalls.push(req.url());
+    });
     await page.goto("/login");
 
     await page.getByLabel("Email").fill(SMOKE_USER.email);
     await page.getByLabel("Password", { exact: true }).fill(SMOKE_USER.password);
-    await page.getByRole("button", { name: "Sign in" }).click();
+    // An impatient double click is still one login: the button disables on
+    // the first click and stays disabled until the board replaces the page.
+    const signIn = page.getByRole("button", { name: /sign in|signing in/i });
+    await signIn.dblclick();
+    await expect(signIn).toBeDisabled();
 
     await page.waitForURL("**/board", { timeout: 15000 });
     await expect(page).toHaveURL(/\/board$/);
+    // The session was awaited (/auth/me answered) before the navigation, so
+    // the board renders this user's library, not a spinner or a bounce.
+    await expect(page.getByText(SMOKE_VIDEO_TITLE).first()).toBeVisible({
+      timeout: 15000,
+    });
+    expect(loginCalls).toHaveLength(1);
   });
 
   test("should render the library with the seeded video", async ({ page }) => {
