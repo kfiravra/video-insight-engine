@@ -96,7 +96,10 @@ api() {
   fi
   out="$WORK/last-response.json"
   API_BODY_FILE="$out"
-  local args=(-sS -o "$out" -w '%{http_code}' -X "$method" "$GRAFANA_URL$path"
+  # Every call is idempotent (uid-keyed PUTs, overwriting POSTs, creates that 409 on a
+  # repeat), so curl may retry a stalled handshake.
+  local args=(-sS --connect-timeout 20 --max-time 60 --retry 2 --retry-delay 2
+    -o "$out" -w '%{http_code}' -X "$method" "$GRAFANA_URL$path"
     -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json"
     -H "X-Disable-Provenance: true")
   if [[ -n "$body" ]]; then args+=(--data-binary "@$body"); fi
@@ -118,10 +121,21 @@ require_ok() {
 
 # ─── 1. Folder ───────────────────────────────────────────────────────────────
 api GET /api/folders/vie > /dev/null
-if [[ "$API_STATUS" == "404" ]]; then
+if [[ "$API_STATUS" != 2* ]]; then
+  # Grafana answers 403, not 404, for a folder uid that does not exist. Create it
+  # (409/412: it exists already), then wait: the token's cached permissions take up
+  # to about a minute to include a new folder.
   printf '{"uid": "vie", "title": "vie"}' > "$WORK/folder.json"
   api POST /api/folders "$WORK/folder.json" > /dev/null
-  require_ok "create folder vie"
+  if [[ "$API_STATUS" != "409" && "$API_STATUS" != "412" ]]; then
+    require_ok "create folder vie"
+  fi
+  for _ in $(seq 1 24); do
+    api GET /api/folders/vie > /dev/null
+    [[ "$API_STATUS" == 2* ]] && break
+    sleep 5
+  done
+  require_ok "read folder vie (still denied 2 min after the create: is the token's role Editor?)"
 fi
 echo "folder vie: ok"
 
