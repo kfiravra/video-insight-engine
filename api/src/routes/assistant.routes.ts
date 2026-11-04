@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { RateLimitedError, VideoNotFoundError } from '../utils/errors.js';
 import { disableSocketInactivityTimeout } from '../utils/sse.js';
 import { actionParamsSchema } from '../schemas/assistant.schema.js';
+import { admitExecution } from '../services/billing/execution-gate.js';
 import { readSessionId } from '../plugins/request-id.js';
 import type { AssistantAction } from '../services/assistant-client.js';
 
@@ -24,14 +25,13 @@ const actionBodySchema = z.object({
 });
 
 export async function assistantRoutes(fastify: FastifyInstance) {
-  const { assistantClient, videoRepository, chatFairUse } = fastify.container;
+  const { assistantClient, videoRepository, billingService } = fastify.container;
 
   // POST /api/videos/:videoSummaryId/chat
-  // Free accounts: one shared 24 h message allowance with the library chat
-  // (CHAT_LIMIT_REACHED, 429). Pro is unlimited; chat never touches the ledger.
-  // The allowance is counted in the handler, after the global rate limiter (which
-  // runs at the end of the preHandlers) and after validation and the access check,
-  // so a request that is refused for another reason does not burn a message.
+  // Spends tokens: a positive balance is required to start (402 INSUFFICIENT_TOKENS,
+  // 403 ACCOUNT_BLOCKED, before anything streams); the turn's real cost is debited
+  // when the assistant reports it under the execution id minted here. Checked after
+  // validation and the access check, so a refused request is never metered.
   fastify.post<{
     Params: { videoSummaryId: string };
     Body: z.infer<typeof chatBodySchema>;
@@ -53,8 +53,7 @@ export async function assistantRoutes(fastify: FastifyInstance) {
     if (!hasAccess) {
       throw new VideoNotFoundError();
     }
-
-    await chatFairUse.consume(req.user.userId);
+    const executionId = await admitExecution(billingService, req.user.userId);
 
     // Upstream abort tied to client disconnect: when the browser goes away,
     // tear down the assistant fetch/stream immediately instead of proxying
@@ -74,6 +73,7 @@ export async function assistantRoutes(fastify: FastifyInstance) {
         conversationHistory: parsed.data.conversationHistory,
         confirmToken: parsed.data.confirmToken,
         requestId: req.id,
+        executionId,
         sessionId: readSessionId(req.headers),
         signal: upstreamAbort.signal,
       });
@@ -154,6 +154,8 @@ export async function assistantRoutes(fastify: FastifyInstance) {
     if (!hasAccess) {
       throw new VideoNotFoundError();
     }
+    // Actions spend tokens like a chat turn.
+    const executionId = await admitExecution(billingService, req.user.userId);
 
     try {
       const { status, body } = await assistantClient.action({
@@ -162,6 +164,7 @@ export async function assistantRoutes(fastify: FastifyInstance) {
         action: parsed.data.action satisfies AssistantAction,
         params: parsed.data.params,
         requestId: req.id,
+        executionId,
         sessionId: readSessionId(req.headers),
       });
 

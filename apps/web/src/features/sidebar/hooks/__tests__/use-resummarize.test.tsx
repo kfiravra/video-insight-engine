@@ -75,15 +75,15 @@ describe('useResummarize', () => {
     await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ['usage', 'me'] }));
   });
 
-  it('should toast how many minutes the video needs when the retry is refused (402)', async () => {
-    rejectWith(402, { error: 'INSUFFICIENT_MINUTES', message: 'x', statusCode: 402, needed: 31, available: 12 });
+  it("should toast the video's estimate and the balance when the retry is refused (402)", async () => {
+    rejectWith(402, { error: 'INSUFFICIENT_TOKENS', message: 'x', statusCode: 402, needed: 840, available: 300 });
     const { wrapper } = makeWrapper();
     const { result } = renderHook(() => useResummarize(), { wrapper });
 
     act(() => result.current.resummarize(VIDEO));
 
     await waitFor(() =>
-      expect(toastError).toHaveBeenCalledWith('This video needs 31 minutes and you have 12 minutes to spend.'),
+      expect(toastError).toHaveBeenCalledWith('This video needs ≈ 840 tokens and you have 300 tokens.'),
     );
   });
 

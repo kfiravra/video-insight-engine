@@ -71,8 +71,8 @@ export interface PlaylistImportResult {
   processingCount: number;
   failedCount: number;
   failedVideos: FailedVideoImport[];
-  /** The up-front quote ("needs 340 min, you have 120"). */
-  billing: { neededMinutes: number; availableMinutes: number; freeVideoAvailable: boolean };
+  /** The up-front quote ("needs ≈ 3,400 tokens, you have 1,200"). */
+  billing: { neededTokens: number; availableTokens: number };
 }
 
 const EXTRACT_TIMEOUT_MS = 30000; // 30 seconds for extraction
@@ -82,7 +82,7 @@ export class PlaylistService {
     private readonly videoService: VideoService,
     private readonly folderService: FolderService,
     private readonly summarizerClient: SummarizerClient,
-    // The minutes ledger decides every item (P3.1; the only gate since P3.2).
+    // The token ledger decides every item (P3.1; the only gate since P3.2).
     private readonly billingEnforcement: LedgerEnforcement,
     private readonly logger: FastifyBaseLogger,
   ) {}
@@ -153,7 +153,7 @@ export class PlaylistService {
     const importer = new LedgerItemImporter(
       this.videoService,
       this.billingEnforcement,
-      { userId, folderId: folder.id, providers, freeVideoAvailable: plan.quote.freeVideoAvailable },
+      { userId, folderId: folder.id, providers },
       plan.durationsSec,
       this.logger,
     );
@@ -163,11 +163,7 @@ export class PlaylistService {
       folder: keptFolder,
       ...result,
       totalVideos: playlistData.total_videos,
-      billing: {
-        neededMinutes: plan.quote.neededMinutes,
-        availableMinutes: plan.quote.availableMinutes,
-        freeVideoAvailable: plan.quote.freeVideoAvailable,
-      },
+      billing: { neededTokens: plan.quote.neededTokens, availableTokens: plan.quote.availableTokens },
     };
   }
 
@@ -203,7 +199,7 @@ export class PlaylistService {
 
   /**
    * Items in playlist order. A refusal that later items cannot do better on
-   * (out of minutes, too many runs, blocked) stops the import there and
+   * (out of tokens, too many runs, blocked) stops the import there and
    * records every later item with the same error, so the UI can say "stopped
    * at video N" — the import admits a prefix. A later item already cached or
    * running is still served (Q6).

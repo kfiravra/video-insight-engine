@@ -1,9 +1,10 @@
 /**
- * P3.1 for playlist import on the minutes ledger: the whole playlist
- * is quoted up front ("needs 340 min, you have 120"); nothing affordable →
- * refused before a folder is created; otherwise items are admitted in order
- * and the import stops at the first one the minutes cannot cover (a prefix),
- * one hold per item on its own server run id.
+ * Playlist import on the token ledger: the whole playlist is quoted up front
+ * ("needs ≈ 5,040 tokens, you have 1,000"); a blocked account is refused
+ * before a folder is created; otherwise items are admitted in order and the
+ * import stops at the first estimate the balance cannot cover (a prefix),
+ * one hold per item on its own server run id. Every account starts with its
+ * 1,000-token signup grant.
  */
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
 import { ObjectId } from 'mongodb';
@@ -33,7 +34,7 @@ function useExtract(minutes: Array<number | null>): void {
   });
 }
 
-describe('PlaylistService on the minutes ledger', () => {
+describe('PlaylistService on the token ledger', () => {
   let h: BillingHarness;
   let userId: string;
   let service: PlaylistService;
@@ -41,15 +42,17 @@ describe('PlaylistService on the minutes ledger', () => {
   let folders: { create: ReturnType<typeof vi.fn>; getById: ReturnType<typeof vi.fn>; delete: ReturnType<typeof vi.fn> };
 
   const holds = () => getTestDb().collection('ledgerEntries').find({ type: 'hold' }).toArray();
+  /** Tokens held per run (a hold that spans two lots writes one entry per lot). */
+  const heldByRun = async (): Promise<Map<string, number>> => {
+    const byRun = new Map<string, number>();
+    for (const entry of await holds()) byRun.set(entry.source.ref, (byRun.get(entry.source.ref) ?? 0) - entry.tokens);
+    return byRun;
+  };
   const created = (overrides: Record<string, unknown> = {}) => ({
     video: { id: new ObjectId().toHexString(), videoSummaryId: new ObjectId().toHexString(), status: 'pending' },
     cached: false,
     ...overrides,
   });
-  /** Spend the free video so items must be paid from credits. */
-  const spendFreeVideo = async () => {
-    await h.gate.admit({ requestId: `free-${new ObjectId().toHexString()}`, userId, youtubeId: 'freevideo01', durationSec: 300 });
-  };
 
   beforeAll(async () => {
     vi.stubGlobal('fetch', mockFetch);
@@ -80,29 +83,27 @@ describe('PlaylistService on the minutes ledger', () => {
   });
 
   it('should import nothing it cannot pay for and report the playlist\'s total', async () => {
-    await spendFreeVideo();
-    useExtract([60, 90, 190]);
+    useExtract([60, 90, 20]);
+
     const result = await service.import(userId, PLAYLIST_URL);
 
     expect(result.videos).toEqual([]);
-    expect(result.failedVideos.map((f) => f.error)).toEqual(['INSUFFICIENT_MINUTES', 'INSUFFICIENT_MINUTES', 'INSUFFICIENT_MINUTES']);
-    expect(result.billing).toMatchObject({ neededMinutes: 340, availableMinutes: 0 });
-    expect(await holds()).toHaveLength(1); // only the free video spent before the import
+    expect(result.failedVideos.map((f) => f.error)).toEqual(['INSUFFICIENT_TOKENS', 'INSUFFICIENT_TOKENS', 'INSUFFICIENT_TOKENS']);
+    // 60 min ≈ 1,740 + 90 min ≈ 2,280 + 20 min ≈ 1,020 against the signup grant.
+    expect(result.billing).toEqual({ neededTokens: 5040, availableTokens: 1000 });
+    expect(await holds()).toEqual([]);
   });
 
-  it('should not stop at a long item while the free video is still open, so a later short item gets it (W2)', async () => {
-    useExtract([45, 10, 45, 10]);
+  it('should stop at the first item it cannot pay for, even when a later shorter one would fit (prefix)', async () => {
+    useExtract([45, 5]);
 
     const result = await service.import(userId, PLAYLIST_URL);
 
-    expect(result.videos.map((v) => v.position)).toEqual([2]);
-    expect(result.failedVideos.map((f) => [f.position, f.error])).toEqual([
-      [1, 'INSUFFICIENT_MINUTES'], [3, 'INSUFFICIENT_MINUTES'], [4, 'INSUFFICIENT_MINUTES'],
-    ]);
+    expect(result.videos).toEqual([]);
+    expect(result.failedVideos.map((f) => [f.position, f.error])).toEqual([[1, 'INSUFFICIENT_TOKENS'], [2, 'INSUFFICIENT_TOKENS']]);
   });
 
   it('should remove the folder it made when nothing could be imported (I7)', async () => {
-    await spendFreeVideo();
     useExtract([60]);
 
     const result = await service.import(userId, PLAYLIST_URL);
@@ -110,8 +111,7 @@ describe('PlaylistService on the minutes ledger', () => {
     expect([result.folder, folders.delete.mock.calls.length]).toEqual([null, 1]);
   });
 
-  it('should still serve a cached item after the minutes ran out (C1 / Q6)', async () => {
-    await spendFreeVideo();
+  it('should still serve a cached item after the tokens ran out (C1 / Q6)', async () => {
     useExtract([20, 20]);
     createVideo
       .mockRejectedValueOnce(new RunNotAllowedError())
@@ -155,30 +155,30 @@ describe('PlaylistService on the minutes ledger', () => {
     expect([folders.create.mock.calls.length, createVideo.mock.calls.length]).toEqual([0, 0]);
   });
 
-  it('should admit the prefix the minutes cover, stop at the first item they cannot, and report the quote', async () => {
-    await h.billing.grantLot(userId, { minutes: 50 }, ctx());
-    await spendFreeVideo();
-    useExtract([20, 20, 20, 5]);
+  it('should admit the prefix the balance covers, stop at the first item it cannot, and report the quote', async () => {
+    await h.billing.grantLot(userId, { tokens: 1000 }, ctx());
+    useExtract([5, 5, 5, 5]);
 
     const result = await service.import(userId, PLAYLIST_URL);
 
     expect(result.videos.map((v) => v.position)).toEqual([1, 2]);
-    expect(result.failedVideos.map((f) => [f.position, f.error])).toEqual([[3, 'INSUFFICIENT_MINUTES'], [4, 'INSUFFICIENT_MINUTES']]);
-    expect(result.billing).toEqual({ neededMinutes: 65, availableMinutes: 50, freeVideoAvailable: false });
+    expect(result.failedVideos.map((f) => [f.position, f.error])).toEqual([[3, 'INSUFFICIENT_TOKENS'], [4, 'INSUFFICIENT_TOKENS']]);
+    expect(result.billing).toEqual({ neededTokens: 3000, availableTokens: 2000 });
+    expect([...(await heldByRun()).values()]).toEqual([750, 750]);
   });
 
   it('should skip an item that is too long and keep importing the rest', async () => {
-    await h.billing.grantLot(userId, { minutes: 300 }, ctx());
+    await h.billing.grantLot(userId, { tokens: 10_000 }, ctx());
     useExtract([10, 200, 10]);
 
     const result = await service.import(userId, PLAYLIST_URL);
 
     expect(result.videos.map((v) => v.position)).toEqual([1, 3]);
-    expect(result.failedVideos).toEqual([expect.objectContaining({ position: 2, error: 'VIDEO_TOO_LONG_FOR_PLAN' })]);
+    expect(result.failedVideos).toEqual([expect.objectContaining({ position: 2, error: 'VIDEO_TOO_LONG' })]);
   });
 
   it('should give one hold per item, each on its own server run id stamped by its dispatch', async () => {
-    await h.billing.grantLot(userId, { minutes: 300 }, ctx());
+    await h.billing.grantLot(userId, { tokens: 5000 }, ctx());
     useExtract([10, 10]);
 
     await service.import(userId, PLAYLIST_URL);
@@ -186,7 +186,19 @@ describe('PlaylistService on the minutes ledger', () => {
     const runIds = createVideo.mock.calls.map((call) => call[2].billingRunId);
     expect(new Set(runIds).size).toBe(2);
     expect(createVideo.mock.calls.map((call) => call[2].requestId)).toEqual(runIds);
-    expect((await holds()).map((hold) => hold.source.ref).sort()).toEqual([...runIds].sort());
+    expect([...(await heldByRun()).keys()].sort()).toEqual([...runIds].sort());
+  });
+
+  it.each([
+    ['a free account\'s items as free', false, 'free'],
+    ['a Pro account\'s items as paid', true, 'paid'],
+  ])('should queue %s (D18)', async (_label, pro, plan) => {
+    if (pro) await h.billing.setPlan(userId, { planId: 'pro' }, ctx());
+    useExtract([5]);
+
+    await service.import(userId, PLAYLIST_URL);
+
+    expect(createVideo.mock.calls.map((call) => call[2].queuePlan)).toEqual([plan]);
   });
 
   it('should give a cached item its hold back', async () => {
@@ -196,11 +208,11 @@ describe('PlaylistService on the minutes ledger', () => {
     const result = await service.import(userId, PLAYLIST_URL);
 
     expect(result.cachedCount).toBe(1);
-    expect((await h.billing.summary(userId)).free.available).toBe(true);
+    expect(await h.billing.summary(userId)).toMatchObject({ balance: 1000, holds: [] });
   });
 
   it('should record an item whose length the pre-flight cannot get and import the others', async () => {
-    await h.billing.grantLot(userId, { minutes: 300 }, ctx());
+    await h.billing.grantLot(userId, { tokens: 5000 }, ctx());
     h.metadata.getVideoMetadata.mockRejectedValue(new Error('yt-dlp down'));
     useExtract([10, null]);
 

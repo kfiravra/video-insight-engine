@@ -57,6 +57,8 @@ Create new account.
 Set-Cookie: refreshToken=xxx; HttpOnly; Secure; SameSite=Strict; Path=/api/auth/refresh; Max-Age=604800
 ```
 
+The new account's token account is created here with its one-time 1,000-token signup grant (never expires), so `GET /users/me/usage` shows it at once; if that write fails the registration still succeeds and the first billing read creates the same account and grant.
+
 ---
 
 ### POST /auth/login
@@ -377,6 +379,25 @@ The same `sourceLanguage` block is included on the public share endpoint (`GET /
 
 `updateAvailable: true` is present when the summary is `completed` and stamped with an older `pipelineVersion` than the current one: the copy is served as it is, and the UI offers "update to latest version" (`POST /videos` with `updateToLatest: true`). Absent otherwise (never `false` or `null`), including for an unstamped (pre-stamping) summary, a summary still running, and always for the shared demo account, which may not pay for an update.
 
+`billing` (`VideoBilling` in `packages/types/src/billing.ts`) is what the requesting user's latest run of this summary holds or cost, read from the ledger by the row's `billingRunId`: `{ state: "held", estimatedTokens: 840, chargedTokens: null }` while it runs, `"charged"` with `chargedTokens` once it settled on its real cost, `"released"` (0 charged) when it failed, and `"free"` (0 / 0) when this user ran nothing for it (served from cache, attached to someone else's run). Never a dollar amount.
+
+---
+
+### GET /videos/estimate
+
+What a `POST /videos` of `url` would hold before it runs — the "≈ N tokens" hint under the submit box. Auth required. Query: `url` (a YouTube URL, at most 2048 characters).
+
+**Response (200):** `VideoEstimateResponse`
+
+```json
+{ "youtubeId": "dQw4w9WgXcQ", "durationSec": 612, "tokens": 840, "free": false }
+```
+
+- `free: true` (and `tokens: 0`) when the video is already in the user's library or completed for everyone: a submit runs nothing. An eval account is never shown as free (every eval submit is a paid run).
+- `tokens` is `ceil((0.22 + 0.006 × ceil(durationSec / 60)) × 3 × 1000)`; the submit holds it, and the run settles on its real cost.
+- The length comes from a completed row of the video, else the metadata pre-flight (cached in Redis); errors map as on submit (`METADATA_UNAVAILABLE` 404 / 422 / 503, `400` for a URL that is not a YouTube video).
+- Its own bucket of 60 lookups per user per hour (`429 RATE_LIMITED` with `retryAfterSec`), apart from the submit bucket. Informational only: the submit decides again.
+
 ---
 
 ### POST /videos
@@ -494,30 +515,33 @@ and never for the shared demo account. An idempotency replay
 }
 ```
 
-**Response (402) - Not Enough Minutes:**
+**Response (402) - Not Enough Tokens:**
 
-Before publishing the job the handler quotes the video against the account's
-minutes (free video, plan minutes, credit lots) and holds them. If they cannot
-cover it and nothing is cached or in flight to serve for free, the request
-fails with the numbers the UI shows:
+Before publishing the job the handler holds the video's **estimate** (from its
+length, e.g. ≈ 750 tokens for 5 min, 1,200 for 30 min, 3,900 for 180 min) from
+the account's Pro cycle, then its credit lots. If the balance cannot cover the
+whole estimate, or the account owes tokens, and nothing is cached or in flight
+to serve for free, the request fails with the numbers the UI shows
+(`available` is the balance, negative while in debt):
 
 ```json
 {
-  "error": "INSUFFICIENT_MINUTES",
-  "message": "This video needs 45 minutes; 20 available",
+  "error": "INSUFFICIENT_TOKENS",
+  "message": "This needs 840 tokens; 320 available",
   "statusCode": 402,
-  "needed": 45,
-  "available": 20
+  "needed": 840,
+  "available": 320
 }
 ```
 
-The other refusals are `422 VIDEO_TOO_LONG_FOR_PLAN` (`maxMinutes`),
-`403 ACCOUNT_BLOCKED`, `429 TOO_MANY_RUNS` (`maxConcurrent`) and
+The other refusals are `422 VIDEO_TOO_LONG` (`maxMinutes`: 180, or an admin's
+lower cap), `403 ACCOUNT_BLOCKED`, `429 TOO_MANY_RUNS` (`maxConcurrent`) and
 `METADATA_UNAVAILABLE` when the video's length cannot be read; full table in
-[ERROR-HANDLING.md](./ERROR-HANDLING.md#minutes-gate). A cached or attached
-video gives its hold back at once; a completed run is debited from the hold
-when the pipeline reaches a terminal status, a failed one released. There is
-no per-user dollar cap.
+[ERROR-HANDLING.md](./ERROR-HANDLING.md#token-gate). A cached or attached video
+gives its hold back at once. A run settles on its **real** LLM cost once the
+summarizer reports it (`POST /internal/run-cost`): the unused estimate comes
+back, an overrun is taken from what is left and then becomes debt. A failed
+run is released in full. There is no per-user dollar cap.
 
 ---
 
@@ -636,23 +660,24 @@ Import a playlist, creating a folder and adding all videos.
   "processingCount": 10,
   "failedCount": 1,
   "failedVideos": [
-    { "youtubeId": "abcdefghijk", "title": "Part 2", "position": 2, "error": "INSUFFICIENT_MINUTES" }
+    { "youtubeId": "abcdefghijk", "title": "Part 2", "position": 2, "error": "INSUFFICIENT_TOKENS" }
   ],
-  "billing": { "neededMinutes": 340, "availableMinutes": 120, "freeVideoAvailable": false }
+  "billing": { "neededTokens": 9600, "availableTokens": 4200 }
 }
 ```
 
-- `failedVideos[].error` is always an error code (`INSUFFICIENT_MINUTES`,
-  `VIDEO_TOO_LONG_FOR_PLAN`, `METADATA_UNAVAILABLE`, …; `INTERNAL_ERROR` for
+- `billing` is the up-front quote: `neededTokens` = Σ the items' estimates,
+  `availableTokens` the balance before the first item.
+- `failedVideos[].error` is always an error code (`INSUFFICIENT_TOKENS`,
+  `VIDEO_TOO_LONG`, `METADATA_UNAVAILABLE`, …; `INTERNAL_ERROR` for
   anything unexpected, which the API logs), never a raw message.
 - `folder` is `null` when the import created a folder and no item landed in it
   (every item refused or failed): the empty folder is removed again. A folder
   the caller passed as `folderId` is never removed.
 - Items are admitted in order and the import stops at the first one the
-  minutes cannot cover — except a video only paid minutes could pay for while
-  the free video is still open: a later short item can still take the free
-  video, so that refusal does not stop the import. Details in
-  [ERROR-HANDLING.md](./ERROR-HANDLING.md#minutes-gate).
+  balance cannot cover, even when a later item is cheaper (later items are
+  still served when that costs nothing). Details in
+  [ERROR-HANDLING.md](./ERROR-HANDLING.md#token-gate).
 
 ---
 
@@ -849,52 +874,57 @@ Override the detected classification for a video. Triggers re-classification thr
 
 ### GET /users/me/usage
 
-The signed-in user's **minutes**: plan, the free video, plan minutes, credit
-lots and runs in flight. It never carries a dollar amount. The web usage tile
-and the minutes callout read it. Auth required. Serves `BillingService.summary`,
-so a user who has no billing account yet gets an empty free account (the row is
-created on this first read).
+The signed-in user's **tokens**: plan, balance, the Pro cycle, credit lots, debt
+and the estimates held by runs in flight. It never carries a dollar amount. The
+web usage tile, the billing page and the tokens callout read it. Auth required.
+Serves `BillingService.summary`; a user without a billing account gets one on
+this first read, with the 1,000-token signup grant (registration normally
+creates it).
 
 **Response (200):** the `UsageSummary` type in `packages/types/src/billing.ts`.
 
 ```json
 {
   "plan": { "id": "pro", "periodEnd": "2027-10-28T10:00:00.000Z" },
-  "free": { "available": true, "nextFreeAt": null, "maxVideoMinutes": 30, "perWindow": 1 },
-  "planMinutes": { "granted": 600, "used": 90, "remaining": 510, "cycleEnd": "2026-11-28T10:00:00.000Z" },
+  "balance": 22800,
+  "planTokens": { "granted": 20000, "used": 3200, "remaining": 16800, "cycleEnd": "2026-11-28T10:00:00.000Z" },
   "credits": {
-    "available": 150,
+    "available": 6000,
     "lots": [
-      { "minutes": 120, "expiresAt": "2026-12-01T10:00:00.000Z" },
-      { "minutes": 30, "expiresAt": null }
+      { "tokens": 5000, "expiresAt": "2027-11-01T10:00:00.000Z" },
+      { "tokens": 1000, "expiresAt": null }
     ]
   },
-  "holds": [{ "youtubeId": "dQw4w9WgXcQ", "minutes": 12 }],
+  "debt": 0,
+  "holds": [{ "youtubeId": "dQw4w9WgXcQ", "tokens": 840 }],
   "maxVideoMinutes": 180,
-  "blocked": false
+  "blocked": false,
+  "signupGrantTokens": 1000
 }
 ```
 
 - `plan.id` is `free` or `pro`. `periodEnd` (the end of the Pro term) is null for `free`.
-- `free` is the free video (one per rolling 24 hours, at most `maxVideoMinutes`
-  long). While `available` is false, `nextFreeAt` is when the next one opens.
-  `perWindow` is how many free videos the account gets per rolling 24 hours
-  after admin caps: 1 by default, 0 when an admin turned the free video off
-  (then `available` is false and `nextFreeAt` null for good).
-- `planMinutes` is the current monthly cycle: `remaining = granted - used`. All
-  zeros on `free`.
-- `credits.lots` lists only spendable lots (not expired, minutes left); `available`
-  is their sum. `expiresAt` is null for a lot that never expires.
-- `holds` are the runs in flight: their minutes are already taken out of the
-  buckets above and come back if the run fails or is served from cache.
-- `maxVideoMinutes` is the longest video the account can submit now: 180 with
-  any plan or credit minutes, else the free limit. `blocked` is the admin's
-  per-account kill switch.
-- Every number is a whole count of minutes or runs, every date an ISO string.
-  A test walks the payload and fails on any key matching `usd|cost|price|limit$`.
+- `balance` = plan remaining + credits − debt: what the account can spend now,
+  negative while it owes tokens. A video needs its whole estimate covered and no
+  debt; a chat turn or action needs a balance above 0.
+- `planTokens` is the current Pro cycle (`remaining = granted - used`, no
+  rollover); `null` without one.
+- `credits.lots` lists only spendable lots (not expired, tokens left);
+  `available` is their sum. `expiresAt` is null for a lot that never expires
+  (the signup grant).
+- `debt` is what runs cost beyond everything the account had (overdraft); the
+  next grant, pack or Pro cycle repays it first.
+- `holds` are the video runs in flight with the estimate each holds; the tokens
+  are already out of the buckets above and the unused part comes back when the
+  run settles on its real cost (all of it if the run fails or is served from cache).
+- `maxVideoMinutes` is the longest video the account can submit (180, or an
+  admin's lower cap). `blocked` is the admin's per-account kill switch.
+  `signupGrantTokens` is what the account got at signup (0 if never).
+- Every number is a whole count of tokens, minutes or runs, every date an ISO
+  string. A test walks the payload and fails on any key matching `usd|cost|price|limit$`.
 
 The legacy dollar summary (`?view=usd`) was removed with the dollar gate
-(billing-roles P3.2): query parameters are ignored and the minutes summary
+(billing-roles P3.2): query parameters are ignored and the token summary
 above is always returned.
 
 ---
@@ -937,12 +967,12 @@ Common error codes:
 
 - `400` - Bad Request (validation), `INVALID_CATEGORY`
 - `401` - Unauthorized
-- `402` - Payment Required: `INSUFFICIENT_MINUTES` (the minutes cannot cover the video; also returns `needed`, `available`, `nextFreeAt?`)
-- `403` - Forbidden: `REGISTRATION_CLOSED`, `DEMO_DISABLED`, `DEMO_RESTRICTED` (the shared demo account may not change its folders, a video's category or its profile, or force paid runs; see SECURITY.md), `COLD_RUN_FORBIDDEN`, `ACCOUNT_DELETION_PENDING`, `ACCOUNT_BLOCKED` (an admin blocked the account's submits)
+- `402` - Payment Required: `INSUFFICIENT_TOKENS` (the balance cannot cover a video's estimate, the account owes tokens, or a chat turn / action found no balance; also returns `needed` and `available`, the balance, negative while in debt)
+- `403` - Forbidden: `REGISTRATION_CLOSED`, `DEMO_DISABLED`, `DEMO_RESTRICTED` (the shared demo account may not change its folders, a video's category or its profile, or force paid runs; see SECURITY.md), `COLD_RUN_FORBIDDEN`, `ACCOUNT_DELETION_PENDING`, `ACCOUNT_BLOCKED` (an admin blocked the account's submits and chats)
 - `404` - Not Found: `SHARE_NOT_FOUND`
-- `409` - Conflict: `ALREADY_SHARED`
-- `422` - Unprocessable: `VIDEO_TOO_LONG_FOR_PLAN` (also returns `maxMinutes`)
-- `429` - Rate Limited: `RATE_LIMITED` (carries `retryAfterSec`, the whole seconds until the window reopens; also the shared submit burst limit: 20 submissions per user per hour across `POST /videos`, the assistant's generate route and playlist import), `TOO_MANY_RUNS` (an admin's cap on runs in flight; also returns `maxConcurrent`)
+- `409` - Conflict: `ALREADY_SHARED`, `HOLD_FINALIZED` / `HOLD_CONFLICT` (a run id reused for a finished run or another video), `ACCOUNT_BUSY` (an admin billing mutation stayed contended)
+- `422` - Unprocessable: `VIDEO_TOO_LONG` (over 180 min or an admin's lower cap; also returns `maxMinutes`), `IDEMPOTENCY_KEY_REUSED`, `METADATA_UNAVAILABLE` (a live stream or premiere; also 404 / 503, see ERROR-HANDLING.md)
+- `429` - Rate Limited: `RATE_LIMITED` (carries `retryAfterSec`, the whole seconds until the window reopens; also the shared submit burst limit: 20 submissions per user per hour across `POST /videos`, the assistant's generate route and playlist import, and the estimate route's own 60 lookups per user per hour), `TOO_MANY_RUNS` (an admin's cap on runs in flight; also returns `maxConcurrent`). There is no chat message allowance (`CHAT_LIMIT_REACHED` is gone)
 - `500` - Internal Server Error
 - `501` - Not Implemented: `PROVIDER_NOT_CONFIGURED` (no payment provider; nothing returns it yet)
 - `503` - Service Unavailable: `SERVICE_UNAVAILABLE`, `QUEUE_PUBLISH_FAILED`
@@ -1226,22 +1256,22 @@ Errors: `401 UNAUTHORIZED`, `403 ADMIN_PERMISSION_DENIED`, `400 VALIDATION_ERROR
 
 User-scope deletion (`DELETE /api/videos/:id`, JWT) is different: it removes only the caller's library row, their idempotency key and their own assistant notes for the video; the shared summary stays. User-account deletion is documented in [GDPR.md](./GDPR.md).
 
-### Minutes accounts: `/api/admin/billing/accounts/:userId`
+### Token accounts: `/api/admin/billing/accounts/:userId`
 
-Admin view and controls over a user's minutes ledger (`BillingService`). Mutations take JSON bodies that are **strict** (an unknown field such as `adminId` is `400`) and need a `reason` of 1–500 characters (trimmed, required). Who acted is the admin in the signed `x-admin-actor`; ledger entries and the `adminAudit` row both carry that admin, the `reason`, and the same `auditId`, which every mutation returns. The ranges (minutes `1…100000`, caps, expiry in the future, `periodEnd` in the future) are enforced by the service and answer `400`.
+Admin view and controls over a user's token ledger (`BillingService`). Mutations take JSON bodies that are **strict** (an unknown field such as `adminId` is `400`) and need a `reason` of 1–500 characters (trimmed, required). Who acted is the admin in the signed `x-admin-actor`; ledger entries and the `adminAudit` row both carry that admin, the `reason`, and the same `auditId`, which every mutation returns. The ranges (tokens `1…1000000`, caps, expiry in the future, `periodEnd` in the future) are enforced by the service and answer `400`.
 
 | Method | Path | Permission | Body / query |
 | --- | --- | --- | --- |
 | GET | `/accounts/:userId` | `billing:read` | query `ledgerLimit` (1–200, default 50), `ledgerBefore` (ISO) |
 | POST | `/accounts/:userId/plan` | `plan:set` | `{ planId: 'free' \| 'pro', periodEnd?, reason }` |
-| POST | `/accounts/:userId/credits` | `billing:grant` | `{ minutes, expiresAt?: ISO \| null, reason }` |
-| POST | `/accounts/:userId/caps` | `caps:set` | `{ maxVideoMinutes?, freeVideosPerDay?, maxConcurrent?, blocked?, reason }`, `null` clears a cap, at least one cap |
-| POST | `/accounts/:userId/adjust` | `billing:grant` | `{ bucket: 'plan' \| 'credit', minutes (signed, not 0), reason }` |
-| POST | `/accounts/:userId/recurring-grants` | `billing:grant` | `{ minutes, every: 'month', active, reason }` |
+| POST | `/accounts/:userId/credits` | `billing:grant` | `{ tokens, expiresAt?: ISO \| null, reason }` |
+| POST | `/accounts/:userId/caps` | `caps:set` | `{ maxVideoMinutes? (1–180), maxConcurrent?, blocked?, reason }`, `null` clears a cap, at least one cap |
+| POST | `/accounts/:userId/adjust` | `billing:grant` | `{ bucket: 'plan' \| 'credit', tokens (signed, not 0), reason }` |
+| POST | `/accounts/:userId/recurring-grants` | `billing:grant` | `{ tokens, every: 'month', active, reason }` |
 | DELETE | `/accounts/:userId/recurring-grants/:grantId` | `billing:grant` | `{ reason }` |
 
-- `GET` returns `AccountDetail`: `{ account, lots, holds, ledger (newest first), recurringGrants }`. The shared machine key may read it; a user with no account yet gets a fresh free one.
-- A manual **Pro** plan grants the 600-minute allowance for the first monthly cycle of a 12-month term (or until `periodEnd`); **free** stops plan minutes now. Credit lots never expire unless `expiresAt` is given. A negative `adjust` is refused when it would take a bucket below zero.
+- `GET` returns `AccountDetail`: `{ account, lots, holds, ledger (newest first), recurringGrants }`. The shared machine key may read it; a user with no account yet gets one (with the signup grant). The snapshot carries `planTokens`, `credits`, `debt`, `balance` and `signupGrantAt`; each ledger row its `unit` (`tokens`, or `minutes` on history from before the token migration) and `amount`.
+- A manual **Pro** plan grants the 20,000-token allowance for each monthly cycle of a 12-month term (or until `periodEnd`); **free** stops plan tokens now. Credit lots never expire unless `expiresAt` is given. A negative `adjust` is refused when it would take a bucket below zero. Any tokens an admin adds (a grant, a positive adjust, a Pro cycle, a recurring lot) repay the account's debt first.
 - Every mutation answers `{ before, after, auditId, … }` with `before`/`after` the account snapshot (`credits` adds `lotId`, `recurring-grants` adds `grantId`). A recurring grant is a row with a `nextRunAt` in the past; the repair job (P1.6) turns it into lots each month.
 - **Retrying safely:** send an `Idempotency-Key` header (8–128 characters of `A-Za-z0-9_-`, one per user action, e.g. per open dialog). The `auditId` is then derived from the key, the admin, the action and the target, so a repeated request replays the same ledger keys and changes nothing, answering the current state. Without the header every request is new.
 - **Reusing a key:** the same `Idempotency-Key` for a different request (another body, plan, scope or user) is `422 IDEMPOTENCY_KEY_REUSED`, not a silent replay of the first outcome. Use a new key per distinct action.
@@ -1294,7 +1324,7 @@ Stream a chat response about a specific video. Uses SSE for progressive token de
 ```json
 {
   "message": "What are the main ingredients?",
-  "chatHistory": [
+  "conversationHistory": [
     { "role": "user", "content": "Hello" },
     { "role": "assistant", "content": "Hi! How can I help?" }
   ]
@@ -1310,11 +1340,17 @@ data: {"type":"token","content":" ingredients"}
 data: {"type":"done"}
 ```
 
+**Tokens:** a turn needs a positive token balance to start and is debited its real LLM cost after the reply (the assistant reports it under the `X-Execution-Id` the gateway mints per request), so the balance moves after every `done`. The same holds for the library chat and both `/action` routes; `/library/search` runs no LLM and is free.
+
 **Errors:**
 
+- 400: `VALIDATION_ERROR` (invalid request body)
+- 402: `INSUFFICIENT_TOKENS` with `needed: 1` and `available` (the balance, ≤ 0), before anything is streamed
+- 403: `ACCOUNT_BLOCKED`
 - 404: Video not found
-- 422: Invalid request body
-- 500: LLM or internal error
+- 429: `RATE_LIMITED` (the assistant's 30 turns / min)
+- 502: `SERVICE_UNAVAILABLE` (the assistant failed)
+- 503: the token check could not read the account (fails closed)
 
 ---
 
@@ -1419,9 +1455,21 @@ scoped to `X-User-Id`; a body-supplied userId is never trusted.
 | `DELETE /internal/assistant/folders/:id` | Delete a folder |
 | `GET /internal/assistant/videos` | List the user's videos |
 | `PATCH /internal/assistant/videos/:id/move` | Move a video to a folder |
-| `POST /internal/assistant/generate` | Generate a video (via `videoService.createVideo` — keeps cost reservation + dispatch guard) |
+| `POST /internal/assistant/generate` | Generate a video (the same submission service as `POST /videos`: the token hold, the burst limit, the dispatch guard) |
+| `POST /internal/assistant/usage` | Report a chat turn's / action's LLM cost for the token ledger (below) |
 
 See [SERVICE-API.md](./SERVICE-API.md#internal-authentication-authenticateinternal) and [SECURITY.md](./SECURITY.md#service-to-service-auth).
+
+### Token-ledger callbacks (`routes/internal-billing.routes.ts`)
+
+Both need `X-Internal-Secret`; both are idempotent.
+
+| Method & path | Caller | Body | Effect |
+|---|---|---|---|
+| `POST /internal/run-cost` | vie-summarizer, once a completed run's `pipeline.timing` is persisted | `{ videoSummaryId, billingRunId?, costUsd, llmCalls? }` | Settles the run's hold on its real cost (`tokens = ceil(costUsd × 3000)`): the unused estimate goes back, an overrun is taken from what is left, then debt. The run is the row's stamp (`billingRunId`, else its `requestId`); a `billingRunId` that no longer matches the row (a newer dispatch replaced it) settles nothing — the repair job later releases the old hold, so the replaced run is never charged. Answers `{ received: true, status }` (`debited`, `already_debited`, `released`, `no_hold`, `ignored`). |
+| `POST /internal/assistant/usage` | vie-assistant, when a chat turn / library chat / action ends | `{ executionId, requestId, kind: 'chat' \| 'library_chat' \| 'action', costUsd, calls? }`, user from `X-User-Id` (`authenticateInternal`) | Debits the execution's real cost from the plan, then lots FIFO, then debt, once per `executionId` (`debit:exec:<executionId>:…`); a cost of 0 writes nothing. Answers `{ received: true, status, tokens }` (`debited`, `already_debited`, `free`). |
+
+`completed` on `POST /internal/status` no longer settles anything; `failed` and a cache-hit `completed` still release the hold in full.
 
 ---
 
@@ -1441,7 +1489,7 @@ Opening the stream never starts a run of a **failed** video: the API answers
 one `{ "event": "error", "code": "VIDEO_FAILED", "message": … }` event (the
 row's stored error message, or "This video failed to process. Retry it to run
 it again.") and ends, and the summarizer only consumes for a failed row. A
-re-run costs minutes, so it goes through `POST /videos` (quoted and held).
+re-run costs tokens, so it goes through `POST /videos` (quoted and held).
 
 ---
 

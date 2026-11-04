@@ -49,6 +49,10 @@ const versionsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(50).optional().default(10),
 });
 
+const estimateQuerySchema = z.object({
+  url: z.string().url().max(2048),
+});
+
 export async function videosRoutes(fastify: FastifyInstance) {
   const {
     videoService,
@@ -56,6 +60,9 @@ export async function videosRoutes(fastify: FastifyInstance) {
     idempotencyService,
     videoRepository,
     submitBurstLimiter,
+    estimateBurstLimiter,
+    videoEstimateService,
+    billingEnforcement,
   } = fastify.container;
   // Constructed here (not in the container) so route tests that override
   // container services via `buildTestApp` keep full control over its deps.
@@ -87,17 +94,36 @@ export async function videosRoutes(fastify: FastifyInstance) {
     return { videos, pagination: { limit, offset, total } };
   });
 
-  // GET /api/videos/:id
+  // GET /api/videos/estimate?url= — what a submit would hold ("≈ 840 tokens"),
+  // 0 when it is served free. Its own hourly bucket per user (60/h), apart
+  // from the submit bucket; METADATA_UNAVAILABLE maps as on submit.
+  fastify.get<{
+    Querystring: z.infer<typeof estimateQuerySchema>;
+  }>('/estimate', {
+    preHandler: [fastify.authenticate],
+  }, async (req) => {
+    const { url } = estimateQuerySchema.parse(req.query);
+    await estimateBurstLimiter.consume(req.user.userId);
+    return videoEstimateService.estimate(req.user.userId, url);
+  });
+
+  // GET /api/videos/:id — with `billing`: what this user's latest run of it holds or cost.
   fastify.get<{
     Params: z.infer<typeof idParamSchema>;
   }>('/:id', {
     preHandler: [fastify.authenticate],
   }, async (req) => {
     const { id } = idParamSchema.parse(req.params);
-    return offerUnlessDemo(req, await videoService.getVideo(req.user.userId, id));
+    const video = await videoService.getVideo(req.user.userId, id);
+    // Non-blocking: a ledger read failure leaves `billing` out, never the video.
+    const billing = await billingEnforcement.videoBilling(req.user.userId, video.videoSummaryId).catch((err: unknown) => {
+      req.log.warn({ err, videoSummaryId: video.videoSummaryId }, 'video_billing_read_failed');
+      return undefined;
+    });
+    return offerUnlessDemo(req, billing ? { ...video, billing } : video);
   });
 
-  // POST /api/videos — no per-route daily limit: the minutes ledger decides
+  // POST /api/videos — no per-route daily limit: the token ledger decides
   // what a run costs and the hourly burst guard below stops abuse (P3.2/P3.3).
   fastify.post<{
     Body: z.infer<typeof createVideoSchema>;

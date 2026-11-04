@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hmac
+from typing import Any
 from uuid import uuid4
 
 from fastapi import FastAPI, Header, HTTPException, Request
@@ -28,6 +29,7 @@ from src.models.requests import (
 )
 from src.models.responses import ActionResponse
 from src.services.assistant import AssistantService
+from src.services.execution_cost import metered_stream, report_in_background, start_execution
 from src.services.observability import chat_trace, span
 from src.services.rag import RAGService
 
@@ -54,6 +56,56 @@ def _correlation_ids(req: Request) -> tuple[str | None, str | None]:
     the ledger, so the trace and the ``llm_usage`` rows always name the same session.
     """
     return valid_correlation_id(req.headers.get(REQUEST_ID_HEADER)), llm_session_id_var.get()
+
+
+def _action_response(
+    action: str, trace_id: str, status_code: int, *, data: Any = None, error: str | None = None
+) -> JSONResponse:
+    """The `/action` envelope: success with `data`, or a failure with its message."""
+    content = ActionResponse(
+        success=error is None, action=action, data=data, error=error, trace_id=trace_id
+    ).model_dump()
+    return JSONResponse(status_code=status_code, content=content)
+
+
+async def _run_action(
+    service: AssistantService,
+    request: ActionRequest,
+    user_id: str | None,
+    session_id: str | None,
+    request_id: str | None,
+) -> JSONResponse:
+    """Dispatch one action inside its trace and map its outcome to the response."""
+    trace_id = uuid4().hex[:12]
+    action = request.action
+    async with chat_trace(
+        video_summary_id=request.video_id,
+        youtube_id=await service.youtube_id_of(request.video_id),
+        user_id=user_id,
+        session_id=session_id,
+        request_id=request_id,
+        tags=["action", f"action:{action}"],
+        metadata={"action": action, "traceId": trace_id},
+    ):
+        async with span(f"action:{action}"):
+            try:
+                result = await service.dispatch_action(
+                    action=action,
+                    video_id=request.video_id,
+                    params=dict(request.params),
+                    user_id=user_id,
+                )
+            except ValidationError as exc:
+                logger.warning(
+                    "action_validation_failed", trace_id=trace_id, action=action, error=exc.message
+                )
+                return _action_response(action, trace_id, exc.status_code, error=exc.message)
+            except NotFoundError as exc:
+                return _action_response(action, trace_id, exc.status_code, error=exc.message)
+            except AppError as exc:
+                logger.exception("action_app_error", trace_id=trace_id, action=action)
+                return _action_response(action, trace_id, exc.status_code, error=exc.message)
+            return _action_response(action, trace_id, 200, data=result)
 
 
 def create_app() -> FastAPI:
@@ -135,16 +187,27 @@ def create_app() -> FastAPI:
         # (the service adds the video's YouTube id once it loaded the video).
         llm_feature_var.set("assistant:rag_chat")
         bind_usage_ids(user_id=user_id, request_id=request_id, video_summary_id=request.video_id)
+        # Token ledger: the turn's cost goes back to vie-api under X-Execution-Id.
+        meter = start_execution(
+            execution_id=req.headers.get("X-Execution-Id"),
+            kind="chat",
+            user_id=user_id,
+            request_id=request_id,
+        )
 
         return StreamingResponse(
-            service.chat(
-                video_id=request.video_id,
-                message=request.message,
-                history=request.conversation_history,
-                user_id=user_id,
-                session_id=session_id,
-                request_id=request_id,
-                confirm_token=request.confirm_token,
+            metered_stream(
+                service.chat(
+                    video_id=request.video_id,
+                    message=request.message,
+                    history=request.conversation_history,
+                    user_id=user_id,
+                    session_id=session_id,
+                    request_id=request_id,
+                    confirm_token=request.confirm_token,
+                ),
+                meter,
+                getattr(req.app.state, "api_client", None),
             ),
             media_type="text/event-stream",
             headers={
@@ -189,17 +252,27 @@ def create_app() -> FastAPI:
         # Propagate tracking context onto every llm_usage row for this request.
         llm_feature_var.set("assistant:library_chat")
         bind_usage_ids(user_id=user_id, request_id=request_id)
+        meter = start_execution(
+            execution_id=req.headers.get("X-Execution-Id"),
+            kind="library_chat",
+            user_id=user_id,
+            request_id=request_id,
+        )
 
         return StreamingResponse(
-            service.library_chat(
-                video_ids=list(request.video_ids),
-                message=request.message,
-                history=request.conversation_history,
-                user_id=user_id,
-                session_id=session_id,
-                request_id=request_id,
-                inventory=[lv.model_dump() for lv in request.library],
-                confirm_token=request.confirm_token,
+            metered_stream(
+                service.library_chat(
+                    video_ids=list(request.video_ids),
+                    message=request.message,
+                    history=request.conversation_history,
+                    user_id=user_id,
+                    session_id=session_id,
+                    request_id=request_id,
+                    inventory=[lv.model_dump() for lv in request.library],
+                    confirm_token=request.confirm_token,
+                ),
+                meter,
+                getattr(req.app.state, "api_client", None),
             ),
             media_type="text/event-stream",
             headers={
@@ -287,79 +360,16 @@ def create_app() -> FastAPI:
         llm_feature_var.set(f"assistant:action:{request.action}")
         bind_usage_ids(user_id=user_id, request_id=request_id, video_summary_id=request.video_id)
 
-        trace_id = uuid4().hex[:12]
-        async with chat_trace(
-            video_summary_id=request.video_id,
-            youtube_id=await service.youtube_id_of(request.video_id),
+        meter = start_execution(
+            execution_id=req.headers.get("X-Execution-Id"),
+            kind="action",
             user_id=user_id,
-            session_id=session_id,
             request_id=request_id,
-            tags=["action", f"action:{request.action}"],
-            metadata={"action": request.action, "traceId": trace_id},
-        ):
-            async with span(f"action:{request.action}"):
-                try:
-                    result = await service.dispatch_action(
-                        action=request.action,
-                        video_id=request.video_id,
-                        params=dict(request.params),
-                        user_id=user_id,
-                    )
-                except ValidationError as exc:
-                    logger.warning(
-                        "action_validation_failed",
-                        trace_id=trace_id,
-                        action=request.action,
-                        error=exc.message,
-                    )
-                    return JSONResponse(
-                        status_code=exc.status_code,
-                        content=ActionResponse(
-                            success=False,
-                            action=request.action,
-                            data=None,
-                            error=exc.message,
-                            trace_id=trace_id,
-                        ).model_dump(),
-                    )
-                except NotFoundError as exc:
-                    return JSONResponse(
-                        status_code=exc.status_code,
-                        content=ActionResponse(
-                            success=False,
-                            action=request.action,
-                            data=None,
-                            error=exc.message,
-                            trace_id=trace_id,
-                        ).model_dump(),
-                    )
-                except AppError as exc:
-                    logger.exception(
-                        "action_app_error",
-                        trace_id=trace_id,
-                        action=request.action,
-                    )
-                    return JSONResponse(
-                        status_code=exc.status_code,
-                        content=ActionResponse(
-                            success=False,
-                            action=request.action,
-                            data=None,
-                            error=exc.message,
-                            trace_id=trace_id,
-                        ).model_dump(),
-                    )
-
-                return JSONResponse(
-                    status_code=200,
-                    content=ActionResponse(
-                        success=True,
-                        action=request.action,
-                        data=result,
-                        error=None,
-                        trace_id=trace_id,
-                    ).model_dump(),
-                )
+        )
+        try:
+            return await _run_action(service, request, user_id, session_id, request_id)
+        finally:
+            report_in_background(meter, getattr(req.app.state, "api_client", None))
 
     return application
 

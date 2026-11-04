@@ -24,6 +24,21 @@ export function submitBurstKey(userId: string): string {
   return `vie:api:submit-burst:${userId}`;
 }
 
+/** Estimate lookups (GET /api/videos/estimate) per user per hour (Kfir, 2026-11-03). */
+export const ESTIMATE_LIMIT_PER_HOUR = 60;
+
+/** The estimate lookups' own bucket, apart from the submit bucket. */
+export function estimateBurstKey(userId: string): string {
+  return `vie:api:estimate-burst:${userId}`;
+}
+
+export interface BurstLimiterOptions {
+  /** The Redis key of a user's bucket (default: the submit bucket). */
+  key?: (userId: string) => string;
+  /** What the refusal says was counted (default: "submissions"). */
+  what?: string;
+}
+
 /**
  * Abuse guard for the submit paths — not a billing limit, so it knows nothing
  * about minutes or plans. Public contract, extracted so the container can wire
@@ -63,11 +78,18 @@ function isBurstHit(reply: unknown): reply is [number, number] {
  * disables the guard.
  */
 export class SubmitBurstLimiter implements ISubmitBurstLimiter {
+  private readonly key: (userId: string) => string;
+  private readonly what: string;
+
   constructor(
     private readonly redis: Redis,
     private readonly limitPerHour: number,
     private readonly logger: FastifyBaseLogger,
-  ) {}
+    options: BurstLimiterOptions = {},
+  ) {
+    this.key = options.key ?? submitBurstKey;
+    this.what = options.what ?? 'submissions';
+  }
 
   async consume(userId: string): Promise<void> {
     if (this.limitPerHour <= 0) return;
@@ -76,7 +98,7 @@ export class SubmitBurstLimiter implements ISubmitBurstLimiter {
     if (hit === null || hit.count <= this.limitPerHour) return;
 
     throw new RateLimitedError(
-      `Too many submissions in the last hour. Try again in ${minutesLeft(hit.secondsLeft)} min.`,
+      `Too many ${this.what} in the last hour. Try again in ${minutesLeft(hit.secondsLeft)} min.`,
       Math.max(1, hit.secondsLeft),
     );
   }
@@ -86,7 +108,7 @@ export class SubmitBurstLimiter implements ISubmitBurstLimiter {
       const reply: unknown = await this.redis.eval(
         CONSUME_LUA,
         1,
-        submitBurstKey(userId),
+        this.key(userId),
         WINDOW_SECONDS,
       );
       if (isBurstHit(reply)) return { count: reply[0], secondsLeft: reply[1] };

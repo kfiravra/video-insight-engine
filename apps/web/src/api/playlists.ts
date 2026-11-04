@@ -25,15 +25,15 @@ export interface FailedVideoImport {
   youtubeId: string;
   title: string;
   position: number;
-  /** A stable code such as INSUFFICIENT_MINUTES or METADATA_UNAVAILABLE, or the error message. */
+  /** A stable code such as INSUFFICIENT_TOKENS or METADATA_UNAVAILABLE, or the error message. */
   error: string;
 }
 
-/** The up-front quote for a whole playlist, in minutes. */
+/** The up-front quote for a whole playlist, in tokens: the items' estimates against the balance. */
 export interface PlaylistQuote {
-  neededMinutes: number;
-  availableMinutes: number;
-  freeVideoAvailable: boolean;
+  neededTokens: number;
+  /** The balance; negative while the account is in debt. */
+  availableTokens: number;
 }
 
 export interface PlaylistImportResult {

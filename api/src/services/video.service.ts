@@ -19,7 +19,7 @@ export interface CreateVideoOptions {
   folderId?: string;
   bypassCache?: boolean;
   providers?: ProviderConfig;
-  /** What pays for a run this call dispatches (`paid` = plan / credit minutes): the queue priority. */
+  /** The queue priority of a run this call dispatches (`paid` = a Pro account's run). */
   queuePlan: QueuePlan;
   /**
    * Originating Fastify `request.id`. Flows into the queue payload (as the
@@ -27,7 +27,7 @@ export interface CreateVideoOptions {
    * so the downstream pipeline binds the same id no matter which path runs.
    */
   requestId?: string;
-  /** The minutes ledger's run id (P3.1), stamped beside `requestId` on the dispatched row. */
+  /** The token ledger's run id (P3.1), stamped beside `requestId` on the dispatched row. */
   billingRunId?: string;
   /** The chat session that asked for the video (D8); tagged on the run it dispatches. */
   chatSessionId?: string;
@@ -95,7 +95,7 @@ interface DispatchResult {
 
 /**
  * A dispatch the guard refused started no run for this caller — a live run
- * already owns the row — so the caller is attached to it and its minutes hold
+ * already owns the row — so the caller is attached to it and its token hold
  * goes back now (I1) instead of after the repair job's max hold age.
  */
 function attachedUnless(dispatched: boolean): { attached?: true } {

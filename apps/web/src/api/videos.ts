@@ -1,6 +1,14 @@
 import { request } from "./client";
 import type { Video } from "@/types";
-import type { TabEntry, VIEResponseMeta, SourceLanguageBlock } from "@vie/types";
+import type {
+  SourceLanguageBlock,
+  TabEntry,
+  VideoBilling,
+  VideoEstimateResponse,
+  VIEResponseMeta,
+} from "@vie/types";
+
+export type { VideoBilling, VideoEstimateResponse };
 
 export interface ListVideosParams {
   folderId?: string;
@@ -47,6 +55,9 @@ export interface VideoDetail {
    *  Opening it is always free; "update to latest" is offered, never forced.
    *  Absent otherwise (never serialized as `false` or `null`). */
   updateAvailable?: boolean;
+  /** What the requesting user's latest run of this video holds or cost, in
+   *  tokens. Optional: a server that predates tokens does not send it. */
+  billing?: VideoBilling;
 }
 
 /** What `POST /videos` answers. `alreadyExists` marks a video the user already
@@ -73,6 +84,12 @@ export const videosApi = {
 
   async get(id: string): Promise<VideoDetail> {
     return request(`/videos/${id}`);
+  },
+
+  /** What submitting `url` would hold ("≈ 840 tokens"), or 0 tokens and
+   *  `free` when the video is served free. Read-only: it starts nothing. */
+  async estimate(url: string, signal?: AbortSignal): Promise<VideoEstimateResponse> {
+    return request(`/videos/estimate?${new URLSearchParams({ url }).toString()}`, { signal });
   },
 
   async create(

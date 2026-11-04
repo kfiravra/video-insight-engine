@@ -344,36 +344,32 @@ Rate limits (`rate_limit.py`, in-memory sliding window, keyed on `X-User-Id`
 with per-endpoint fallbacks): `/chat` + `/library/chat` 30/min, `/action`
 30/min, `/library/search` 60/min.
 
-### Free-account chat fair use
+### Execution cost (token ledger)
 
-The assistant knows nothing about plans. The gateway (vie-api) caps chat for
-**free** accounts before it forwards a message: `POST /api/videos/:videoSummaryId/chat`
-and `POST /api/assistant/library/chat` call `chatFairUse.consume`
-(`api/src/services/chat-fair-use.service.ts`) in the handler, one shared allowance of
-`CHAT_FREE_MESSAGES_PER_DAY` (default 50, `0` = off) messages in any rolling
-24 hours (Q7, D6). It is counted after the global rate limiter, body validation and
-the access check, not in a preHandler: the rate limiter runs last among the
-preHandlers, so a preHandler count would burn a message on a request the limiter
-then turns away.
+The assistant knows nothing about plans or balances. vie-api admits a chat turn,
+library chat or action only on a positive token balance, mints an execution id per
+request and forwards it as **`X-Execution-Id`** next to `X-User-Id` and
+`X-Request-ID`. The assistant meters the request and hands the cost back:
 
-- The plan comes from `BillingService.summary(userId).plan.id`. Only `free` is
-  counted; Pro is unlimited and never touches Redis. Chat cost is not charged
-  to the minutes ledger.
-- The window is a Redis sorted set, `vie:api:chat-fair-use:<userId>`: one member
-  per admitted message, scored by its time in ms. One Lua script drops entries
-  older than 24 hours, then admits the message only while fewer than the limit
-  remain. A fixed-window counter would let a user send 50 just before it resets
-  and 50 just after, and could not say when the next message is allowed. The
-  set holds at most 50 short members per free user and expires after 24 hours
-  idle.
-- Over the limit the gateway answers `429 CHAT_LIMIT_REACHED` with `nextAt` =
-  oldest counted message + 24 hours (see [ERROR-HANDLING.md](./ERROR-HANDLING.md)).
-  Refused messages are not recorded, so retrying never extends the wait. The
-  assistant's own 30/min window still applies on top.
-- Fail-open: a Redis or plan-lookup error logs a warning and forwards the
-  message. The `/action` routes are not chat messages and are not counted.
-- The shared demo account is an ordinary free account, so every demo visitor
-  draws on one allowance.
+- Each of `/chat`, `/library/chat` and `/action` starts an `ExecutionCost`
+  (`services/execution_cost.py`) in a contextvar, so concurrent requests never share
+  one. No `X-Execution-Id` (or no user) means no meter and no report.
+- `LLMProvider` adds the cost of every final LLM response the request makes:
+  `complete_with_messages`, every `complete_with_tools` round of the agent loop, and
+  streamed answers — rebuilt from their chunks with `litellm.stream_chunk_builder` and
+  priced like a non-streamed response (cache reads and writes included; streams always
+  ask for usage). A stream the client closes early still counts what it produced. Tool
+  calls into vie-api cost nothing here; `generate_video` is billed by vie-api's own
+  submit path.
+- When the request ends — the stream finished or was cut off, or the action returned —
+  the total goes to vie-api's `POST /internal/assistant/usage {executionId, requestId,
+  kind, costUsd, calls}` as `X-User-Id` (`ApiClient.report_execution_usage`), in a
+  background task, so a disconnect cannot cancel it; three tries on transport errors and
+  5xx; a failure is logged and never reaches the user. vie-api debits it once per
+  execution id; a report that never lands is backfilled by vie-api's repair job from the
+  assistant's `llm_usage` rows.
+- `llm_usage` rows are written exactly as before; the meter is a separate,
+  in-process total.
 
 ---
 

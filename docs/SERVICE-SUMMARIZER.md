@@ -54,7 +54,7 @@ services/summarizer/
     │   ├── usage_tracker.py      # LLM usage tracking
     │   ├── override_state.py     # In-memory override state
     │   ├── video_purge.py        # Qdrant + S3 prefix + Redis purge for one video (per-store warnings)
-    │   ├── status_callback.py    # Status callback
+    │   ├── status_callback.py    # Status callback + run-cost hand-back (POST /internal/run-cost)
     │   │
     │   ├── pipeline/             # Plan-based summarization pipeline
     │   │   ├── tier_probe.py         # Tier probe: domain+format+has_visual_demo+transcript_usable at transcript-ready (Haiku, temp 0)
@@ -978,7 +978,9 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v11): description analysis, 
     │   LLM_TRANSLATION_MODEL (gpt-6-luna, reasoning off; stage
     │   `rag_translation`), Whisper translate only when this run transcribed the audio
     │   (docs/RAG.md §Non-English transcripts). Once `done` is out, the
-    │   runner waits for it (≤ 60 s) before persisting pipeline.timing.
+    │   runner waits for it (≤ 60 s) before persisting pipeline.timing; a
+    │   completed run then posts its pipeline.timing.costUsd to vie-api's
+    │   POST /internal/run-cost, which settles the run's token hold.
     └─▶ Owns the Redis response-cache write for non-English videos:
     │   assembly phase intentionally SKIPS the cache write when
     │   ctx.source_language_code is set. Translation then writes the final

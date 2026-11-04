@@ -175,7 +175,7 @@ export interface UserCostDetail {
   adjustments: UserCostAdjustment[];
 }
 
-/** What vie-api answers a minutes grant with (the account snapshots are not needed by the form). */
+/** What vie-api answers a tokens grant with (the account snapshots are not needed by the form). */
 export interface GrantCreditResponse {
   lotId: string;
   /** Pairs the ledger lot with its `adminAudit` row. */
@@ -183,8 +183,8 @@ export interface GrantCreditResponse {
 }
 
 export interface GrantCreditRequest {
-  /** Whole minutes, 1–100000. */
-  minutes: number;
+  /** Whole tokens, 1–1,000,000. */
+  tokens: number;
   reason: string;
   /** ISO 8601 with an offset; omitted = the lot never expires. */
   expiresAt?: string;
@@ -483,7 +483,7 @@ export const api = {
     costDetail: (userId: string, days = 30) =>
       apiFetch<UserCostDetail>(`/users/${encodeURIComponent(userId)}/costs${qs({ days })}`),
     /**
-     * Grant minutes (a credit lot) as the signed-in admin. The server takes who
+     * Grant tokens (a credit lot) as the signed-in admin. The server takes who
      * acted from the session, never from the body. `idempotencyKey` (one per
      * submission) lets a retry after a timeout apply once.
      */

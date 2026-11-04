@@ -1,9 +1,10 @@
 /**
- * D-LIB through the minutes ledger: "update to latest version" costs what a
+ * D-LIB through the token ledger: "update to latest version" costs what a
  * new video at the current version would. A completed current version is a
- * free update (the hold goes back); one that needs a run is held and settled
- * when the run completes; a user the ledger will not pay for is still served
- * a completed current version and gets 402 only when a run would happen.
+ * free update (the hold goes back); one that needs a run holds its estimate
+ * and settles on the run's real cost when the run-cost callback arrives (not
+ * on "completed"); a user the ledger will not pay for is still served a
+ * completed current version and gets 402 only when a run would happen.
  * Real VideoService, VideoSubmissionService and LedgerEnforcement on the test
  * replica set; only the pipeline dispatch is stubbed.
  */
@@ -15,7 +16,7 @@ import { config } from '../../config.js';
 import { createBillingIndexes } from '../../plugins/mongodb.js';
 import { IdempotencyRepository } from '../../repositories/idempotency.repository.js';
 import { VideoRepository } from '../../repositories/video.repository.js';
-import { InsufficientMinutesError } from '../../utils/errors.js';
+import { InsufficientTokensError } from '../../utils/errors.js';
 import { IdempotencyService, computeContentKey } from '../idempotency.service.js';
 import { VideoService } from '../video.service.js';
 import { VideoSubmissionService } from '../video-submission.service.js';
@@ -31,7 +32,7 @@ const URL = `https://www.youtube.com/watch?v=${YOUTUBE_ID}`;
 const CURRENT_KEY = computeContentKey({ youtubeId: YOUTUBE_ID, providers: undefined, version: 1 });
 const logger = mockLogger as unknown as FastifyBaseLogger;
 
-describe('update to latest version on the minutes ledger (D-LIB)', () => {
+describe('update to latest version on the token ledger (D-LIB)', () => {
   let h: BillingHarness;
   let enforcement: LedgerEnforcement;
   let submissions: VideoSubmissionService;
@@ -51,8 +52,8 @@ describe('update to latest version on the minutes ledger (D-LIB)', () => {
   const update = () => submissions.submit({ userId, url: URL, updateToLatest: true, requestId: 'client-req' });
   const entryRow = async (): Promise<ObjectId | undefined> =>
     (await getTestDb().collection('userVideos').findOne({ _id: new ObjectId(entryId) }))?.videoSummaryId;
-  /** Spend the free video on another video, so the ledger will not pay for this one. */
-  const spendFreeVideo = () => h.gate.admit({ requestId: 'other-run', userId, youtubeId: 'othervideo1', durationSec: 300 });
+  /** Hold most of the signup grant for another video (750 of 1,000), so the ledger will not pay for this one (840). */
+  const spendBalance = () => h.gate.admit({ requestId: 'other-run', userId, youtubeId: 'othervideo1', durationSec: 300 });
 
   beforeAll(async () => {
     await createBillingIndexes(getTestDb());
@@ -91,20 +92,26 @@ describe('update to latest version on the minutes ledger (D-LIB)', () => {
     expect([(await h.billing.summary(userId)).holds, await ledgerCount('debit')]).toEqual([[], 0]);
   });
 
-  it('should hold for a run of the current version and settle it when the run completes', async () => {
+  it('should hold for a run of the current version and settle it on the run\'s cost, not on "completed"', async () => {
     const result = await update();
     const newRow = await entryRow();
+    const rowId = newRow?.toHexString() ?? '';
     const heldBefore = (await h.billing.summary(userId)).holds.length;
 
-    await enforcement.runFinished(newRow?.toHexString() ?? '', 'completed');
+    await enforcement.runFinished(rowId, 'completed');
+    const debitsOnCompleted = await ledgerCount('debit');
+    const stamp = await cache().findOne({ _id: newRow });
+    const status = await enforcement.runCosted(rowId, stamp?.billingRunId ?? null, 0.2);
 
-    expect([result.outcome, heldBefore, await ledgerCount('debit'), newRow?.equals(oldRow)]).toEqual(['created', 1, 1, false]);
+    expect([result.outcome, heldBefore, debitsOnCompleted, status, await ledgerCount('debit'), newRow?.equals(oldRow)])
+      .toEqual(['created', 1, 0, 'debited', 1, false]);
+    expect((await h.billing.summary(userId)).balance).toBe(400);
     expect(await cache().findOne({ _id: oldRow })).toMatchObject({ status: 'completed', pipelineVersion: 'v0-old' });
   });
 
   it('should serve a completed current version to a user the ledger will not pay for', async () => {
     const current = await seedRow({ status: 'completed', pipelineVersion: config.PIPELINE_VERSION, dedupKey: CURRENT_KEY });
-    await spendFreeVideo();
+    await spendBalance();
 
     const result = await update();
 
@@ -112,9 +119,9 @@ describe('update to latest version on the minutes ledger (D-LIB)', () => {
   });
 
   it('should answer 402 when the update needs a run the ledger will not pay for, leaving the copy as it was', async () => {
-    await spendFreeVideo();
+    await spendBalance();
 
-    await expect(update()).rejects.toBeInstanceOf(InsufficientMinutesError);
+    await expect(update()).rejects.toBeInstanceOf(InsufficientTokensError);
     expect([(await entryRow())?.equals(oldRow), await cache().countDocuments()]).toEqual([true, 1]);
   });
 });

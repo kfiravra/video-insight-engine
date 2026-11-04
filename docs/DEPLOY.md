@@ -368,89 +368,105 @@ Demotion stops new panel logins at once. A demoted user who is already logged in
 
 Boot seeding from `ADMIN_EMAILS` does not replace this step: accounts that were made admin before the roles model existed carry no `roleSource`, so the list treats them as admins set by hand and never demotes them. A later billing migration moves them onto the list.
 
-### Migrate to the minutes ledger
+### Migrate to the token ledger
 
-One-off, at the billing release. `scripts/migrate-billing.ts` moves the accounts from the dollar gate onto the minutes ledger, and `scripts/prod-count.js` counts what it will touch first. Do it after the replica-set conversion above (the script refuses a standalone Mongo, dry run included) and with `ADMIN_EMAILS` set in `.env`: the migration keeps `ADMIN_EMAILS` as its keep-list, and the boot seeding keeps a migrated admin only while that admin's email is on the list.
+One-off, at the billing-tokens release. `scripts/migrate-billing-tokens.ts` (planner `scripts/migrate-billing-tokens-plan.ts`) converts the minutes ledger in place to the token ledger at the pack rate, **1 minute = 100/3 tokens** ($5 bought 150 minutes and buys 5,000 tokens). The minutes migration of the billing release (billing-roles P3.8, `scripts/migrate-billing.ts`) ran on prod on 2026-10-29; its scripts were removed with this one.
 
-> **Enforcement starts at the billing deploy, not at the migration.** There is no flag: from the moment the deploy finishes, the minutes ledger decides every submit. An account has no plan until the migration has run, so **Pro and team users count as free** (one free video of up to 30 minutes per 24 hours, nothing longer) until it does. Merge in a quiet moment, have the deploy healthy, and run the migration **immediately** after (minutes, not hours). Count before the merge; the dry run reads only, so it runs on the box itself right after the deploy, and Kfir reads its table before `--run`.
+> **The token gate starts at the deploy.** From the moment the new vie-api runs, every video and chat turn spends tokens. An account still in minutes reads as an empty token account (0 tokens), so its owner is refused (402 `INSUFFICIENT_TOKENS`) until the migration has run. New signups get their 1,000 tokens at once. Deploy in a quiet moment with **no run in flight** (the migration refuses while a minute hold is open) and run the migration **immediately** after.
 
-Order:
+What it does, per account, in one transaction each (re-planned from what is stored at that moment):
 
-1. Before the merge, on the box: count (step 1).
-2. Before the merge, on the box: Mongo is already a replica set. The conversion ships first as its own small PR (`fix/mongo-replset`) and deploys alone, by "Convert Mongo to a replica set" above; do not merge billing until its step 4 has passed. Then the `.env` rows from the billing release and the `ADMIN_EMAILS` row.
-3. Merge. The deploy starts enforcement; it does not touch vie-mongodb, whose compose definition the replica-set PR already shipped.
-4. Immediately, on the box: `migrate_billing` dry run (reads only; Kfir signs off its table), run, run again, verify (steps 2 and 3).
+1. An open minute lot becomes a token lot of `round(minutesRemaining × 100/3)` with the same expiry; an expired one just closes. The minute lot is closed (`minutesRemaining: 0`, `convertedToLotId`) by a `convert` minute entry, and the token lot opens with a `convert` token entry (`convert:<accountId>:lot:<lotId>[:tokens]`).
+2. A running Pro cycle gets the 20,000-token allowance with `tokensUsed = round(minutesUsed × 100/3)`; the term (`plan.periodStart/End`) is unchanged. A free plan or an ended cycle gets an empty token bucket. The cycle's minutes left close with a `convert` minute entry.
+3. Every live user without `grant:signup:<userId>` gets the one-time 1,000-token signup grant (never expires). A user without an account gets one, with the grant, through vie-api's own `BillingService.ensureAccount`. An erased user's tombstone account is converted, with no grant.
+4. `buckets.free`, the minute bucket fields and `caps.freeVideosPerDay` are unset; `buckets.debt` starts at 0.
+5. Recurring grants gain `tokens = round(minutes × 100/3)` (the demo's 300 → 10,000 a month, an eval account's 3,000 → 100,000); `minutes` stays for history.
+6. `billingShadow` is dropped, and so are the `creditLots` indexes partial on `minutesRemaining` (vie-api builds the token ones at boot).
 
-What it does, in this order, through the same code vie-api runs (the ledger invariants hold; nothing writes a billing collection by hand):
+Minute ledger entries stay as history (no `unit`); vie-admin shows them in minutes. Every `convert` entry it writes carries actor `system:migration` and reason `migration: minutes to tokens`; a signup grant it writes is the same entry vie-api writes at registration (`source: system/signup`, no actor). An account that came in owing (vie-api charged it in the window between the deploy and the migration) has the debt repaid from its converted tokens, through vie-api's own repay (`repay:convert:<accountId>:account`). After the run it drift-checks every account with vie-api's own `verifyAccountById` and exits 1 on any drift. It refuses (exit 1, nothing written, dry run included) on a standalone Mongo; `--run` refuses while a minute hold is open, and against this server's Mongo unless you pass `--yes-prod`. A second run changes nothing and prints zeros.
 
-1. An account for every user that is not soft-deleted.
-2. `tier: 'pro'` becomes a manual Pro plan for 12 months. `tier: 'team'` becomes the same Pro plan plus a 600-minute lot that expires in 12 months (reason `migration: team tier`). An account that is already on Pro is left alone and reported.
-3. Roles: an old `role: 'admin'` user whose email is on the keep-list becomes `roles: ['admin']` with `roleSource: 'env'`; every other old admin is demoted and loses the panel. It replaces the demote step above, so do not run both.
-4. Credit: the `userCostAdjustments` dated the day of the migration (UTC) that the user's spend that day has not used up become one lot at $1 = 30 minutes, expiring in 12 months. The rule is deliberately conservative: net credit granted that day minus everything spent that day, rounded down to whole minutes. Adjustments of any other day had already expired and are dropped.
-5. The demo account (`DEMO_USER_EMAIL`) gets the same manual Pro plan for 12 months, as a step of its own (`plan-demo`, reason `migration: demo account`), in addition to the recurring grant below. It is skipped and reported if the account is already on Pro, including when the tier step above puts it there.
-6. Recurring grants: `DEMO_USER_EMAIL` gets 300 minutes a month and each `--eval-emails` account 3,000. An account that already has an active recurring grant (a hand-made one counts), or is on both lists, gets no second grant and is reported under "Skipped". The first month is granted by the next repair-job tick, then monthly.
-7. Chat prompt text: vie-assistant no longer stores `prompt_preview` in `llm_usage`, and this step unsets the field on the `service: 'assistant'` rows written before that. The dry run prints the count of rows still holding text, `--run` clears them, and a second run finds none. It goes through `LlmUsageRepository`, like every other write here, and has no audit row because it changes no account. Deploy the new vie-assistant first (the billing deploy does); an old one would keep writing previews after the clear. After 90 days the repair job also unsets `prompt_preview`, `user_id` and `request_id` on every row (`docs/PRIVACY.md`).
-
-Every plan, lot, recurring-grant and role step (steps 2 to 6) also gets an `adminAudit` row (actor `system:migration`, the same action names the admin routes use, `roles.migration.promote` / `.demote` for roles), written before the step and keyed by the id the ledger entries carry.
-
-It refuses to run (exit 1, nothing written, dry run included) if it would leave no active admin or if Mongo is a standalone server, and it refuses `--run` against this server's Mongo unless you pass `--yes-prod`. Every step has an id derived from the user and the step, so running it again, even hours later, changes nothing; if a run stops halfway, run it again and it finishes.
-
-**Set up.** The migration reuses the `vie-api-tools` image from "Create the first user". Rebuild it after the deploy, because the script imports the billing code from the box's checkout. Both script files are mounted. The keep-list is `ADMIN_EMAILS` unless you pass `--admin-emails <list>`, and the dry run prints both lists and warns when they differ.
+**Set up.** Reuse the `vie-api-tools` image from "Create the first user", rebuilt after the deploy (the script imports the billing code from the checkout):
 
 ```bash
 docker build --target builder -f api/Dockerfile -t vie-api-tools .
-set -a; . ./.env; set +a    # exports MONGO_ROOT_*, ADMIN_EMAILS, DEMO_USER_EMAIL
-read -r -p "Eval account email(s), comma-separated, blank for none: " VIE_EVAL_EMAILS
-export VIE_EVAL_EMAILS
+set -a; . ./.env; set +a    # exports MONGO_ROOT_*
 
-migrate_billing() {
+migrate_tokens() {
   URI="mongodb://${MONGO_ROOT_USER}:${MONGO_ROOT_PASS}@vie-mongodb:27017/video-insight-engine?authSource=admin"
   docker run --rm --network vie-network \
-    -v "$PWD/scripts/migrate-billing.ts:/app/api/migrate-billing.ts:ro" \
-    -v "$PWD/scripts/migrate-billing-plan.ts:/app/api/migrate-billing-plan.ts:ro" \
-    -e MONGODB_URI="$URI" -e ADMIN_EMAILS -e DEMO_USER_EMAIL -e VIE_EVAL_EMAILS \
-    -w /app/api vie-api-tools \
-    sh -c 'npx tsx migrate-billing.ts --eval-emails "$VIE_EVAL_EMAILS" "$@"' migrate "$@"
+    -v "$PWD/scripts/migrate-billing-tokens.ts:/app/api/migrate-billing-tokens.ts:ro" \
+    -v "$PWD/scripts/migrate-billing-tokens-plan.ts:/app/api/migrate-billing-tokens-plan.ts:ro" \
+    -e MONGODB_URI="$URI" -w /app/api vie-api-tools \
+    npx tsx migrate-billing-tokens.ts "$@"
+}
+
+mongo_eval() {
+  docker exec -i vie-mongodb sh -c 'mongosh --quiet -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin video-insight-engine --eval "$(cat)"'
 }
 ```
 
-**1. Count (read-only).** Prints users by tier, the admins (masked emails, how each holds the role), today's adjustments with the minutes the migration would make of them, and how many `llm_usage` rows of the last 7 days carry a `user_id`. The script is not on the box before the merge, so copy it over first:
+**Order.**
+
+1. Before the merge: no run in flight (vie-admin's live runs view is empty), and no open hold:
+   ```bash
+   echo "printjson({ openHolds: db.billingAccounts.countDocuments({ 'holds.0': { \$exists: true } }) })" | mongo_eval
+   ```
+2. Merge; the deploy is healthy (vie-api boots and builds the new indexes).
+3. `migrate_tokens --dry-run` reads only and prints one row per account (plan, plan minutes left, credit minutes, plan tokens after, credit tokens after, signup grant yes/no, open minute holds), then the new accounts, each recurring grant `N min/month → M tokens/month`, and what it drops. **Kfir signs off this table**: the demo row is `pro` with plan tokens 20,000 minus what this cycle used and credit tokens = its credit minutes × 100/3 + 1,000; Kfir's row is `free`, 0, 1,000.
+4. `migrate_tokens --run --yes-prod`, then `migrate_tokens --run --yes-prod` again: every count is 0 and the drift check says every account equals its ledger.
+5. Verify (quoted heredoc, so the shell leaves the `$` operators alone):
+   ```bash
+   mongo_eval <<'JS'
+   printjson({
+     accounts: db.billingAccounts.countDocuments({ ownerType: 'user' }),
+     activeUsers: db.users.countDocuments({ deletedAt: null }),
+     signupGrants: db.ledgerEntries.countDocuments({ idempotencyKey: /^grant:signup:/ }),
+     minuteHolds: db.billingAccounts.countDocuments({ 'holds.minutes': { $exists: true } }),
+     minuteFields: db.billingAccounts.countDocuments({ $or: [{ 'buckets.free': { $exists: true } }, { 'buckets.credit.minutesAvailable': { $exists: true } }] }),
+     recurring: db.recurringGrants.find({ deletedAt: null }, { tokens: 1, minutes: 1, active: 1 }).toArray(),
+   });
+   JS
+   ```
+   `accounts` ≥ `activeUsers` (a tombstone counts too), `signupGrants` = `activeUsers`, `minuteHolds` and `minuteFields` are 0, the demo's recurring grant has `tokens: 10000`. In vie-admin the demo's Account tab shows Pro at 20,000 per cycle, its balance and the recurring 10,000.
+6. **Prod check (Kfir, after the deploy).** One short video (2–4 min) and three chat turns on the admin account, then compare what the ledger charged with the LLM spend (tokens = `ceil(cost × 3000)` per execution):
+   ```bash
+   mongo_eval <<'JS'
+   const since = new Date(Date.now() - 2 * 3600 * 1000);
+   const debits = db.ledgerEntries.aggregate([
+     { $match: { unit: 'tokens', type: 'debit', createdAt: { $gte: since } } },
+     { $group: { _id: { ref: '$source.ref', kind: '$executionKind' }, tokens: { $sum: { $multiply: ['$tokens', -1] } }, costUsd: { $sum: '$costUsd' } } },
+   ]).toArray();
+   const usage = db.llm_usage.aggregate([
+     { $match: { timestamp: { $gte: since }, request_id: { $in: debits.map((d) => d._id.ref) } } },
+     { $group: { _id: '$request_id', costUsd: { $sum: '$cost_usd' } } },
+   ]).toArray();
+   printjson(debits.map((d) => {
+     const llmUsageUsd = (usage.find((u) => u._id === d._id.ref) || {}).costUsd;
+     return { ...d, llmUsageUsd, tokensFromUsage: llmUsageUsd === undefined ? null : Math.ceil(llmUsageUsd * 3000) };
+   }));
+   JS
+   ```
+   For a **chat row** (`kind` chat / library_chat / action) `tokens` should equal `tokensFromUsage` — the turn's `llm_usage` total × 3,000, rounded up — within a few % (the assistant prices the final responses; `llm_usage` also holds failed attempts). For the **video row** the ledger `source.ref` is the billing run id, so `llmUsageUsd` is empty: compare its `tokens` with `ceil(pipeline.timing.costUsd × 3000)` on the video's cache row (`db.videoSummaryCache.findOne({ youtubeId: '<id>' }, { 'pipeline.timing.costUsd': 1 })`), and that `costUsd` with `Σ llm_usage.cost_usd` of the run's `request_id` (within a few %: judge and translation rows land seconds later). Write the numbers into the gate notes.
+
+**Rollback.** Revert the merge (`git revert -m 1 <merge sha>`, push, deploy). The old minute code cannot read token-shaped data, so before (or right after) the old vie-api starts, move the token data aside and give the accounts their minute shape back:
 
 ```bash
-scp scripts/prod-count.js ec2-user@HOST:/tmp/prod-count.js
-# on the box:
-docker exec -i vie-mongodb sh -c 'mongosh --quiet -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin video-insight-engine --eval "$(cat)"' < /tmp/prod-count.js
-```
-
-**2. Run on the server, right after the deploy is healthy.**
-
-```bash
-migrate_billing --dry-run             # 1. preview: reads only, prints the summary table
-migrate_billing --run --yes-prod      # 2. when the preview is exactly right
-migrate_billing --run --yes-prod      # 3. again: every count is 0 and it says nothing to do
-```
-
-Read the preview before step 2. "Admins kept" must be exactly the account(s) you expect, "Admins demoted" the hand-made ones, "Active admins after" at least 1, and the keep-list line must say the two lists match (a kept admin who is not on `ADMIN_EMAILS` is demoted at the next vie-api boot). "Skipped" lists what it deliberately left alone, for example a credit the day's spend had already used up.
-
-**3. Verify.** The script comes from a quoted heredoc, so the shell leaves the `$` operators alone:
-
-```bash
-docker exec -i vie-mongodb sh -c 'mongosh --quiet -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin video-insight-engine --eval "$(cat)"' <<'EOF'
-printjson({
-  accounts: db.billingAccounts.countDocuments(),
-  activeUsers: db.users.countDocuments({ deletedAt: null }),
-  migrationEntries: db.ledgerEntries.aggregate([
-    { $match: { actorId: 'system:migration' } },
-    { $group: { _id: '$type', entries: { $sum: 1 }, minutes: { $sum: '$minutes' } } },
-  ]).toArray(),
-  admins: db.users.countDocuments({ $or: [{ roles: 'admin' }, { roles: { $exists: false }, role: 'admin' }] }),
+mongo_eval <<'JS'
+// Token entries and token lots go to side collections (kept, not deleted); minute history stays.
+db.ledgerEntries.aggregate([{ $match: { unit: 'tokens' } }, { $out: 'ledgerEntriesTokens' }]);
+db.ledgerEntries.deleteMany({ unit: 'tokens' });
+db.creditLots.aggregate([{ $match: { tokensGranted: { $exists: true } } }, { $out: 'creditLotsTokens' }]);
+db.creditLots.deleteMany({ tokensGranted: { $exists: true } });
+// Every account back to an empty minute shape (no run may be in flight).
+db.billingAccounts.updateMany({}, {
+  $set: { 'buckets.free': { recentFreeVideoAt: [] }, 'buckets.plan.minutesGranted': 0, 'buckets.plan.minutesUsed': 0, 'buckets.credit.minutesAvailable': 0, holds: [] },
+  $unset: { 'buckets.plan.tokensGranted': '', 'buckets.plan.tokensUsed': '', 'buckets.credit.tokensAvailable': '', 'buckets.debt': '', signupGrantAt: '' },
+  $inc: { version: 1 },
 });
-EOF
+JS
 ```
 
-`accounts` equals `activeUsers`, the grant entries add up to what the preview printed, and `admins` is the number under "Admins kept" plus any admin the roles model already held. Then open vie-admin: a Pro account shows its plan, a team account its lot. Boot seeding keeps working afterwards because `ADMIN_EMAILS` names the same admins.
-
-There is no automatic undo. A plan or lot is a ledger entry: set the plan back to free, or adjust the lot, from vie-admin. A demoted admin gets the role back by adding the email to `ADMIN_EMAILS` and restarting vie-api (`dc up -d vie-api`), or from backup.
+Then re-grant from vie-admin, which is back on the minutes UI: the demo account **Set plan → Pro** with **Term end = the demo's original `plan.periodEnd`** (read it before the rollback script: `db.billingAccounts.findOne({ ownerId: <demo id> }, { 'plan.periodEnd': 1 })`), so the 12-month term does not restart today (600 minutes for the cycle; its recurring grant still has `minutes: 300` and keeps running) and **Grant minutes** for its credit minutes from the dry-run table. Kfir's admin account needs nothing (free, no credit). The minute lots the migration closed stay closed; their minutes come back as the new lots.
 
 ### Demo mode
 
@@ -476,8 +492,8 @@ Only vie-api needs recreating when these variables change (`dc restart` does not
 
 - **Turn it off:** blank both variables and run `dc up -d vie-api`. The button disappears and `{ "demo": true }` returns 403 `DEMO_DISABLED`. Demo sessions that are already open keep working until their refresh cookie expires, up to 7 days; to end them now, also rotate `JWT_REFRESH_SECRET`, which signs every user out. The user and its videos stay in the database.
 - **Change the password, or repair the account:** edit `DEMO_USER_PASSWORD`, run `dc up -d vie-api`, then run the script again. It resets the password and cancels a pending account deletion (the API picks that up within 30 seconds).
-- **Limits:** every visitor shares the demo account, so they share its minutes: the free video, the Pro plan's monthly minutes, the recurring grant and any lot an admin grants in vie-admin (Users → the user → Account tab). The billing migration (P3.8) puts the account on manual Pro for 12 months (step `plan-demo`) and gives it 300 recurring minutes a month, both on top of the free video. When the minutes run out, visitors see the normal "not enough minutes" message and can still browse the videos already in the demo library, and a video someone already summarised is still served free. There is no per-user dollar cap.
-- **Chat:** because the account is on Pro, the free chat allowance does not apply to it. Chat fair use (`CHAT_FREE_MESSAGES_PER_DAY`, 50 messages per rolling 24 hours per account) only counts an account whose plan is `free`; any other plan is unlimited. When the 12 months end the plan reverts to free and the allowance applies again, shared by all visitors, until you set the plan again in vie-admin (Users → the user → Account tab).
+- **Limits:** every visitor shares the demo account, so they share its tokens: the Pro plan's monthly 20,000, the recurring grant (the migration raises it to 10,000 tokens a month) and any lot an admin grants in vie-admin (Users → the user → Account tab). The billing migration puts the account on manual Pro for 12 months (step `plan-demo`). When the tokens run out, visitors see the normal "not enough tokens" message (`INSUFFICIENT_TOKENS`) and can still browse the videos already in the demo library, and a video someone already summarised is still served free. There is no per-user dollar cap.
+- **Chat:** chat turns and actions spend the same shared tokens, and a turn needs a positive balance. There is no per-day message allowance. When the 12 months end the plan reverts to free and the account spends only its credit tokens until you set the plan again in vie-admin (Users → the user → Account tab).
 - **Submit burst:** `SUBMIT_BURST_LIMIT_PER_HOUR` (20) is counted per account, so all demo visitors share one bucket of 20 submissions an hour. That is accepted for the demo.
 - **Rate limit:** demo sign-ins count against the login limit of 10 per 15 minutes per IP address.
 - **Account deletion:** while `DEMO_USER_EMAIL` is set, `DELETE /api/users/me` returns 403 `DEMO_RESTRICTED` for the demo user, so a visitor cannot lock the demo for everyone. The admin immediate delete still works.

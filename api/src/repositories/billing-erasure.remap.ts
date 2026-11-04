@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { ObjectId } from 'mongodb';
 import type { BillingSourceKind } from '@vie/types';
 
-// Pure helpers for GDPR erasure of the minutes ledger (C1): what replaces the
+// Pure helpers for GDPR erasure of the token ledger (C1): what replaces the
 // ids an erased account's rows carry. No database access here.
 
 /** `source.kind`s whose `ref` is an adminAudit id (admin steps, the P3.8 migration). */

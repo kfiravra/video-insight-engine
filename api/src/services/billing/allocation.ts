@@ -1,49 +1,41 @@
-import { FREE_VIDEO, PAID_MAX_VIDEO_MINUTES } from '@vie/types';
-import { FREE_WINDOW_MS } from './minutes.js';
+import { MAX_VIDEO_MINUTES } from '@vie/types';
 import type { AccountCaps, BucketSplit, LotSlice } from '@vie/types';
 
-// Pure spend-order rules (proposal §4 as corrected by the brief): the whole
-// video from the free bucket when it fits, otherwise plan minutes then credit
-// lots FIFO. No I/O, no clock — `now` is an input — so the property tests can
-// drive it directly.
+// Pure spend-order rules: an estimate is held from the Pro cycle first, then
+// credit lots FIFO by expiry. No I/O, no clock — `now` is an input — so the
+// property tests can drive it directly.
 
 export interface AllocationLot {
   lotId: string;
-  minutesRemaining: number;
+  tokensRemaining: number;
   expiresAt: Date | null;
   createdAt: Date;
 }
 
-export interface AllocationInput {
-  minutes: number;
+/** What the account can spend: Pro cycle tokens left, its lots, what it owes. */
+export interface SpendableState {
   now: Date;
-  recentFreeVideoAt: Date[];
-  /** Plan minutes left in the current cycle (0 without an active cycle). */
+  /** Plan tokens left in the current cycle (0 without an active cycle). */
   planAvailable: number;
   lots: AllocationLot[];
+  /** Tokens owed (≥ 0). */
+  debt: number;
+}
+
+export interface AllocationInput extends SpendableState {
+  /** The estimate to hold. */
+  tokens: number;
+  /** The video's length in whole minutes. */
+  videoMinutes: number;
   caps: AccountCaps;
   openHolds: number;
-}
-
-export interface FreeWindowState {
-  /** Free videos allowed per rolling window. */
-  cap: number;
-  /** Free videos still inside the window. */
-  inWindow: Date[];
-  available: boolean;
-  nextFreeAt: Date | null;
-}
-
-export interface VideoLimits {
-  freeMaxMinutes: number;
-  paidMaxMinutes: number;
 }
 
 export type AllocationRejection =
   | { ok: false; reason: 'blocked' }
   | { ok: false; reason: 'too_many_runs'; maxConcurrent: number }
   | { ok: false; reason: 'too_long'; maxMinutes: number }
-  | { ok: false; reason: 'insufficient'; needed: number; available: number; nextFreeAt: Date | null };
+  | { ok: false; reason: 'insufficient'; needed: number; available: number };
 
 export interface AllocationSuccess {
   ok: true;
@@ -52,35 +44,19 @@ export interface AllocationSuccess {
 
 export type AllocationResult = AllocationSuccess | AllocationRejection;
 
-/**
- * Rolling window (Q3): a free video counts while it is less than 24 h old,
- * so at exactly 24 h 00 the slot reopens. With the window full, the next
- * slot opens when the oldest counted video ages out.
- */
-export function freeWindowState(recentFreeVideoAt: Date[], caps: AccountCaps, now: Date): FreeWindowState {
-  const cap = caps.freeVideosPerDay ?? FREE_VIDEO.perWindow;
-  const windowStart = now.getTime() - FREE_WINDOW_MS;
-  const inWindow = recentFreeVideoAt
-    .filter((at) => at.getTime() > windowStart)
-    .sort((a, b) => a.getTime() - b.getTime());
-  const available = inWindow.length < cap;
-  const opener = cap > 0 && !available ? inWindow[inWindow.length - cap] : undefined;
-  const nextFreeAt = opener ? new Date(opener.getTime() + FREE_WINDOW_MS) : null;
-  return { cap, inWindow, available, nextFreeAt };
+/** Where a direct charge (a run's cost beyond its hold, a chat turn) came from: plan, lots, then debt. */
+export interface ChargeSplit extends BucketSplit {
+  debt: number;
 }
 
-/** Caps only ever tighten: free 30 (Q2) and paid 180 (Q2) are ceilings an admin can lower. */
-export function videoLimits(caps: AccountCaps): VideoLimits {
-  const cap = caps.maxVideoMinutes ?? Number.POSITIVE_INFINITY;
-  return {
-    freeMaxMinutes: Math.min(FREE_VIDEO.maxVideoMinutes, cap),
-    paidMaxMinutes: Math.min(PAID_MAX_VIDEO_MINUTES, cap),
-  };
+/** Caps only ever tighten: MAX_VIDEO_MINUTES for everyone, an admin can lower it. */
+export function maxVideoMinutes(caps: AccountCaps): number {
+  return Math.min(MAX_VIDEO_MINUTES, caps.maxVideoMinutes ?? Number.POSITIVE_INFINITY);
 }
 
-/** A lot can pay only while it has minutes and has not expired (expiry is exclusive). */
+/** A lot can pay only while it has tokens and has not expired (expiry is exclusive). */
 export function isLotSpendable(lot: AllocationLot, now: Date): boolean {
-  return lot.minutesRemaining > 0 && (lot.expiresAt === null || lot.expiresAt.getTime() > now.getTime());
+  return lot.tokensRemaining > 0 && (lot.expiresAt === null || lot.expiresAt.getTime() > now.getTime());
 }
 
 /** FIFO spend order: soonest expiry first, never-expiring last, then oldest, then id. */
@@ -97,19 +73,37 @@ export function spendableLots(lots: AllocationLot[], now: Date): AllocationLot[]
 }
 
 export function spendableCredit(lots: AllocationLot[], now: Date): number {
-  return spendableLots(lots, now).reduce((sum, lot) => sum + lot.minutesRemaining, 0);
+  return spendableLots(lots, now).reduce((sum, lot) => sum + lot.tokensRemaining, 0);
 }
 
-function takeFromLots(minutes: number, lots: AllocationLot[]): LotSlice[] {
+/** plan remaining + spendable credits − debt; negative while in debt. */
+export function balanceOf(state: SpendableState): number {
+  return Math.max(state.planAvailable, 0) + spendableCredit(state.lots, state.now) - state.debt;
+}
+
+/** Take `tokens` from `lots` in the order given (callers pass spendable lots, FIFO). */
+export function takeFromLots(tokens: number, lots: AllocationLot[]): LotSlice[] {
   const slices: LotSlice[] = [];
-  let left = minutes;
+  let left = tokens;
   for (const lot of lots) {
     if (left === 0) break;
-    const take = Math.min(left, lot.minutesRemaining);
-    slices.push({ lotId: lot.lotId, minutes: take });
+    const take = Math.min(left, lot.tokensRemaining);
+    slices.push({ lotId: lot.lotId, tokens: take });
     left -= take;
   }
   return slices;
+}
+
+/**
+ * Take `tokens` from the plan, then spendable lots FIFO; whatever they cannot
+ * cover becomes debt. Never refuses: a run that cost more than its hold, and
+ * a chat turn, are charged after the fact (overdraft).
+ */
+export function chargeSplit(tokens: number, state: SpendableState): ChargeSplit {
+  const plan = Math.min(tokens, Math.max(state.planAvailable, 0));
+  const lots = takeFromLots(tokens - plan, spendableLots(state.lots, state.now));
+  const credit = lots.reduce((sum, slice) => sum + slice.tokens, 0);
+  return { plan, credit, lots, debt: tokens - plan - credit };
 }
 
 function gateRejection(input: AllocationInput): AllocationRejection | null {
@@ -122,33 +116,20 @@ function gateRejection(input: AllocationInput): AllocationRejection | null {
 }
 
 /**
- * Decide where a video's minutes come from.
- * - The free bucket takes the WHOLE video when it fits (≤ 30 min, or the
- *   capped limit) and a slot is open; never part of one.
- * - Otherwise (too long for free, or the window is full) the whole video
- *   goes to plan then credits (Q10 a); neither is ever capped per day.
- * - Paid minutes pay for at most 180 min (Q2, or the capped limit).
+ * Decide whether a video may run and where its estimate is held from:
+ * blocked → too many runs → too long (MAX_VIDEO_MINUTES or the admin cap) →
+ * the balance must cover the whole estimate with no debt → plan first, then
+ * credit lots FIFO.
  */
 export function allocate(input: AllocationInput): AllocationResult {
   const gate = gateRejection(input);
   if (gate) return gate;
-  const { minutes, now, caps } = input;
-  const limits = videoLimits(caps);
-  const free = freeWindowState(input.recentFreeVideoAt, caps, now);
-  const fitsFree = minutes <= limits.freeMaxMinutes;
-  if (fitsFree && free.available) {
-    return { ok: true, split: { free: minutes, plan: 0, credit: 0, lots: [] } };
+  const maxMinutes = maxVideoMinutes(input.caps);
+  if (input.videoMinutes > maxMinutes) return { ok: false, reason: 'too_long', maxMinutes };
+  const available = balanceOf(input);
+  if (input.debt > 0 || available < input.tokens) {
+    return { ok: false, reason: 'insufficient', needed: input.tokens, available };
   }
-  if (minutes > limits.paidMaxMinutes) return { ok: false, reason: 'too_long', maxMinutes: limits.paidMaxMinutes };
-
-  const lots = spendableLots(input.lots, now);
-  const planAvailable = Math.max(input.planAvailable, 0);
-  const creditAvailable = lots.reduce((sum, lot) => sum + lot.minutesRemaining, 0);
-  if (planAvailable + creditAvailable < minutes) {
-    const nextFreeAt = fitsFree ? free.nextFreeAt : null;
-    return { ok: false, reason: 'insufficient', needed: minutes, available: planAvailable + creditAvailable, nextFreeAt };
-  }
-  const plan = Math.min(minutes, planAvailable);
-  const slices = takeFromLots(minutes - plan, lots);
-  return { ok: true, split: { free: 0, plan, credit: minutes - plan, lots: slices } };
+  const { plan, credit, lots } = chargeSplit(input.tokens, input);
+  return { ok: true, split: { plan, credit, lots } };
 }

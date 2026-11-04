@@ -87,6 +87,19 @@ describe("runAssistantAction", () => {
       "Assistant action failed: 500",
     );
   });
+
+  it("should reject with the billing ApiError when the gateway refuses the action for want of tokens (402)", async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 402,
+      json: async () => ({ error: "INSUFFICIENT_TOKENS", message: "x", statusCode: 402, needed: 1, available: 0 }),
+    });
+
+    const failure = await runAssistantAction("organize_library", {}).catch((err: unknown) => err);
+
+    expect(failure).toBeInstanceOf(ApiError);
+    expect(failure).toMatchObject({ status: 402, code: "INSUFFICIENT_TOKENS", details: { needed: 1, available: 0 } });
+  });
 });
 
 describe.each([
@@ -113,23 +126,41 @@ describe.each([
     expect(failure).toMatchObject({ status: 429, code: "RATE_LIMITED" });
   });
 
-  it("should reject with a CHAT_LIMIT_REACHED ApiError carrying nextAt when a free account is out of messages", async () => {
+  it("should reject with an INSUFFICIENT_TOKENS ApiError carrying the balance when the account cannot start a turn (402)", async () => {
     fetchMock.mockResolvedValue({
       ok: false,
-      status: 429,
-      json: async () => ({ error: "CHAT_LIMIT_REACHED", nextAt: "2026-11-02T09:15:00.000Z" }),
+      status: 402,
+      json: async () => ({ error: "INSUFFICIENT_TOKENS", message: "x", statusCode: 402, needed: 1, available: -40 }),
     });
 
     const failure = await send().catch((err: unknown) => err);
 
-    expect(failure).toMatchObject({
-      status: 429,
-      code: "CHAT_LIMIT_REACHED",
-      details: { nextAt: "2026-11-02T09:15:00.000Z" },
-    });
+    expect(failure).toBeInstanceOf(ApiError);
+    expect(failure).toMatchObject({ status: 402, code: "INSUFFICIENT_TOKENS", details: { needed: 1, available: -40 } });
   });
 
-  it("should stay RATE_LIMITED for a 429 whose body is not a chat-limit error", async () => {
+  it("should reject with an ACCOUNT_BLOCKED ApiError when the account is blocked (403)", async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 403,
+      json: async () => ({ error: "ACCOUNT_BLOCKED", message: "x", statusCode: 403 }),
+    });
+
+    const failure = await send().catch((err: unknown) => err);
+
+    expect(failure).toMatchObject({ status: 403, code: "ACCOUNT_BLOCKED" });
+  });
+
+  it("should keep a 402 without a JSON body a typed error without a code", async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 402 });
+
+    const failure = await send().catch((err: unknown) => err);
+
+    expect(failure).toBeInstanceOf(ApiError);
+    expect(failure).toMatchObject({ status: 402, code: undefined });
+  });
+
+  it("should stay RATE_LIMITED for a 429 with a RATE_LIMITED body", async () => {
     fetchMock.mockResolvedValue({
       ok: false,
       status: 429,

@@ -220,9 +220,10 @@ export async function internalRoutes(fastify: FastifyInstance) {
       }
 
       if (status === 'completed' || status === 'failed') {
-        // Minutes ledger: settle (completed) / release (failed, or a cache
-        // hit that ran nothing) the run's hold. Awaited, never throws; a hold
-        // it misses is the repair job's.
+        // Token ledger: release the run's hold on failed, or on a cache hit
+        // that ran nothing; a completed run settles on its real cost through
+        // POST /internal/run-cost. Awaited, never throws; a hold it misses is
+        // the repair job's.
         await billingEnforcement.runFinished(videoSummaryId, status === 'completed' && cacheHit ? 'cached' : status);
         await settleLibraryUpdates(libraryUpdateRepository, videoSummaryId, status, req.log);
         await settleServedVersion(videoRepository, videoSummaryId, status, req.log);

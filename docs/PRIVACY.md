@@ -13,14 +13,14 @@ When you use Video Insight Engine, we keep:
 | Encrypted password | Sign-in security | Our database (bcrypt-hashed) |
 | Library entries (videos you've added) | So your library appears when you log in | Our database |
 | Folders, playlists | Library organization | Our database |
-| Video minutes (your plan, free video, minutes granted and used) | What you can summarise; accounting | Our database |
+| Tokens (your plan, the tokens granted, held and spent on your videos and chats) | What you can summarise and ask; accounting | Our database |
 | AI cost usage (model, tokens, cost, time, and the account and request it came from) | Our own cost reporting (never charged to you in dollars) | Our database; the link to you is removed after 90 days (see below) |
 | Saved chat notes | The "Save note" action in the chat assistant | Our database |
 
 We **do not** store:
 - Your YouTube history outside what you explicitly added.
 - Your IP address beyond aggregated, hashed counters on shared pages.
-- Card or billing details. No payments are processed yet; minutes are granted by the team.
+- Card or billing details. No payments are processed yet; tokens are granted by the team.
 - The text of your chat messages in our AI usage records. The chat assistant's prompts are never stored there.
 
 ## How to delete your account
@@ -35,7 +35,7 @@ We **do not** store:
 After the 30-day grace period:
 
 - Your user record and all rows pointing at it (library, folders, notes, the old daily cost log) are deleted from our database.
-- Your **minutes history** (the plan, minutes granted and used) is an accounting record, so it is kept, but **unlinked from you**: every reference to your account is replaced by a random id that points to no one.
+- Your **token history** (the plan, tokens granted and spent, and the minutes history from before tokens) is an accounting record, so it is kept, but **unlinked from you**: every reference to your account is replaced by a random id that points to no one.
 - An **audit row** is written so we can prove the deletion happened. The row contains a one-way hash of your email — not the email itself — plus the deletion timestamp and counts of what was removed. This satisfies our compliance obligations without keeping your personal data.
 
 ## What is NOT deleted
@@ -50,7 +50,7 @@ If you specifically need every trace of a particular video removed, contact supp
 
 ## Billing data
 
-No payments are processed yet; minutes are granted by the team. We hold no card details and no payment-provider identifier, so there is nothing of that kind to remove when you delete your account.
+No payments are processed yet; tokens are granted by the team. We hold no card details and no payment-provider identifier, so there is nothing of that kind to remove when you delete your account.
 
 ## Data export
 

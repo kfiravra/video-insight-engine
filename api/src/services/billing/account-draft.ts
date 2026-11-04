@@ -1,5 +1,5 @@
 import type { ObjectId } from 'mongodb';
-import type { BillingBucket, BillingSource, LedgerEntryType } from '@vie/types';
+import type { BillingBucket, BillingSource, ExecutionKind, LedgerEntryType } from '@vie/types';
 import type {
   BillingAccountDocument,
   BillingHoldDocument,
@@ -11,10 +11,15 @@ import type {
 export interface EntryFields {
   type: LedgerEntryType;
   bucket: BillingBucket;
-  minutes: number;
+  /** Signed: + adds headroom, − consumes it. */
+  tokens: number;
   idempotencyKey: string;
   source: BillingSource;
+  /** A debit that posts tokens its hold already took. */
+  mirrorsHold?: boolean;
   lotId?: ObjectId;
+  executionKind?: ExecutionKind;
+  executionId?: string;
   /** Defaults to the account owner. */
   userId?: ObjectId;
   youtubeId?: string;
@@ -34,15 +39,19 @@ function cloneHold(hold: BillingHoldDocument): BillingHoldDocument {
   return { ...hold, split: { ...hold.split, lots: hold.split.lots.map((slice) => ({ ...slice })) } };
 }
 
-/** Deep copy of the mutable parts (ObjectId / Date values are shared — never mutated in place). */
+/**
+ * Deep copy of the mutable parts (ObjectId / Date values are shared — never
+ * mutated in place). The bucket spread keeps any pre-migration minute fields.
+ */
 function cloneAccount(doc: BillingAccountDocument): BillingAccountDocument {
   return {
     ...doc,
     plan: { ...doc.plan },
     buckets: {
-      free: { recentFreeVideoAt: [...doc.buckets.free.recentFreeVideoAt] },
+      ...doc.buckets,
       plan: { ...doc.buckets.plan },
       credit: { ...doc.buckets.credit },
+      debt: { ...doc.buckets.debt },
     },
     holds: doc.holds.map(cloneHold),
     caps: { ...doc.caps },
@@ -52,11 +61,11 @@ function cloneAccount(doc: BillingAccountDocument): BillingAccountDocument {
 
 /**
  * An account's next state, built in memory by the pure transitions (roll,
- * hold, settle, release, admin ops) and written by BillingService in one
- * transaction: the conditional account update, new lots, lot deltas, and
- * the ledger entries. Every credit movement goes through `changeLot` /
- * `addLot` so `buckets.credit.minutesAvailable` can never drift from the
- * lots it summarises.
+ * hold, settle, release, charges, admin ops) and written by BillingService in
+ * one transaction: the conditional account update, new lots, lot deltas, and
+ * the ledger entries (all `unit: 'tokens'`). Every credit movement goes
+ * through `changeLot` / `addLot` so `buckets.credit.tokensAvailable` can
+ * never drift from the lots it summarises.
  */
 export class AccountDraft {
   readonly account: BillingAccountDocument;
@@ -94,6 +103,7 @@ export class AccountDraft {
     const { userId, ...rest } = fields;
     this.entries.push({
       ...rest,
+      unit: 'tokens',
       accountId: this.original._id,
       userId: userId ?? this.original.ownerId,
       createdAt: this.now,
@@ -113,8 +123,8 @@ export class AccountDraft {
 
   changeLot(lot: CreditLotDocument, delta: number): void {
     if (delta === 0) return;
-    lot.minutesRemaining += delta;
-    this.account.buckets.credit.minutesAvailable += delta;
+    lot.tokensRemaining += delta;
+    this.account.buckets.credit.tokensAvailable += delta;
     this.accountChanged = true;
     const key = lot._id.toHexString();
     if (this.newLotIds.has(key)) return; // the insert carries the final value
@@ -127,7 +137,14 @@ export class AccountDraft {
     this.newLots.push(lot);
     this.newLotIds.add(lot._id.toHexString());
     this.lots.push(lot);
-    this.account.buckets.credit.minutesAvailable += lot.minutesRemaining;
+    this.account.buckets.credit.tokensAvailable += lot.tokensRemaining;
+    this.accountChanged = true;
+  }
+
+  /** Move what the account owes by `delta` (+ = more debt). */
+  changeDebt(delta: number): void {
+    if (delta === 0) return;
+    this.account.buckets.debt.tokens += delta;
     this.accountChanged = true;
   }
 

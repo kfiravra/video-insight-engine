@@ -1,9 +1,12 @@
-import { fillTemplate } from "@/lib/format-minutes";
+import { fillTemplate } from "@/lib/format-tokens";
 import type { BillingText } from "@/hooks/use-billing-text";
-import { classifyBillingCode, classifyBillingError, type BillingNotice } from "@/lib/billing-errors";
+import {
+  classifyBillingCode,
+  classifyBillingError,
+  type BillingNotice,
+  type TokensNotice,
+} from "@/lib/billing-errors";
 import type { FailedVideoImport, PlaylistQuote } from "@/api/playlists";
-
-type MinutesNotice = Extract<BillingNotice, { kind: "insufficient" | "too_long" }>;
 
 export interface CalloutLines {
   title: string;
@@ -14,8 +17,17 @@ function joinSentences(...sentences: Array<string | null>): string {
   return sentences.filter((sentence): sentence is string => !!sentence).join(" ");
 }
 
-/** What the not-enough-minutes callout says: a headline and, when there is more, one detail line. */
-export function minutesCalloutLines(notice: MinutesNotice, text: BillingText, nowMs: number): CalloutLines {
+/** "You're 120 tokens short — add tokens to continue." for an account 120 tokens below zero. */
+export function debtLine(shortfall: number, text: BillingText): string {
+  return fillTemplate(text.labels.debtShort, { tokens: text.tokens(shortfall) });
+}
+
+/**
+ * What the tokens callout says. A video the balance cannot cover names its
+ * estimate and the balance; a balance below zero (a run cost more than it
+ * held) leads with the shortfall, since every new execution waits for it.
+ */
+export function tokensCalloutLines(notice: TokensNotice, text: BillingText): CalloutLines {
   const { labels } = text;
   if (notice.kind === "too_long") {
     const title =
@@ -25,28 +37,30 @@ export function minutesCalloutLines(notice: MinutesNotice, text: BillingText, no
     return { title, detail: null };
   }
 
-  const needs =
-    notice.needed === null || notice.available === null
-      ? labels.calloutNeedsUnknown
-      : fillTemplate(labels.calloutNeeds, {
-          needed: text.minutesOblique(notice.needed),
-          available: text.minutes(notice.available),
-        });
-  // A next-free time means the video fits the free video, which is already used.
-  if (notice.nextFreeAt === null) return { title: needs, detail: null };
-
-  const when = text.until(notice.nextFreeAt, nowMs);
-  const next = when === null ? null : fillTemplate(labels.calloutFreeNext, { when });
-  return { title: labels.calloutFreeUsed, detail: joinSentences(needs, next) };
+  const { needed, available } = notice;
+  if (needed === null || available === null) return { title: labels.calloutNeedsUnknown, detail: null };
+  if (available < 0) {
+    return {
+      title: debtLine(-available, text),
+      detail: fillTemplate(labels.calloutDebtDetail, { needed: text.tokensOblique(needed) }),
+    };
+  }
+  return {
+    title: fillTemplate(labels.calloutNeeds, {
+      needed: text.tokensOblique(needed),
+      available: text.tokens(available),
+    }),
+    detail: null,
+  };
 }
 
-/** One sentence for any billing refusal (the callout kinds are joined into one line). */
+/** One sentence for any billing refusal at submit time (the callout kinds are joined into one line). */
 export function describeBillingNotice(notice: BillingNotice, text: BillingText, nowMs: number): string {
   const { labels } = text;
   switch (notice.kind) {
     case "insufficient":
     case "too_long": {
-      const { title, detail } = minutesCalloutLines(notice, text, nowMs);
+      const { title, detail } = tokensCalloutLines(notice, text);
       return joinSentences(title, detail);
     }
     case "blocked":
@@ -59,16 +73,20 @@ export function describeBillingNotice(notice: BillingNotice, text: BillingText, 
       const when = text.untilSeconds(notice.retryAfterSec, nowMs);
       return when === null ? labels.errorRateLimited : fillTemplate(labels.errorRateLimitedIn, { when });
     }
-    case "chat_limit": {
-      // A clock time, not a countdown: this sentence is saved in the chat transcript.
-      const upcoming = notice.nextAt !== null && Date.parse(notice.nextAt) > nowMs;
-      const time = upcoming ? text.moment(notice.nextAt, nowMs) : null;
-      return joinSentences(
-        labels.errorChatLimit,
-        time === null ? null : fillTemplate(labels.errorChatLimitAt, { time }),
-      );
-    }
   }
+}
+
+/**
+ * Why a chat turn was refused before it started (402 / 403), or null for any
+ * other refusal. A turn needs a positive balance, so the copy names no
+ * per-turn price: it says the tokens ran out, or how far below zero they are.
+ */
+export function describeChatRefusal(notice: BillingNotice, text: BillingText): string | null {
+  if (notice.kind === "blocked") return text.labels.chatBlocked;
+  if (notice.kind !== "insufficient") return null;
+  return notice.available !== null && notice.available < 0
+    ? debtLine(-notice.available, text)
+    : text.labels.chatInsufficient;
 }
 
 /** A stable machine code such as FOO_BAR, as opposed to a sentence. */
@@ -97,18 +115,17 @@ export function describeFailedImport(item: FailedVideoImport, text: BillingText)
   }
 }
 
-/** True when the item failed because of the user's minutes, so the result can point at /settings/billing. */
-export function isMinutesFailure(item: FailedVideoImport): boolean {
-  const kind = classifyBillingCode(item.error)?.kind;
-  return kind === "insufficient" || kind === "too_long";
+/** True when the item failed for want of tokens, so the result can point at /settings/billing. */
+export function isTokensFailure(item: FailedVideoImport): boolean {
+  return classifyBillingCode(item.error)?.kind === "insufficient";
 }
 
-/** "The whole playlist needs 340 minutes; you have 120 minutes." — only when the quote shows a shortfall. */
+/** "The whole playlist needs ≈ 3,400 tokens; you have 1,200 tokens." — only when the quote shows a shortfall. */
 export function playlistQuoteLine(billing: PlaylistQuote | undefined, text: BillingText): string | null {
-  if (!billing || billing.neededMinutes <= billing.availableMinutes) return null;
+  if (!billing || billing.neededTokens <= billing.availableTokens) return null;
   return fillTemplate(text.labels.playlistNeeds, {
-    needed: text.minutesOblique(billing.neededMinutes),
-    available: text.minutes(billing.availableMinutes),
+    needed: text.tokensOblique(billing.neededTokens),
+    available: text.tokens(billing.availableTokens),
   });
 }
 

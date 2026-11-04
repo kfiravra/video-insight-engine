@@ -15,6 +15,7 @@ from src.dependencies import get_database
 from src.main import app
 from src.services import billing_account
 from src.services.billing_account import to_iso
+from src.services.vie_api_client import MAX_ADMIN_TOKENS
 from tests.billing_fakes import (
     BILLING_COLLECTIONS,
     READ_METHODS,
@@ -56,7 +57,9 @@ async def test_should_return_ledger_entries_newest_first_with_actor_and_reason(
         datetime(2026, 10, 27, 9),
         type="debit",
         bucket="plan",
-        minutes=-12,
+        tokens=-1_200,
+        mirrorsHold=True,
+        executionKind="video",
         source={"kind": "run", "ref": "req-9"},
         youtubeId="dQw4w9WgXcQ",
         durationSec=690.5,
@@ -74,10 +77,14 @@ async def test_should_return_ledger_entries_newest_first_with_actor_and_reason(
         "userId": USER_ID,
         "type": "debit",
         "bucket": "plan",
-        "minutes": -12,
+        "unit": "tokens",
+        "amount": -1_200,
+        "mirrorsHold": True,
         "lotId": "1" * 24,
         "source": {"kind": "run", "ref": "req-9"},
         "idempotencyKey": "admin:2",
+        "executionKind": "video",
+        "executionId": None,
         "youtubeId": "dQw4w9WgXcQ",
         "durationSec": 690.5,
         "costUsd": 0.0412,
@@ -87,6 +94,17 @@ async def test_should_return_ledger_entries_newest_first_with_actor_and_reason(
         "createdAt": "2026-10-27T09:00:00.000Z",
     }
     assert (ledger[1]["actorId"], ledger[1]["reason"]) == ("f" * 24, "goodwill")
+
+
+@pytest.mark.anyio
+async def test_should_show_pre_migration_rows_in_minutes(use_db: UseDb) -> None:
+    history = make_entry(1, datetime(2026, 10, 20, 9), bucket="free", minutes=-5)
+    del history["unit"], history["tokens"]
+    use_db(make_db(billingAccounts=[make_account()], ledgerEntries=[history]))
+
+    [row] = (await api_get()).json()["ledger"]
+
+    assert (row["unit"], row["amount"], row["bucket"]) == ("minutes", -5, "free")
 
 
 def _ledger_of(count: int) -> list[dict[str, Any]]:
@@ -247,20 +265,13 @@ def test_should_format_dates_like_js_to_iso_string() -> None:
     assert to_iso(None) is None
 
 
-def test_should_mirror_the_free_video_constants_in_packages_types() -> None:
-    billing_ts = Path(__file__).resolve().parents[3] / "packages" / "types" / "src" / "billing.ts"
-    if not billing_ts.exists():
-        pytest.skip("packages/types is not part of this checkout")
-    text = billing_ts.read_text()
-    free_video = re.search(
-        r"FREE_VIDEO\s*=\s*\{\s*perWindow:\s*(\d+),\s*windowHours:\s*(\d+),"
-        r"\s*maxVideoMinutes:\s*(\d+)",
-        text,
+def test_should_mirror_the_admin_token_ceiling_of_vie_api() -> None:
+    tokens_ts = (
+        Path(__file__).resolve().parents[3] / "api" / "src" / "services" / "billing" / "tokens.ts"
     )
+    if not tokens_ts.exists():
+        pytest.skip("api/ is not part of this checkout")
+    match = re.search(r"MAX_ADMIN_TOKENS\s*=\s*([\d_]+);", tokens_ts.read_text())
 
-    assert free_video is not None
-    assert tuple(int(g) for g in free_video.groups()) == (
-        billing_account.FREE_VIDEOS_PER_WINDOW,
-        billing_account.FREE_WINDOW_HOURS,
-        billing_account.FREE_MAX_VIDEO_MINUTES,
-    )
+    assert match is not None
+    assert int(match.group(1).replace("_", "")) == MAX_ADMIN_TOKENS

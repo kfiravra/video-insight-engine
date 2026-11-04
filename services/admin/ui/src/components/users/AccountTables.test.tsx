@@ -8,8 +8,8 @@ const LOT_ID = '1'.repeat(24);
 function lot(overrides: Partial<BillingCreditLot> = {}): BillingCreditLot {
   return {
     lotId: LOT_ID,
-    minutesGranted: 150,
-    minutesRemaining: 90,
+    tokensGranted: 1500,
+    tokensRemaining: 900,
     source: { kind: 'payment', ref: 'txn_1' },
     priceUsdCents: 500,
     expiresAt: '2027-10-01T23:59:59.000Z',
@@ -27,12 +27,12 @@ function renderRow(overrides: Partial<BillingCreditLot>): HTMLElement {
 describe('LotsTable', () => {
   describe('status', () => {
     it.each([
-      ['Open', { minutesRemaining: 90, expired: false }],
-      ['Used up', { minutesRemaining: 0, expired: false }],
-      ['Expired', { minutesRemaining: 90, expired: true }],
-      // The repair job zeroes the minutes of a lot when it expires: that lot
+      ['Open', { tokensRemaining: 90, expired: false }],
+      ['Used up', { tokensRemaining: 0, expired: false }],
+      ['Expired', { tokensRemaining: 90, expired: true }],
+      // The repair job zeroes the tokens of a lot when it expires: that lot
       // expired, it was not used up (every monthly recurring lot ends this way).
-      ['Expired', { minutesRemaining: 0, expired: true }],
+      ['Expired', { tokensRemaining: 0, expired: true }],
     ])('should mark a lot as %s', (status, overrides) => {
       expect(within(renderRow(overrides)).getByText(status)).toBeTruthy();
     });

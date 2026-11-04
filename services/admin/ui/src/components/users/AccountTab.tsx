@@ -8,7 +8,7 @@ import type { BillingRecurringGrant } from '../../lib/billing';
 
 interface AccountTabProps {
   userId: string;
-  /** Action buttons (set plan, grant minutes, ...); rendered above the summary. */
+  /** Action buttons (set plan, grant tokens, ...); rendered above the summary. */
   actions?: ReactNode;
   /** A row action for each recurring grant (delete); the table has no actions column without it. */
   grantActions?: (grant: BillingRecurringGrant) => ReactNode;
@@ -26,8 +26,8 @@ function ActionsSlot({ children }: { children: ReactNode }) {
 function NoAccount() {
   return (
     <p className="text-xs text-[var(--color-text-muted)] py-4 text-center" data-testid="account-none">
-      No billing account yet. vie-api creates it when this user first submits a video; until then the
-      free-plan defaults apply.
+      No billing account yet. vie-api creates it, with the signup grant, at registration or on an older
+      user&apos;s first visit; until then the free-plan defaults apply.
     </p>
   );
 }
@@ -50,7 +50,7 @@ function LoadOlder({ loading, onClick }: LoadOlderProps) {
   );
 }
 
-/** Read-only view of a user's minutes account: plan, buckets, lots, holds, grants, ledger. */
+/** Read-only view of a user's token account: plan, buckets, lots, holds, grants, ledger. */
 export function AccountTab({ userId, actions, grantActions }: AccountTabProps) {
   const { data, isLoading, isError, error, refetch, hasNextPage, fetchNextPage, isFetchingNextPage } =
     useBillingAccount(userId);

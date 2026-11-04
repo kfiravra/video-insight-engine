@@ -35,6 +35,9 @@ export interface CorrelationIds {
   requestId?: string;
   /** The web's chat session id (D8), forwarded as `X-Session-Id`. */
   sessionId?: string;
+  /** The api's per-request execution id, forwarded as `X-Execution-Id`: the
+   *  assistant reports the request's LLM cost under it (token ledger). */
+  executionId?: string;
 }
 
 export interface AssistantChatOptions extends CorrelationIds {
@@ -121,6 +124,7 @@ function internalHeaders(ids: CorrelationIds & { userId: string }): Record<strin
     'X-User-Id': ids.userId,
     ...(ids.requestId ? { 'X-Request-ID': ids.requestId } : {}),
     ...(ids.sessionId ? { 'X-Session-Id': ids.sessionId } : {}),
+    ...(ids.executionId ? { 'X-Execution-Id': ids.executionId } : {}),
   };
 }
 

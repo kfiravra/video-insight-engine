@@ -50,7 +50,7 @@ needs `JWT_SECRET`, `JWT_REFRESH_SECRET`. `/check` runs the right subset.
   and `SSE_PHASE_MAP` or the web UI freezes.
 - Auth lives here: JWT access 15 min, refresh 7 days in an HttpOnly cookie; `INTERNAL_SECRET` guards
   service-to-service calls; `ADMIN_API_KEY` and `ADMIN_EMAILS` gate admin routes; rate limits via
-  `RATE_LIMIT_*`, `SUBMIT_BURST_LIMIT_PER_HOUR`, `CHAT_FREE_MESSAGES_PER_DAY`; CORS from
+  `RATE_LIMIT_*`, `SUBMIT_BURST_LIMIT_PER_HOUR`; CORS from
   `FRONTEND_URL` plus `CORS_ADDITIONAL_ORIGINS` (add `http://localhost:5273` for Playwright).
 - Cross-user dedup and request idempotency keys are documented in [docs/IDEMPOTENCY.md](../../../docs/IDEMPOTENCY.md); GDPR
   deletion runs through `VideoCascadeService` ([docs/GDPR.md](../../../docs/GDPR.md)). Summaries never expire.

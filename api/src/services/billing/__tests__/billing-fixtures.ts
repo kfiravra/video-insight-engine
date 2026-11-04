@@ -9,10 +9,12 @@ import { BillingService } from '../billing.service.js';
 import { LedgerEnforcement } from '../ledger-enforcement.js';
 import type { Db } from 'mongodb';
 import type { FastifyBaseLogger } from 'fastify';
+import type { AdminAudit } from '../admin-ops.js';
+import type { AdminMutationContext } from '../billing-admin.js';
 import type { BillingAccountDocument, CreditLotDocument } from '../../../repositories/billing.repository.js';
 import type { DispatchStampReader } from '../run-stamp.js';
 
-/** A free account with empty buckets; override any part. */
+/** A free account with empty token buckets and no signup grant; override any part. */
 export function makeAccountDoc(overrides: Partial<BillingAccountDocument> = {}): BillingAccountDocument {
   const now = new Date('2026-11-01T00:00:00Z');
   return {
@@ -21,9 +23,9 @@ export function makeAccountDoc(overrides: Partial<BillingAccountDocument> = {}):
     ownerId: new ObjectId(),
     plan: { id: 'free', status: 'active', source: null, periodStart: null, periodEnd: null },
     buckets: {
-      free: { recentFreeVideoAt: [] },
-      plan: { cycleStart: null, cycleEnd: null, minutesGranted: 0, minutesUsed: 0 },
-      credit: { minutesAvailable: 0 },
+      plan: { cycleStart: null, cycleEnd: null, tokensGranted: 0, tokensUsed: 0 },
+      credit: { tokensAvailable: 0 },
+      debt: { tokens: 0 },
     },
     holds: [],
     caps: {},
@@ -38,13 +40,23 @@ export function makeLotDoc(accountId: ObjectId, overrides: Partial<CreditLotDocu
   return {
     _id: new ObjectId(),
     accountId,
-    minutesGranted: 100,
-    minutesRemaining: 100,
+    tokensGranted: 1000,
+    tokensRemaining: 1000,
     source: { kind: 'admin', ref: new ObjectId().toHexString() },
     expiresAt: null,
     createdAt: new Date('2026-10-01T00:00:00Z'),
     ...overrides,
   };
+}
+
+/** The admin context of a service call: a fresh auditId each time unless overridden. */
+export function adminCtx(overrides: Partial<AdminMutationContext> = {}): AdminMutationContext {
+  return { actorId: new ObjectId().toHexString(), reason: 'test grant', auditId: new ObjectId().toHexString(), ...overrides };
+}
+
+/** The audit of a pure admin transition (admin-ops), with a fresh auditId. */
+export function adminAudit(): AdminAudit {
+  return { actorId: 'system:test', reason: 'test', auditId: new ObjectId() };
 }
 
 /** A settable clock for services under test. */
@@ -83,7 +95,7 @@ export async function insertUser(db: Db): Promise<string> {
 export const HOUR_MS = 60 * 60 * 1000;
 export const DAY_MS = 24 * HOUR_MS;
 
-/** A real minutes ledger on `db` with stubbed metadata and dispatch stamps. */
+/** A real token ledger on `db` with stubbed metadata (a 10-minute video: 840 tokens) and dispatch stamps. */
 export interface BillingHarness {
   billing: BillingService;
   gate: BillingGate;

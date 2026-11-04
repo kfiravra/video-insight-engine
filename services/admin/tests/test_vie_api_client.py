@@ -88,7 +88,7 @@ def test_a_different_user_changes_the_signature() -> None:
 
 
 def test_a_different_body_changes_the_signature() -> None:
-    assert _sign(POST, body=b'{"reason":"x","minutes":99999}') != POST["header"]
+    assert _sign(POST, body=b'{"reason":"x","tokens":99999}') != POST["header"]
 
 
 def test_a_different_second_changes_the_signature() -> None:

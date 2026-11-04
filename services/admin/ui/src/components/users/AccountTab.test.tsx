@@ -41,15 +41,17 @@ function snapshot(overrides: Partial<BillingAccountSnapshot> = {}): BillingAccou
       periodStart: '2026-10-01T00:00:00.000Z',
       periodEnd: '2027-10-01T00:00:00.000Z',
     },
-    free: { perWindow: 1, usedInWindow: 0, available: true, nextFreeAt: null, maxVideoMinutes: 30 },
-    planMinutes: {
+    planTokens: {
       cycleStart: '2026-10-01T00:00:00.000Z',
       cycleEnd: '2026-11-01T00:00:00.000Z',
-      granted: 600,
-      used: 140,
-      remaining: 460,
+      granted: 20000,
+      used: 5400,
+      remaining: 14600,
     },
-    credits: { available: 90 },
+    credits: { available: 900 },
+    debt: 0,
+    balance: 15500,
+    signupGrantAt: '2026-09-01T00:00:00.000Z',
     caps: {},
     openHolds: 0,
     version: 7,
@@ -61,8 +63,8 @@ function snapshot(overrides: Partial<BillingAccountSnapshot> = {}): BillingAccou
 function lot(overrides: Partial<BillingCreditLot> = {}): BillingCreditLot {
   return {
     lotId: '1'.repeat(24),
-    minutesGranted: 150,
-    minutesRemaining: 90,
+    tokensGranted: 1500,
+    tokensRemaining: 900,
     source: { kind: 'payment', ref: 'txn_1' },
     priceUsdCents: 500,
     expiresAt: '2027-10-01T00:00:00.000Z',
@@ -78,7 +80,8 @@ function entry(overrides: Partial<BillingLedgerEntry> = {}): BillingLedgerEntry 
     userId: USER_ID,
     type: 'grant',
     bucket: 'credit',
-    minutes: 150,
+    unit: 'tokens',
+    amount: 1500,
     source: { kind: 'admin', ref: 'c'.repeat(24) },
     idempotencyKey: 'admin:1',
     createdAt: '2026-10-20T09:00:00.000Z',
@@ -88,7 +91,7 @@ function entry(overrides: Partial<BillingLedgerEntry> = {}): BillingLedgerEntry 
 
 const GRANT = {
   grantId: 'g'.repeat(24),
-  minutes: 300,
+  tokens: 3000,
   every: 'month' as const,
   active: true,
   nextRunAt: '2026-11-01T00:00:00.000Z',
@@ -128,75 +131,55 @@ describe('AccountTab', () => {
       expect(plan.textContent).toContain('active, manual');
     });
 
-    it('should show the free video as ready when one is open', async () => {
+    it('should show the balance and no free-video tile', async () => {
       mockAccount.mockResolvedValue(detail());
       renderTab();
 
-      const free = await screen.findByTestId('account-free-video');
+      const balance = await screen.findByTestId('account-balance');
 
-      expect(within(free).getByText('Ready')).toBeTruthy();
+      expect(balance.textContent).toContain('15,500 tokens');
+      expect(screen.queryByTestId('account-free-video')).toBeNull();
     });
 
-    it('should show when the next free video opens once the window is full', async () => {
-      const used = snapshot({
-        free: {
-          perWindow: 1,
-          usedInWindow: 1,
-          available: false,
-          nextFreeAt: '2026-10-29T10:00:00.000Z',
-          maxVideoMinutes: 30,
-        },
-      });
-      mockAccount.mockResolvedValue(detail({ account: used }));
+    it('should show debt clearly when the balance is negative', async () => {
+      mockAccount.mockResolvedValue(detail({ account: snapshot({ balance: -120, debt: 120 }) }));
       renderTab();
 
-      const free = await screen.findByTestId('account-free-video');
+      const balance = await screen.findByTestId('account-balance');
 
-      expect(free.textContent).toMatch(/Next at .*2026/);
+      expect(balance.textContent).toContain('−120 tokens (owes 120)');
     });
 
-    it('should show the free video as disabled when its cap is zero', async () => {
-      const off = snapshot({
-        free: { perWindow: 0, usedInWindow: 0, available: false, nextFreeAt: null, maxVideoMinutes: 30 },
-      });
-      mockAccount.mockResolvedValue(detail({ account: off }));
-      renderTab();
-
-      const free = await screen.findByTestId('account-free-video');
-
-      expect(within(free).getByText('Disabled')).toBeTruthy();
-    });
-
-    it('should show plan minutes used and remaining', async () => {
+    it('should show Pro cycle tokens used and remaining', async () => {
       mockAccount.mockResolvedValue(detail());
       renderTab();
 
-      const minutes = await screen.findByTestId('account-plan-minutes');
+      const tokens = await screen.findByTestId('account-plan-tokens');
 
-      expect(minutes.textContent).toContain('460 min left');
-      expect(minutes.textContent).toContain('140 min of 600 min used');
+      expect(tokens.textContent).toContain('14,600 tokens left');
+      expect(tokens.textContent).toContain('5,400 tokens of 20,000 tokens used');
     });
 
     it('should show no active cycle on the free plan', async () => {
       const free = snapshot({
         plan: { id: 'free', status: 'active', source: null, periodStart: null, periodEnd: null },
-        planMinutes: { cycleStart: null, cycleEnd: null, granted: 0, used: 0, remaining: 0 },
+        planTokens: { cycleStart: null, cycleEnd: null, granted: 0, used: 0, remaining: 0 },
       });
       mockAccount.mockResolvedValue(detail({ account: free }));
       renderTab();
 
-      const minutes = await screen.findByTestId('account-plan-minutes');
+      const tokens = await screen.findByTestId('account-plan-tokens');
 
-      expect(minutes.textContent).toContain('No active cycle');
+      expect(tokens.textContent).toContain('No active cycle');
     });
 
-    it('should show spendable credit minutes', async () => {
+    it('should show spendable credit tokens', async () => {
       mockAccount.mockResolvedValue(detail());
       renderTab();
 
       const credits = await screen.findByTestId('account-credits');
 
-      expect(within(credits).getByText('90 min')).toBeTruthy();
+      expect(within(credits).getByText('900 tokens')).toBeTruthy();
     });
 
     it('should flag a blocked account', async () => {
@@ -229,13 +212,13 @@ describe('AccountTab', () => {
   });
 
   describe('credit lots', () => {
-    it('should render a row per lot with minutes remaining and expiry', async () => {
+    it('should render a row per lot with tokens remaining and expiry', async () => {
       mockAccount.mockResolvedValue(detail({ lots: [lot()] }));
       renderTab();
 
       const row = await screen.findByTestId(`lot-row-${'1'.repeat(24)}`);
 
-      expect(row.textContent).toContain('90 min');
+      expect(row.textContent).toContain('900 tokens');
       expect(row.textContent).toContain('payment:txn_1');
       expect(row.textContent).toContain('$5.00');
     });
@@ -250,9 +233,9 @@ describe('AccountTab', () => {
     });
 
     it.each([
-      ['Open', { minutesRemaining: 90, expired: false }],
-      ['Expired', { minutesRemaining: 90, expired: true }],
-      ['Used up', { minutesRemaining: 0, expired: false }],
+      ['Open', { tokensRemaining: 90, expired: false }],
+      ['Expired', { tokensRemaining: 90, expired: true }],
+      ['Used up', { tokensRemaining: 0, expired: false }],
     ])('should mark a lot as %s', async (status, overrides) => {
       mockAccount.mockResolvedValue(detail({ lots: [lot(overrides)] }));
       renderTab();
@@ -271,15 +254,14 @@ describe('AccountTab', () => {
   });
 
   describe('holds and recurring grants', () => {
-    it('should render open holds with where their minutes came from', async () => {
+    it('should render open holds with where their tokens came from', async () => {
       const hold = {
         requestId: 'req-1',
         userId: USER_ID,
         youtubeId: 'dQw4w9WgXcQ',
         durationSec: 1830,
-        minutes: 31,
-        split: { free: 0, plan: 11, credit: 20, lots: [] },
-        freeVideoAt: null,
+        tokens: 310,
+        split: { plan: 110, credit: 200, lots: [] },
         planCycleStart: null,
         createdAt: '2026-10-28T11:55:00.000Z',
       };
@@ -289,8 +271,8 @@ describe('AccountTab', () => {
       const video = await screen.findByText('dQw4w9WgXcQ');
       const row = video.closest('tr');
 
-      expect(row?.textContent).toContain('31 min');
-      expect(row?.textContent).toContain('plan 11, credit 20');
+      expect(row?.textContent).toContain('310 tokens');
+      expect(row?.textContent).toContain('plan 110 tokens, credit 200 tokens');
     });
 
     it('should show an empty message when no run is in flight', async () => {
@@ -303,7 +285,7 @@ describe('AccountTab', () => {
     it('should render recurring grants with their status and reason', async () => {
       const grant = {
         grantId: 'g'.repeat(24),
-        minutes: 300,
+        tokens: 3000,
         every: 'month' as const,
         active: false,
         nextRunAt: '2026-11-01T00:00:00.000Z',
@@ -320,7 +302,7 @@ describe('AccountTab', () => {
       const reason = await screen.findByText('eval account');
       const row = reason.closest('tr');
 
-      expect(row?.textContent).toContain('300 min');
+      expect(row?.textContent).toContain('3,000 tokens');
       expect(row?.textContent).toContain('Paused');
     });
 
@@ -356,7 +338,7 @@ describe('AccountTab', () => {
   });
 
   describe('ledger', () => {
-    it('should render type, bucket, signed minutes, reason and actor', async () => {
+    it('should render type, bucket, signed tokens, reason and actor', async () => {
       const grant = entry({ reason: 'goodwill', actorId: 'f'.repeat(24) });
       mockAccount.mockResolvedValue(detail({ ledger: [grant] }));
       renderTab();
@@ -365,7 +347,7 @@ describe('AccountTab', () => {
 
       expect(row.textContent).toContain('grant');
       expect(row.textContent).toContain('credit');
-      expect(row.textContent).toContain('+150 min');
+      expect(row.textContent).toContain('+1,500 tokens');
       expect(row.textContent).toContain('goodwill');
       expect(row.textContent).toContain('ffffff…ffff');
     });
@@ -375,7 +357,8 @@ describe('AccountTab', () => {
         id: 'd'.repeat(24),
         type: 'debit',
         bucket: 'plan',
-        minutes: -12,
+        unit: 'tokens',
+        amount: -1200,
         source: { kind: 'run', ref: 'req-9' },
         youtubeId: 'dQw4w9WgXcQ',
         costUsd: 0.0412,
@@ -387,10 +370,48 @@ describe('AccountTab', () => {
 
       const row = await screen.findByTestId(`ledger-row-${debit.id}`);
 
-      expect(row.textContent).toContain('-12 min');
+      expect(row.textContent).toContain('−1,200 tokens');
       expect(row.textContent).toContain('run:req-9');
       expect(row.textContent).toContain('dQw4w9WgXcQ');
       expect(row.textContent).toContain('$0.0412');
+    });
+
+    it('should show a pre-migration minute row as minutes and label the new types and debt bucket', async () => {
+      const old = entry({ id: 'a'.repeat(24), type: 'debit', bucket: 'free', unit: 'minutes', amount: -12 });
+      const repay = entry({ id: 'b'.repeat(24), type: 'repay', bucket: 'debt', unit: 'tokens', amount: 120 });
+      const convert = entry({ id: 'c'.repeat(24), type: 'convert', bucket: 'plan', unit: 'tokens', amount: 3000 });
+      mockAccount.mockResolvedValue(detail({ ledger: [old, repay, convert] }));
+      renderTab();
+
+      const oldRow = await screen.findByTestId(`ledger-row-${old.id}`);
+      const repayRow = screen.getByTestId(`ledger-row-${repay.id}`);
+
+      expect(oldRow.textContent).toContain('−12 min');
+      expect(repayRow.textContent).toContain('repay');
+      expect(repayRow.textContent).toContain('debt');
+      expect(repayRow.textContent).toContain('+120 tokens');
+      expect(screen.getByTestId(`ledger-row-${convert.id}`).textContent).toContain('convert');
+    });
+
+    it('should mark a debit that mirrors a hold, and name the kind of an execution debit', async () => {
+      const hold = entry({ id: 'a'.repeat(24), type: 'hold', bucket: 'plan', amount: -840 });
+      const mirror = entry({ id: 'b'.repeat(24), type: 'debit', bucket: 'plan', amount: -758, mirrorsHold: true });
+      const chat = entry({
+        id: 'd'.repeat(24),
+        type: 'debit',
+        bucket: 'credit',
+        amount: -3,
+        executionKind: 'library_chat',
+        executionId: 'x1',
+      });
+      mockAccount.mockResolvedValue(detail({ ledger: [hold, mirror, chat] }));
+      renderTab();
+
+      const mirrorRow = await screen.findByTestId(`ledger-row-${mirror.id}`);
+
+      expect(within(mirrorRow).getByTestId('ledger-tag').textContent).toBe('mirrors hold');
+      expect(within(screen.getByTestId(`ledger-row-${chat.id}`)).getByTestId('ledger-tag').textContent).toBe('library chat');
+      expect(within(screen.getByTestId(`ledger-row-${hold.id}`)).queryByTestId('ledger-tag')).toBeNull();
     });
 
     it('should show an empty message when the ledger has no entries', async () => {
@@ -443,7 +464,7 @@ describe('AccountTab', () => {
       mockAccount.mockResolvedValue(detail({ account: null }));
       renderTab();
 
-      expect(await screen.findByTestId('account-none')).toBeTruthy();
+      expect((await screen.findByTestId('account-none')).textContent).toContain('at registration');
       expect(screen.queryByTestId('account-summary')).toBeNull();
     });
 
@@ -456,11 +477,11 @@ describe('AccountTab', () => {
 
     it('should render the actions slot above the summary', async () => {
       mockAccount.mockResolvedValue(detail());
-      renderTab(<button type="button">Grant minutes</button>);
+      renderTab(<button type="button">Grant tokens</button>);
 
       const slot = await screen.findByTestId('account-actions');
 
-      expect(within(slot).getByRole('button', { name: 'Grant minutes' })).toBeTruthy();
+      expect(within(slot).getByRole('button', { name: 'Grant tokens' })).toBeTruthy();
     });
 
     it('should keep the actions slot when the user has no account yet', async () => {

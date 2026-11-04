@@ -172,6 +172,55 @@ describe('AssistantClient', () => {
     });
   });
 
+  describe('X-Execution-Id (the token ledger\'s per-request id)', () => {
+    const sse = () => new Response(
+      new ReadableStream({ start(controller) { controller.close(); } }),
+      { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+    );
+    const actionReply = () => jsonResponse(200, { success: true, action: 'quiz_me', data: null, error: null, trace_id: 't' });
+    const calls = {
+      chat: { reply: sse, send: (executionId?: string) => client.chat({ videoId: 'vid-1', userId: 'user-1', message: 'hi', requestId: 'req-1', executionId }) },
+      libraryChat: {
+        reply: sse,
+        send: (executionId?: string) => client.libraryChat({ youtubeIds: [], userId: 'user-1', message: 'hi', requestId: 'req-1', executionId }),
+      },
+      action: {
+        reply: actionReply,
+        send: (executionId?: string) => client.action({ videoId: 'vid-1', userId: 'user-1', action: 'quiz_me', requestId: 'req-1', executionId }),
+      },
+    };
+
+    it.each(Object.keys(calls) as Array<keyof typeof calls>)('should send it on %s next to the user and request ids', async (name) => {
+      mockFetch.mockResolvedValueOnce(calls[name].reply());
+
+      await calls[name].send('exec-0f3c');
+
+      const [, options] = mockFetch.mock.calls[0];
+      expect(options.headers).toMatchObject({
+        'X-Internal-Secret': expect.any(String),
+        'X-User-Id': 'user-1',
+        'X-Request-ID': 'req-1',
+        'X-Execution-Id': 'exec-0f3c',
+      });
+    });
+
+    it.each(Object.keys(calls) as Array<keyof typeof calls>)('should omit it on %s when the caller has none', async (name) => {
+      mockFetch.mockResolvedValueOnce(calls[name].reply());
+
+      await calls[name].send();
+
+      expect(mockFetch.mock.calls[0][1].headers).not.toHaveProperty('X-Execution-Id');
+    });
+
+    it('should never send it on the library search (no LLM, nothing to charge)', async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse(200, { results: [] }));
+
+      await client.librarySearch({ youtubeIds: [], userId: 'user-1', query: 'sorting', requestId: 'req-1' });
+
+      expect(mockFetch.mock.calls[0][1].headers).not.toHaveProperty('X-Execution-Id');
+    });
+  });
+
   describe.each(Object.entries({
     chat: (client: AssistantClient, sessionId?: string) =>
       client.chat({ videoId: 'vid-1', userId: 'user-1', message: 'hi', sessionId }),

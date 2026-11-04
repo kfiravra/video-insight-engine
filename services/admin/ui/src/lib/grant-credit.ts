@@ -1,8 +1,9 @@
 import type { GrantCreditRequest } from './api';
-import { MAX_ADMIN_MINUTES, MAX_REASON_LENGTH } from './billing-forms';
+import { MAX_ADMIN_TOKENS, MAX_REASON_LENGTH } from './billing-forms';
+import { formatNumber } from './format';
 
 export interface GrantFormValues {
-  minutes: string;
+  tokens: string;
   reason: string;
   /** `YYYY-MM-DD` from the date input, or ''. */
   expiry: string;
@@ -10,19 +11,19 @@ export interface GrantFormValues {
 
 /** The request for the form's values, or an Error whose message says what to fix. */
 export function buildGrantRequest(values: GrantFormValues, now: Date = new Date()): GrantCreditRequest {
-  const minutes = Number(values.minutes);
-  if (!Number.isInteger(minutes) || values.minutes.trim() === '') throw new Error('Enter a whole number of minutes');
-  if (minutes < 1 || minutes > MAX_ADMIN_MINUTES) {
-    throw new Error(`Minutes must be between 1 and ${MAX_ADMIN_MINUTES}`);
+  const tokens = Number(values.tokens);
+  if (!Number.isInteger(tokens) || values.tokens.trim() === '') throw new Error('Enter a whole number of tokens');
+  if (tokens < 1 || tokens > MAX_ADMIN_TOKENS) {
+    throw new Error(`Tokens must be between 1 and ${formatNumber(MAX_ADMIN_TOKENS)}`);
   }
   const reason = values.reason.trim();
   if (!reason) throw new Error('Reason is required');
   if (reason.length > MAX_REASON_LENGTH) throw new Error(`Reason must be at most ${MAX_REASON_LENGTH} characters`);
-  if (!values.expiry) return { minutes, reason };
+  if (!values.expiry) return { tokens, reason };
 
   // A date means "through the end of that day" in UTC.
   const expiresAt = new Date(`${values.expiry}T23:59:59.000Z`);
   if (Number.isNaN(expiresAt.getTime())) throw new Error('Expiry is not a valid date');
   if (expiresAt <= now) throw new Error('Expiry must be in the future');
-  return { minutes, reason, expiresAt: expiresAt.toISOString() };
+  return { tokens, reason, expiresAt: expiresAt.toISOString() };
 }

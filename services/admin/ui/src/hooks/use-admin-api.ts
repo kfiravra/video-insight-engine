@@ -195,7 +195,7 @@ export function useUserActivity(userId: string | null | undefined) {
 export const BILLING_LEDGER_PAGE_SIZE = 50;
 
 /**
- * A user's minutes account, read-only. The ledger is paged (`fetchNextPage` /
+ * A user's token account, read-only. The ledger is paged (`fetchNextPage` /
  * `hasNextPage` load older entries); `data` is the merged `BillingAccountDetail`.
  * Invalidate `['billing-account', userId]` after a billing change.
  */

@@ -1,8 +1,9 @@
 /**
- * P3.1 — the minutes ledger quotes and holds before createVideo, refuses with
- * 402/422/403/429 (METADATA_UNAVAILABLE fails closed), gives a cached /
+ * The token ledger quotes and holds the estimate before createVideo, refuses
+ * with 402/422/403/429 (METADATA_UNAVAILABLE fails closed), gives a cached /
  * attached / failed submit's hold back before returning, and keys the run on
- * a server id. It is the only gate (P3.2): no dollar cap, no switch.
+ * a server id. It is the only gate (P3.2): no dollar cap, no switch. Every
+ * account starts with its 1,000-token signup grant (a 10-minute video holds 840).
  */
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import { ObjectId } from 'mongodb';
@@ -13,11 +14,11 @@ import { IdempotencyRepository } from '../../repositories/idempotency.repository
 import { VideoRepository } from '../../repositories/video.repository.js';
 import {
   AccountBlockedError,
-  InsufficientMinutesError,
+  InsufficientTokensError,
   MetadataUnavailableError,
   RunNotAllowedError,
   TooManyRunsError,
-  VideoTooLongForPlanError,
+  VideoTooLongError,
 } from '../../utils/errors.js';
 import { IdempotencyService } from '../idempotency.service.js';
 import { VideoSubmissionService, type SubmitVideoInput } from '../video-submission.service.js';
@@ -30,7 +31,7 @@ const ctx = () => ({ actorId: 'system:test', reason: 'test', auditId: new Object
 let videoCounter = 0;
 const freshVideo = () => `https://www.youtube.com/watch?v=en${String(++videoCounter).padStart(9, '0')}`;
 
-describe('VideoSubmissionService on the minutes ledger', () => {
+describe('VideoSubmissionService on the token ledger', () => {
   let h: BillingHarness;
   let service: VideoSubmissionService;
   let userId: string;
@@ -95,7 +96,7 @@ describe('VideoSubmissionService on the minutes ledger', () => {
       await service.submit(input({ url }));
 
       const [hold] = await holds();
-      expect([h.metadata.getVideoMetadata.mock.calls.length, hold.minutes]).toEqual([0, -12]);
+      expect([h.metadata.getVideoMetadata.mock.calls.length, hold.tokens]).toEqual([0, -876]);
     });
 
     it('should hold before createVideo, keyed on a server id', async () => {
@@ -107,10 +108,10 @@ describe('VideoSubmissionService on the minutes ledger', () => {
       expect(createVideo.mock.calls[0][2].requestId).toBe('client-req-1');
     });
 
-    it('should queue the free video as free and a run on credit minutes as paid (P3.4)', async () => {
-      await submitMinutes(10);
-      await h.billing.grantLot(userId, { minutes: 100 }, ctx());
-      await submitMinutes(10);
+    it('should queue a free account\'s run as free and a Pro account\'s as paid (D18)', async () => {
+      await submitMinutes(5);
+      await h.billing.setPlan(userId, { planId: 'pro' }, ctx());
+      await submitMinutes(5);
 
       expect(createVideo.mock.calls.map((call) => call[2].queuePlan)).toEqual(['free', 'paid']);
     });
@@ -122,23 +123,26 @@ describe('VideoSubmissionService on the minutes ledger', () => {
       expect(counts).toEqual([0, 0]);
     });
 
-    it('should refuse with 402 INSUFFICIENT_MINUTES before createVideo and release the idempotency key', async () => {
+    it('should refuse with 402 INSUFFICIENT_TOKENS before createVideo and release the idempotency key', async () => {
       await submitMinutes(10);
 
       const error = await submitMinutes(10).catch((err: unknown) => err);
 
-      expect(error).toBeInstanceOf(InsufficientMinutesError);
-      expect(error).toMatchObject({ status: 402, needed: 10, available: 0, nextFreeAt: expect.any(String) });
+      expect(error).toBeInstanceOf(InsufficientTokensError);
+      expect(error).toMatchObject({ status: 402, needed: 840, available: 160 });
       // The second submit only asked to be served free (nothing to serve), and dispatched nothing.
       expect(createVideo.mock.calls[1][2]).toMatchObject({ serveOnly: true });
       expect(await holds()).toHaveLength(1);
       expect(await idempotencyRows()).toBe(1);
     });
 
-    it('should refuse a video over 180 minutes with 422 VIDEO_TOO_LONG_FOR_PLAN', async () => {
-      await h.billing.grantLot(userId, { minutes: 1000 }, ctx());
+    it('should refuse a video over 180 minutes with 422 VIDEO_TOO_LONG', async () => {
+      await h.billing.grantLot(userId, { tokens: 10_000 }, ctx());
 
-      await expect(submitMinutes(200)).rejects.toBeInstanceOf(VideoTooLongForPlanError);
+      const error = await submitMinutes(200).catch((err: unknown) => err);
+
+      expect(error).toBeInstanceOf(VideoTooLongError);
+      expect(error).toMatchObject({ status: 422, maxMinutes: 180 });
     });
 
     it('should refuse a blocked account with 403 ACCOUNT_BLOCKED', async () => {
@@ -148,7 +152,7 @@ describe('VideoSubmissionService on the minutes ledger', () => {
     });
 
     it('should refuse past maxConcurrent with 429 TOO_MANY_RUNS', async () => {
-      await h.billing.grantLot(userId, { minutes: 100 }, ctx());
+      await h.billing.grantLot(userId, { tokens: 5000 }, ctx());
       await h.billing.setCaps(userId, { maxConcurrent: 1 }, ctx());
       await submitMinutes(10);
 
@@ -165,12 +169,12 @@ describe('VideoSubmissionService on the minutes ledger', () => {
   });
 
   describe('give-back', () => {
-    it.each(['cached', 'attached'] as const)('should give the free video back for a %s video (Q6)', async (outcome) => {
+    it.each(['cached', 'attached'] as const)('should give the whole estimate back for a %s video (Q6)', async (outcome) => {
       createVideo.mockResolvedValue(created(outcome === 'cached' ? { cached: true } : { attached: true }));
 
       await submitMinutes(10);
 
-      expect((await h.billing.summary(userId)).free.available).toBe(true);
+      expect(await h.billing.summary(userId)).toMatchObject({ balance: 1000, holds: [] });
       expect(await getTestDb().collection('ledgerEntries').countDocuments({ type: 'release' })).toBe(1);
     });
 
@@ -185,7 +189,7 @@ describe('VideoSubmissionService on the minutes ledger', () => {
   });
 
   describe('a refusal still serves what costs nothing (C1 / Q6)', () => {
-    it.each(['cached', 'attached'] as const)('should serve a %s video free after the free video is used, holding nothing', async (outcome) => {
+    it.each(['cached', 'attached'] as const)('should serve a %s video free once the balance cannot pay, holding nothing more', async (outcome) => {
       await submitMinutes(10);
       createVideo.mockImplementationOnce(async () => created(outcome === 'cached' ? { cached: true } : { attached: true }));
 
@@ -202,7 +206,7 @@ describe('VideoSubmissionService on the minutes ledger', () => {
 
       const error = await submitMinutes(10).catch((err: unknown) => err);
 
-      expect(error).toBeInstanceOf(InsufficientMinutesError);
+      expect(error).toBeInstanceOf(InsufficientTokensError);
       expect(await idempotencyRows()).toBe(1);
     });
 
@@ -265,7 +269,7 @@ describe('VideoSubmissionService on the minutes ledger', () => {
     });
 
     it('should not answer an update to the latest version with a plain submit\'s key (D-LIB)', async () => {
-      await h.billing.grantLot(userId, { minutes: 100 }, ctx());
+      await h.billing.grantLot(userId, { tokens: 5000 }, ctx());
       const url = freshVideo();
       await submitMinutes(10, { url });
 
@@ -273,11 +277,12 @@ describe('VideoSubmissionService on the minutes ledger', () => {
 
       expect(update.outcome).toBe('created');
       expect(createVideo.mock.calls[1][2]).toMatchObject({ updateToLatest: true });
-      expect(await holds()).toHaveLength(2);
+      // Two runs (the second hold spans the signup lot and the granted one).
+      expect(new Set((await holds()).map((hold) => hold.source.ref)).size).toBe(2);
     });
 
     it('should give a client that reuses X-Request-ID a new run per video, never a conflict', async () => {
-      await h.billing.grantLot(userId, { minutes: 100 }, ctx());
+      await h.billing.grantLot(userId, { tokens: 5000 }, ctx());
       await submitMinutes(10);
 
       await submitMinutes(10);
@@ -286,22 +291,24 @@ describe('VideoSubmissionService on the minutes ledger', () => {
     });
   });
 
-  // Between the billing deploy and the migration run no user has an account
-  // row yet: getOrCreateAccount opens a free, unblocked one on first use.
+  // A user whose account was never opened (registered before the token
+  // ledger, or the register-time write failed) gets one on first use: free,
+  // unblocked, with its signup grant.
   describe('a user with no billing account yet (Q-ACCT)', () => {
     const accountOf = () => getTestDb().collection('billingAccounts').findOne({ ownerId: new ObjectId(userId) });
 
-    it('should open a free, unblocked account on the first submit and pay with the free video', async () => {
+    it('should open a free, unblocked account with its signup grant on the first submit and hold from it', async () => {
       const before = await accountOf();
 
       await submitMinutes(10);
 
       const [hold] = await holds();
       const account = await accountOf();
-      expect([before, account?.plan.id, account?.caps.blocked, hold.bucket]).toEqual([null, 'free', undefined, 'free']);
+      expect([before, account?.plan.id, account?.caps.blocked, hold.bucket, hold.tokens]).toEqual([null, 'free', undefined, 'credit', -840]);
+      expect(account?.signupGrantAt).toBeInstanceOf(Date);
     });
 
-    it.each(['cached', 'attached'] as const)('should serve a %s video free and leave the free video open', async (outcome) => {
+    it.each(['cached', 'attached'] as const)('should serve a %s video free and leave the signup grant whole', async (outcome) => {
       const before = await accountOf();
       createVideo.mockResolvedValue(created(outcome === 'cached' ? { cached: true } : { attached: true }));
 
@@ -309,7 +316,7 @@ describe('VideoSubmissionService on the minutes ledger', () => {
 
       const summary = await h.billing.summary(userId);
       const debits = await getTestDb().collection('ledgerEntries').countDocuments({ type: 'debit' });
-      expect([before, summary.free.available, summary.blocked, debits]).toEqual([null, true, false, 0]);
+      expect([before, summary.balance, summary.blocked, debits]).toEqual([null, 1000, false, 0]);
     });
   });
 });

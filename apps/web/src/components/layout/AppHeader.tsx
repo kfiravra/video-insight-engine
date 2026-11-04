@@ -20,6 +20,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { DebtIndicator } from "@/components/usage/DebtIndicator";
 import { UsageMenuItem } from "@/components/usage/UsageMenuItem";
 import { UsageTile } from "@/components/usage/UsageTile";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
@@ -99,8 +100,8 @@ export function AppHeader({ slotRef }: AppHeaderProps) {
 
         <div className="flex-1" />
 
-        {/* A page's own control (the video page's language toggle), portalled in. */}
-        <div ref={slotRef} className="flex items-center empty:hidden" />
+        {/* A page's own controls (the video page's language toggle and token line), portalled in. */}
+        <div ref={slotRef} className="flex items-center gap-2 empty:hidden" />
 
         {/* Right: command-palette hint + theme + user.
             The chip is a discoverable surface for power users — clicking it
@@ -129,6 +130,13 @@ export function AppHeader({ slotRef }: AppHeaderProps) {
               </kbd>
             </span>
           </button>
+
+          {/* Debt blocks every new video and chat, so it shows here, not only in the menu. */}
+          {isAuthenticated && user && (
+            <ErrorBoundary fallback={null}>
+              <DebtIndicator />
+            </ErrorBoundary>
+          )}
 
           <ThemeToggle />
 

@@ -26,21 +26,20 @@ export interface SetPlanRequest {
 /** A cap that is present is set, an explicit `null` clears it, an absent one is left alone. */
 export interface SetCapsRequest {
   maxVideoMinutes?: number | null;
-  freeVideosPerDay?: number | null;
   maxConcurrent?: number | null;
   blocked?: boolean | null;
   reason: string;
 }
 
 export interface AdjustRequest {
-  bucket: Exclude<BillingBucket, 'free'>;
-  /** Signed whole minutes, never 0. */
-  minutes: number;
+  bucket: Extract<BillingBucket, 'plan' | 'credit'>;
+  /** Signed whole tokens, never 0. A positive adjustment repays debt first. */
+  tokens: number;
   reason: string;
 }
 
 export interface CreateRecurringGrantRequest {
-  minutes: number;
+  tokens: number;
   every: 'month';
   active: boolean;
   reason: string;

@@ -6,6 +6,7 @@ import type {
   SetPlanRequest,
 } from './billing-actions';
 import type { BillingCaps } from './billing';
+import { formatNumber } from './format';
 
 // Form values -> request bodies for the Account actions. Each builder returns
 // the request or throws an Error whose message says what to fix; vie-api checks
@@ -13,14 +14,13 @@ import type { BillingCaps } from './billing';
 // are copies of the server's: `lib/limits-drift.test.ts` fails when one changes.
 
 export const MAX_REASON_LENGTH = 500;
-export const MAX_ADMIN_MINUTES = 100_000;
-/** Minutes a Pro plan grants each month (`PLANS.pro.periodMinutes`). */
-export const PRO_PERIOD_MINUTES = 600;
+export const MAX_ADMIN_TOKENS = 1_000_000;
+/** Tokens a Pro plan grants each month (`PLANS.pro.periodTokens`). */
+export const PRO_PERIOD_TOKENS = 20_000;
 
 /** Cap ranges, as BillingService accepts them. */
 export const CAP_LIMITS = {
-  maxVideoMinutes: { min: 3, max: 180 },
-  freeVideosPerDay: { min: 0, max: 100 },
+  maxVideoMinutes: { min: 1, max: 180 },
   maxConcurrent: { min: 1, max: 1000 },
 } as const;
 
@@ -63,7 +63,6 @@ export function buildPlanRequest(values: PlanFormValues, now: Date = new Date())
 
 export interface CapsFormValues {
   maxVideoMinutes: string;
-  freeVideosPerDay: string;
   maxConcurrent: string;
   blocked: boolean;
   reason: string;
@@ -73,7 +72,6 @@ export interface CapsFormValues {
 export function capsToForm(caps: BillingCaps | undefined): Omit<CapsFormValues, 'reason'> {
   return {
     maxVideoMinutes: caps?.maxVideoMinutes?.toString() ?? '',
-    freeVideosPerDay: caps?.freeVideosPerDay?.toString() ?? '',
     maxConcurrent: caps?.maxConcurrent?.toString() ?? '',
     blocked: caps?.blocked === true,
   };
@@ -81,7 +79,6 @@ export function capsToForm(caps: BillingCaps | undefined): Omit<CapsFormValues, 
 
 const CAP_LABELS: Record<NumericCap, string> = {
   maxVideoMinutes: 'Max video length',
-  freeVideosPerDay: 'Free videos per day',
   maxConcurrent: 'Runs at once',
 };
 
@@ -122,29 +119,29 @@ export function buildCapsRequest(
 
 export interface AdjustFormValues {
   bucket: 'plan' | 'credit';
-  minutes: string;
+  tokens: string;
   reason: string;
 }
 
 export function buildAdjustRequest(values: AdjustFormValues): AdjustRequest {
-  const minutes = wholeNumber(values.minutes, 'Minutes');
-  if (minutes === 0) throw new Error('Minutes must not be 0');
-  if (Math.abs(minutes) > MAX_ADMIN_MINUTES) throw new Error(`Minutes must be between -${MAX_ADMIN_MINUTES} and ${MAX_ADMIN_MINUTES}`);
-  return { bucket: values.bucket, minutes, reason: cleanReason(values.reason) };
+  const tokens = wholeNumber(values.tokens, 'Tokens');
+  if (tokens === 0) throw new Error('Tokens must not be 0');
+  if (Math.abs(tokens) > MAX_ADMIN_TOKENS) throw new Error(`Tokens must be between \u2212${formatNumber(MAX_ADMIN_TOKENS)} and ${formatNumber(MAX_ADMIN_TOKENS)}`);
+  return { bucket: values.bucket, tokens, reason: cleanReason(values.reason) };
 }
 
 // ─── Recurring grants ───
 
 export interface RecurringGrantFormValues {
-  minutes: string;
+  tokens: string;
   active: boolean;
   reason: string;
 }
 
 export function buildRecurringGrantRequest(values: RecurringGrantFormValues): CreateRecurringGrantRequest {
-  const minutes = wholeNumber(values.minutes, 'Minutes');
-  if (minutes < 1 || minutes > MAX_ADMIN_MINUTES) throw new Error(`Minutes must be between 1 and ${MAX_ADMIN_MINUTES}`);
-  return { minutes, every: 'month', active: values.active, reason: cleanReason(values.reason) };
+  const tokens = wholeNumber(values.tokens, 'Tokens');
+  if (tokens < 1 || tokens > MAX_ADMIN_TOKENS) throw new Error(`Tokens must be between 1 and ${formatNumber(MAX_ADMIN_TOKENS)}`);
+  return { tokens, every: 'month', active: values.active, reason: cleanReason(values.reason) };
 }
 
 export function buildDeleteGrantRequest(reason: string): DeleteRecurringGrantRequest {

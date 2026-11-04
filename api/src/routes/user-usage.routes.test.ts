@@ -8,7 +8,7 @@ import { createBillingIndexes } from '../plugins/mongodb.js';
 import { BillingRepository } from '../repositories/billing.repository.js';
 import { UserRepository } from '../repositories/user.repository.js';
 import { BillingService } from '../services/billing/billing.service.js';
-import { DAY_MS, HOUR_MS, insertUser, makeClock } from '../services/billing/__tests__/billing-fixtures.js';
+import { DAY_MS, insertUser, makeClock } from '../services/billing/__tests__/billing-fixtures.js';
 import type { TestClock } from '../services/billing/__tests__/billing-fixtures.js';
 
 /** Keys that would carry a dollar amount; the payload may match none of them. */
@@ -29,7 +29,7 @@ function collectDollarLeaks(node: unknown, path = '$'): string[] {
   return typeof node === 'string' && MONEY_VALUE.test(node) ? [path] : [];
 }
 
-/** Paths of numbers with a fraction: minutes and counts are whole, so a decimal is a money-shaped leak. */
+/** Paths of numbers with a fraction: tokens and counts are whole, so a decimal is a money-shaped leak. */
 function collectFractions(node: unknown, path = '$'): string[] {
   if (Array.isArray(node)) {
     return node.flatMap((item, index) => collectFractions(item, `${path}[${index}]`));
@@ -91,39 +91,41 @@ describe('GET /api/users/me/usage', () => {
   }
 
   describe('shapes', () => {
-    it('should show a brand-new user with no account row a ready free video and nothing else', async () => {
+    it('should show a brand-new user with no account row the signup grant and nothing else', async () => {
       const { statusCode, body } = await getUsage();
 
       expect(statusCode).toBe(200);
       expect(body).toEqual({
         plan: { id: 'free', periodEnd: null },
-        free: { available: true, nextFreeAt: null, maxVideoMinutes: 30, perWindow: 1 },
-        planMinutes: { granted: 0, used: 0, remaining: 0, cycleEnd: null },
-        credits: { available: 0, lots: [] },
+        balance: 1000,
+        planTokens: null,
+        credits: { available: 1000, lots: [{ tokens: 1000, expiresAt: null }] },
+        debt: 0,
         holds: [],
-        maxVideoMinutes: 30,
+        maxVideoMinutes: 180,
         blocked: false,
+        signupGrantTokens: 1000,
       });
     });
 
-    it('should list the credit lots of a free account and lift its video length to 180', async () => {
-      await service.grantLot(userId, { minutes: 120, expiresAt: new Date(clock.now().getTime() + 30 * DAY_MS) }, ctx());
-      await service.grantLot(userId, { minutes: 30, expiresAt: null }, ctx());
+    it('should list the credit lots of a free account with their expiry', async () => {
+      await service.grantLot(userId, { tokens: 3000, expiresAt: new Date(clock.now().getTime() + 30 * DAY_MS) }, ctx());
+      await service.grantLot(userId, { tokens: 500, expiresAt: null }, ctx());
 
       const { body } = await getUsage();
 
-      expect(body.credits.available).toBe(150);
+      expect([body.balance, body.credits.available]).toEqual([4500, 4500]);
       expect(body.credits.lots).toEqual(
         expect.arrayContaining([
-          { minutes: 120, expiresAt: '2026-12-01T10:00:00.000Z' },
-          { minutes: 30, expiresAt: null },
+          { tokens: 3000, expiresAt: '2026-12-01T10:00:00.000Z' },
+          { tokens: 500, expiresAt: null },
+          { tokens: 1000, expiresAt: null },
         ]),
       );
-      expect(body.free.available).toBe(true);
-      expect(body.maxVideoMinutes).toBe(180);
+      expect(body.planTokens).toBeNull();
     });
 
-    it('should show a Pro account mid-cycle with the minutes it used', async () => {
+    it('should show a Pro account mid-cycle with the tokens its runs hold', async () => {
       await service.setPlan(userId, { planId: 'pro' }, ctx());
       clock.advance(10 * DAY_MS);
       await holdMinutes('run-pro-1', 90);
@@ -132,26 +134,27 @@ describe('GET /api/users/me/usage', () => {
 
       expect(body.plan.id).toBe('pro');
       expect(body.plan.periodEnd).not.toBeNull();
-      expect(body.planMinutes).toMatchObject({ granted: 600, used: 90, remaining: 510 });
-      expect(body.planMinutes.cycleEnd).not.toBeNull();
-      expect(body.maxVideoMinutes).toBe(180);
+      // A 90-minute estimate (2,280) comes out of the cycle's 20,000 first.
+      expect(body.planTokens).toMatchObject({ granted: 20_000, used: 2280, remaining: 17_720 });
+      expect(body.planTokens?.cycleEnd).not.toBeNull();
+      expect(body.balance).toBe(18_720);
     });
 
-    it('should report an open hold with its video and minutes', async () => {
-      await service.setPlan(userId, { planId: 'pro' }, ctx());
+    it('should report an open hold with its video and estimate', async () => {
       await holdMinutes('run-hold-1', 12);
 
       const { body } = await getUsage();
 
-      expect(body.holds).toEqual([{ youtubeId: 'dQw4w9WgXcQ', minutes: 12 }]);
+      expect([body.holds, body.balance]).toEqual([[{ youtubeId: 'dQw4w9WgXcQ', tokens: 876 }], 124]);
     });
 
-    it('should show zero free videos per window when an admin turned the free video off (W3)', async () => {
-      await service.setCaps(userId, { freeVideosPerDay: 0 }, ctx());
+    it('should show a run that cost more than the account had as debt and a negative balance', async () => {
+      await holdMinutes('run-debt-1', 10);
+      await service.settleActual('run-debt-1', 0.5);
 
       const { body } = await getUsage();
 
-      expect(body.free).toEqual({ available: false, nextFreeAt: null, maxVideoMinutes: 30, perWindow: 0 });
+      expect(body).toMatchObject({ balance: -500, debt: 500, holds: [], credits: { available: 0 } });
     });
 
     it('should flag a blocked account', async () => {
@@ -162,13 +165,12 @@ describe('GET /api/users/me/usage', () => {
       expect(body.blocked).toBe(true);
     });
 
-    it('should show when the next free video opens once the free slot is used', async () => {
-      await holdMinutes('run-free-1', 10);
+    it('should show an admin cap on the video length', async () => {
+      await service.setCaps(userId, { maxVideoMinutes: 20 }, ctx());
 
       const { body } = await getUsage();
 
-      expect(body.free.available).toBe(false);
-      expect(body.free.nextFreeAt).toBe(new Date(clock.now().getTime() + 24 * HOUR_MS).toISOString());
+      expect(body.maxVideoMinutes).toBe(20);
     });
   });
 
@@ -176,11 +178,15 @@ describe('GET /api/users/me/usage', () => {
     async function everyShape(): Promise<UsageSummary[]> {
       const shapes: UsageSummary[] = [(await getUsage()).body];
 
-      await service.grantLot(userId, { minutes: 60, expiresAt: new Date(clock.now().getTime() + DAY_MS) }, ctx());
+      await service.grantLot(userId, { tokens: 600, expiresAt: new Date(clock.now().getTime() + DAY_MS) }, ctx());
       shapes.push((await getUsage()).body);
 
       await service.setPlan(userId, { planId: 'pro' }, ctx());
       await holdMinutes('run-shapes-1', 20);
+      shapes.push((await getUsage()).body);
+
+      // Settled at a cost no one priced in: a balance in debt.
+      await service.settleActual('run-shapes-1', 10.1234567);
       shapes.push((await getUsage()).body);
 
       await service.setCaps(userId, { blocked: true }, ctx());
@@ -195,9 +201,11 @@ describe('GET /api/users/me/usage', () => {
     });
 
     it('should hold only whole numbers, ids, flags and ISO dates', async () => {
-      const fractions = (await everyShape()).flatMap((shape) => collectFractions(shape));
+      const shapes = await everyShape();
+      const fractions = shapes.flatMap((shape) => collectFractions(shape));
 
       expect(fractions).toEqual([]);
+      expect(shapes[3].debt).toBeGreaterThan(0);
     });
 
     it('should catch a dollar key when one is added (the walker is not vacuous)', () => {
@@ -208,7 +216,7 @@ describe('GET /api/users/me/usage', () => {
   });
 
   describe('removed dollar view (P3.2)', () => {
-    it('should answer minutes, never dollars, to an old client still asking for ?view=usd', async () => {
+    it('should answer tokens, never dollars, to an old client still asking for ?view=usd', async () => {
       const { statusCode, body } = await getUsage('?view=usd');
 
       expect(statusCode).toBe(200);

@@ -21,12 +21,23 @@ export function useVideos(folderId?: string, options?: { enabled?: boolean }) {
   });
 }
 
+// A finished run's cost settles a moment after its stream ends (the summarizer's
+// run-cost report), so a completed video can still read "held". Poll until it
+// settles; the cap counts every fetch of the query, so it never polls for long.
+export const SETTLE_POLL_MS = 5_000;
+export const SETTLE_POLL_LIMIT = 12;
+
 // Fetch single video
 export function useVideo(id: string) {
   return useQuery({
     queryKey: queryKeys.videos.detail(id),
     queryFn: () => videosApi.get(id),
     enabled: !!id,
+    refetchInterval: (query) => {
+      const video = query.state.data;
+      const settling = video?.status === "completed" && video.billing?.state === "held";
+      return settling && query.state.dataUpdateCount < SETTLE_POLL_LIMIT ? SETTLE_POLL_MS : false;
+    },
   });
 }
 
@@ -50,8 +61,10 @@ export function useAddVideo() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.videos.lists() });
-      // A submit can spend the free video or hold minutes; refresh the tile.
+      // A submit holds its estimate in tokens; refresh the tile. The video is now
+      // in the library, so a cached "≈ N tokens" for its URL would be wrong.
       queryClient.invalidateQueries({ queryKey: usageQueryKey });
+      queryClient.invalidateQueries({ queryKey: queryKeys.videoEstimates.all });
     },
   });
 }
@@ -149,14 +162,14 @@ export function useRetryVideo() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.videos.lists() });
-      // A retry is a billed submit: it holds minutes, so the tile must re-read them.
+      // A retry is a billed submit: it holds tokens, so the tile must re-read them.
       queryClient.invalidateQueries({ queryKey: usageQueryKey });
     },
   });
 }
 
 // "Update to latest version" for a stale copy. A billed run like a new video
-// (free video or minutes), so a 402 / 403 / 422 / 429 refusal comes back as the
+// (it holds tokens), so a 402 / 403 / 422 / 429 refusal comes back as the
 // mutation's `error` (render it with UpdateAvailableNotice). Never automatic.
 export function useUpdateVideoToLatest() {
   const queryClient = useQueryClient();
@@ -178,7 +191,7 @@ export function useUpdateVideoToLatest() {
       // to the pending / stream view.
       queryClient.invalidateQueries({ queryKey: queryKeys.videos.detail(videoId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.videos.lists() });
-      // The run holds minutes or spends the free video; the tile must re-read them.
+      // The run holds its estimate in tokens; the tile must re-read them.
       queryClient.invalidateQueries({ queryKey: usageQueryKey });
     },
   });

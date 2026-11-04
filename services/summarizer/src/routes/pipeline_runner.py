@@ -71,7 +71,7 @@ async def _complete_from_cache(
 ) -> None:
     """Save a Redis-served payload on the row, then report it completed.
 
-    The status carries ``cache_hit`` so vie-api gives the run's minutes hold
+    The status carries ``cache_hit`` so vie-api gives the run's token hold
     back as a cached serve instead of settling a run that never ran (I3).
     Sent only after the save, so the API's served-version promote sees the
     completed row.

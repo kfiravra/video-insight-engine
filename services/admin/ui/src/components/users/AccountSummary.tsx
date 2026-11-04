@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import type { BillingAccountSnapshot, BillingCaps } from '../../lib/billing';
-import { formatMinutes } from '../../lib/billing';
+import { describeBalance, formatTokens } from '../../lib/billing';
 import { formatDateTime, formatDateTimeUtc } from '../../lib/format';
 
 interface SummaryTileProps {
@@ -31,29 +31,20 @@ function SummaryTile({ label, value, detail, tone = 'default', testId }: Summary
   );
 }
 
-type FreeVideo = BillingAccountSnapshot['free'];
-
-function freeVideoTile(free: FreeVideo): Pick<SummaryTileProps, 'value' | 'tone'> {
-  if (free.perWindow <= 0) return { value: 'Disabled', tone: 'bad' };
-  if (free.available) return { value: 'Ready', tone: 'good' };
-  return { value: `Next at ${formatDateTime(free.nextFreeAt)}`, tone: 'warn' };
-}
-
 function planTerm(plan: BillingAccountSnapshot['plan']): string {
   if (plan.id === 'free') return 'No plan term';
   return `${formatDateTimeUtc(plan.periodStart)} to ${formatDateTimeUtc(plan.periodEnd)}`;
 }
 
-function planMinutesDetail(minutes: BillingAccountSnapshot['planMinutes']): string {
-  if (minutes.cycleEnd === null) return 'No active cycle';
-  return `${formatMinutes(minutes.used)} of ${formatMinutes(minutes.granted)} used, cycle ends ${formatDateTime(minutes.cycleEnd)}`;
+function planTokensDetail(tokens: BillingAccountSnapshot['planTokens']): string {
+  if (tokens.cycleEnd === null) return 'No active cycle';
+  return `${formatTokens(tokens.used)} of ${formatTokens(tokens.granted)} used, cycle ends ${formatDateTime(tokens.cycleEnd)}`;
 }
 
 /** The caps an admin set, as "label: value" strings; empty when the plan defaults apply. */
 function describeCaps(caps: BillingCaps): string[] {
   const parts: string[] = [];
   if (caps.maxVideoMinutes != null) parts.push(`max video ${caps.maxVideoMinutes} min`);
-  if (caps.freeVideosPerDay != null) parts.push(`${caps.freeVideosPerDay} free videos per day`);
   if (caps.maxConcurrent != null) parts.push(`${caps.maxConcurrent} runs at once`);
   return parts;
 }
@@ -63,9 +54,8 @@ interface AccountSummaryProps {
 }
 
 export function AccountSummary({ account }: AccountSummaryProps) {
-  const { plan, free, planMinutes, credits, caps } = account;
+  const { plan, planTokens, credits, caps, balance, debt } = account;
   const capParts = describeCaps(caps);
-  const freeTile = freeVideoTile(free);
 
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 gap-2" data-testid="account-summary">
@@ -76,21 +66,21 @@ export function AccountSummary({ account }: AccountSummaryProps) {
         testId="account-plan"
       />
       <SummaryTile
-        label="Free video"
-        value={freeTile.value}
-        tone={freeTile.tone}
-        detail={`${free.usedInWindow} of ${free.perWindow} used in the last 24 h, up to ${free.maxVideoMinutes} min`}
-        testId="account-free-video"
+        label="Balance"
+        value={describeBalance(balance, debt)}
+        tone={balance < 0 || debt > 0 ? 'bad' : 'default'}
+        detail="Plan tokens left + credits - debt"
+        testId="account-balance"
       />
       <SummaryTile
-        label="Plan minutes"
-        value={`${formatMinutes(planMinutes.remaining)} left`}
-        detail={planMinutesDetail(planMinutes)}
-        testId="account-plan-minutes"
+        label="Pro cycle tokens"
+        value={`${formatTokens(planTokens.remaining)} left`}
+        detail={planTokensDetail(planTokens)}
+        testId="account-plan-tokens"
       />
       <SummaryTile
         label="Credits"
-        value={formatMinutes(credits.available)}
+        value={formatTokens(credits.available)}
         detail="Spendable, unexpired lots"
         testId="account-credits"
       />

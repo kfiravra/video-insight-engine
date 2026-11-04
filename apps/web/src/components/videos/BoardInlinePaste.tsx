@@ -8,6 +8,7 @@ import { hasPlaylistId, hasVideoId, isYouTubeUrl } from '@/lib/youtube-utils';
 import { cn } from '@/lib/utils';
 import { showDuplicateToast } from '@/features/video-output/lib/duplicate-toast';
 import { BillingNoticeAlert } from '@/components/usage/BillingNoticeAlert';
+import { EstimateHint } from '@/components/usage/EstimateHint';
 import { classifyBillingError, type BillingNotice } from '@/lib/billing-errors';
 
 interface BoardInlinePasteProps {
@@ -40,6 +41,9 @@ export const BoardInlinePaste = memo(function BoardInlinePaste({
   const trimmed = url.trim();
   const isInvalidUrl = trimmed.length > 0 && !isYouTubeUrl(trimmed);
   const isLoading = addVideo.isPending;
+  // "≈ 840 tokens" under the bar for a video link; it steps aside for a refusal or an error.
+  const estimateUrl =
+    !isInvalidUrl && !error && !billingNotice && !isLoading && hasVideoId(trimmed) ? trimmed : null;
 
   const handleSubmit = async (e: FormEvent): Promise<void> => {
     e.preventDefault();
@@ -148,6 +152,8 @@ export const BoardInlinePaste = memo(function BoardInlinePaste({
           That doesn&apos;t look like a YouTube link.
         </p>
       )}
+
+      <EstimateHint url={estimateUrl} className="mt-1.5 ps-2" />
 
       {billingNotice && <BillingNoticeAlert notice={billingNotice} className="mt-2" />}
 

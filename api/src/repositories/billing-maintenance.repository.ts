@@ -1,4 +1,5 @@
 import { Db, ObjectId, Collection } from 'mongodb';
+import { normalizeAccount } from './billing.repository.js';
 import type {
   BillingAccountDocument,
   CreditLotDocument,
@@ -35,7 +36,8 @@ export class BillingMaintenanceRepository {
 
   /** Accounts holding at least one hold opened before `cutoff`. */
   async listAccountsWithHoldsBefore(cutoff: Date, limit: number): Promise<BillingAccountDocument[]> {
-    return this.accounts.find({ 'holds.createdAt': { $lt: cutoff } }).limit(limit).toArray();
+    const accounts = await this.accounts.find({ 'holds.createdAt': { $lt: cutoff } }).limit(limit).toArray();
+    return accounts.map(normalizeAccount);
   }
 
   /**
@@ -55,7 +57,7 @@ export class BillingMaintenanceRepository {
   async listAccountIdsWithExpiredLots(now: Date, limit: number): Promise<ObjectId[]> {
     const rows = await this.lots
       .aggregate<{ _id: ObjectId }>([
-        { $match: { minutesRemaining: { $gt: 0 }, expiresAt: { $lte: now } } },
+        { $match: { tokensRemaining: { $gt: 0 }, expiresAt: { $lte: now } } },
         { $group: { _id: '$accountId' } },
         { $limit: limit },
       ])
@@ -63,9 +65,10 @@ export class BillingMaintenanceRepository {
     return rows.map((row) => row._id);
   }
 
+  /** Due token grants; a minute grant waits for the token migration to convert it. */
   async listDueRecurringGrants(now: Date, limit: number): Promise<RecurringGrantDocument[]> {
     return this.recurringGrants
-      .find({ active: true, deletedAt: null, nextRunAt: { $lte: now } })
+      .find({ active: true, deletedAt: null, nextRunAt: { $lte: now }, tokens: { $exists: true } })
       .sort({ nextRunAt: 1 })
       .limit(limit)
       .toArray();
@@ -73,6 +76,7 @@ export class BillingMaintenanceRepository {
 
   /** Accounts written at or after `since`, oldest first. */
   async listAccountsUpdatedSince(since: Date, limit: number): Promise<BillingAccountDocument[]> {
-    return this.accounts.find({ updatedAt: { $gte: since } }).sort({ updatedAt: 1 }).limit(limit).toArray();
+    const accounts = await this.accounts.find({ updatedAt: { $gte: since } }).sort({ updatedAt: 1 }).limit(limit).toArray();
+    return accounts.map(normalizeAccount);
   }
 }

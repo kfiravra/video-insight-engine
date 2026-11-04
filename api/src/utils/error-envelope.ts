@@ -1,31 +1,22 @@
 import { ZodError } from 'zod';
 import type { FastifyError } from 'fastify';
 import { config } from '../config.js';
-import {
-  AppError,
-  ChatLimitReachedError,
-  InsufficientMinutesError,
-  RateLimitedError,
-  TooManyRunsError,
-  VideoTooLongForPlanError,
-} from './errors.js';
+import { AppError, InsufficientTokensError, RateLimitedError, TooManyRunsError, VideoTooLongError } from './errors.js';
 
 /**
  * The documented error body (docs/ERROR-HANDLING.md): `{ error, message,
  * statusCode }`, plus `details` when structured context exists (Zod issue
- * list), `nextAt` for the free chat limit and the minutes gate's numbers.
+ * list) and the token gate's numbers.
  */
 export interface ErrorEnvelope {
   error: string;
   message: string;
   statusCode: number;
   details?: { issues: Array<{ path: string; message: string }> };
-  nextAt?: string;
-  /** INSUFFICIENT_MINUTES: the video's minutes, the paid minutes there are, when the free video reopens. */
+  /** INSUFFICIENT_TOKENS: the tokens needed (a video's estimate, 1 for a chat turn) and the balance (negative in debt). */
   needed?: number;
   available?: number;
-  nextFreeAt?: string;
-  /** VIDEO_TOO_LONG_FOR_PLAN */
+  /** VIDEO_TOO_LONG */
   maxMinutes?: number;
   /** TOO_MANY_RUNS */
   maxConcurrent?: number;
@@ -33,21 +24,15 @@ export interface ErrorEnvelope {
   retryAfterSec?: number;
 }
 
-type BillingFields = Pick<
-  ErrorEnvelope,
-  'needed' | 'available' | 'nextFreeAt' | 'maxMinutes' | 'maxConcurrent' | 'retryAfterSec'
->;
+type BillingFields = Pick<ErrorEnvelope, 'needed' | 'available' | 'maxMinutes' | 'maxConcurrent' | 'retryAfterSec'>;
 
-/** The minutes gate's numbers and a limiter's wait, as top-level body fields (the web reads them from the body). */
+/** The token gate's numbers and a limiter's wait, as top-level body fields (the web reads them from the body). */
 function billingFields(error: AppError): BillingFields {
   if (error instanceof RateLimitedError) {
     return error.retryAfterSec === undefined ? {} : { retryAfterSec: error.retryAfterSec };
   }
-  if (error instanceof InsufficientMinutesError) {
-    const { needed, available, nextFreeAt } = error;
-    return { needed, available, ...(nextFreeAt && { nextFreeAt }) };
-  }
-  if (error instanceof VideoTooLongForPlanError) return { maxMinutes: error.maxMinutes };
+  if (error instanceof InsufficientTokensError) return { needed: error.needed, available: error.available };
+  if (error instanceof VideoTooLongError) return { maxMinutes: error.maxMinutes };
   if (error instanceof TooManyRunsError) return { maxConcurrent: error.maxConcurrent };
   return {};
 }
@@ -79,19 +64,6 @@ export function resolveErrorEnvelope(error: HandledError): ResolvedError {
             message: issue.message,
           })),
         },
-      },
-    };
-  }
-
-  // Free chat limit reached — surface nextAt so the UI can say when chat reopens
-  if (error instanceof ChatLimitReachedError) {
-    return {
-      statusCode: error.status,
-      body: {
-        error: error.code,
-        message: error.message,
-        statusCode: error.status,
-        nextAt: error.nextAt,
       },
     };
   }

@@ -32,50 +32,46 @@ describe('BoardInlinePaste billing refusals', () => {
     setAccessToken('test-access-token');
   });
 
-  it('should show the minutes callout when the account cannot pay for the video (402)', async () => {
+  it('should show the tokens callout when the balance cannot cover the video (402)', async () => {
     rejectWith(402, {
-      error: 'INSUFFICIENT_MINUTES',
-      message: 'This video needs 31 minutes; 12 available',
+      error: 'INSUFFICIENT_TOKENS',
+      message: 'This needs 840 tokens; 300 available',
       statusCode: 402,
-      needed: 31,
-      available: 12,
-      nextFreeAt: null,
+      needed: 840,
+      available: 300,
     });
 
     await submit();
 
-    expect(await screen.findByTestId('minutes-callout')).toHaveTextContent(
-      'This video needs 31 minutes and you have 12 minutes to spend.',
+    expect(await screen.findByTestId('tokens-callout')).toHaveTextContent(
+      'This video needs ≈ 840 tokens and you have 300 tokens.',
     );
   });
 
   it('should point the callout at the billing page', async () => {
-    rejectWith(402, { error: 'INSUFFICIENT_MINUTES', message: 'x', statusCode: 402, needed: 5, available: 0 });
+    rejectWith(402, { error: 'INSUFFICIENT_TOKENS', message: 'x', statusCode: 402, needed: 750, available: 0 });
 
     await submit();
 
-    expect(await screen.findByRole('link', { name: 'See your minutes' })).toHaveAttribute(
-      'href',
-      '/settings/billing',
-    );
+    expect(await screen.findByRole('link', { name: 'Add tokens' })).toHaveAttribute('href', '/settings/billing');
   });
 
   it('should still show the callout when the 402 carries no amounts', async () => {
-    rejectWith(402, { error: 'INSUFFICIENT_MINUTES', message: 'x', statusCode: 402 });
+    rejectWith(402, { error: 'INSUFFICIENT_TOKENS', message: 'x', statusCode: 402 });
 
     await submit();
 
-    expect(await screen.findByTestId('minutes-callout')).toHaveTextContent(
-      "You don't have enough minutes for this video.",
+    expect(await screen.findByTestId('tokens-callout')).toHaveTextContent(
+      "You don't have enough tokens for this video.",
     );
   });
 
   it('should show the video length limit when the video is too long (422)', async () => {
-    rejectWith(422, { error: 'VIDEO_TOO_LONG_FOR_PLAN', message: 'x', statusCode: 422, maxMinutes: 30 });
+    rejectWith(422, { error: 'VIDEO_TOO_LONG', message: 'x', statusCode: 422, maxMinutes: 180 });
 
     await submit();
 
-    expect(await screen.findByTestId('minutes-callout')).toHaveTextContent('up to 30 minutes long');
+    expect(await screen.findByTestId('tokens-callout')).toHaveTextContent('up to 180 minutes long');
   });
 
   it('should say the account is blocked (403)', async () => {
@@ -125,17 +121,17 @@ describe('BoardInlinePaste billing refusals', () => {
     await submit();
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Something broke');
-    expect(screen.queryByTestId('minutes-callout')).toBeNull();
+    expect(screen.queryByTestId('tokens-callout')).toBeNull();
   });
 
   it('should clear the callout when the user edits the URL', async () => {
-    rejectWith(402, { error: 'INSUFFICIENT_MINUTES', message: 'x', statusCode: 402, needed: 5, available: 0 });
+    rejectWith(402, { error: 'INSUFFICIENT_TOKENS', message: 'x', statusCode: 402, needed: 750, available: 0 });
     await submit();
-    await screen.findByTestId('minutes-callout');
+    await screen.findByTestId('tokens-callout');
 
     await userEvent.setup().type(screen.getByLabelText('YouTube URL'), 'x');
 
-    await waitFor(() => expect(screen.queryByTestId('minutes-callout')).toBeNull());
+    await waitFor(() => expect(screen.queryByTestId('tokens-callout')).toBeNull());
   });
 
   it('should open the new video when the submit succeeds', async () => {
@@ -148,5 +144,35 @@ describe('BoardInlinePaste billing refusals', () => {
     await submit();
 
     await waitFor(() => expect(window.location.pathname).toBe('/video/video-42'));
+  });
+});
+
+describe('BoardInlinePaste estimate', () => {
+  beforeEach(() => {
+    setAccessToken('test-access-token');
+  });
+
+  it('should show what a pasted video would hold under the bar', async () => {
+    renderWithProviders(<BoardInlinePaste folderId={null} />, { route: '/board' });
+
+    await userEvent.setup().type(screen.getByLabelText('YouTube URL'), VIDEO_URL);
+
+    expect(await screen.findByTestId('estimate-hint')).toHaveTextContent('≈ 840 tokens');
+  });
+
+  it('should say nothing for a link that is not a YouTube video', async () => {
+    const seen: string[] = [];
+    server.use(
+      http.get(`${API_URL}/videos/estimate`, ({ request }) => {
+        seen.push(request.url);
+        return HttpResponse.json({ youtubeId: 'x', durationSec: 60, tokens: 750, free: false });
+      }),
+    );
+    renderWithProviders(<BoardInlinePaste folderId={null} />, { route: '/board' });
+
+    await userEvent.setup().type(screen.getByLabelText('YouTube URL'), 'https://example.com/watch?v=nope');
+    await new Promise((resolve) => setTimeout(resolve, 600));
+
+    expect([seen, screen.queryByTestId('estimate-hint')]).toEqual([[], null]);
   });
 });

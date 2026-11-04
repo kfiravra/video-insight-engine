@@ -209,9 +209,11 @@ describe('config env validation', () => {
   });
 
   describe('removed gates (P3.2)', () => {
-    it('should expose no ledger switch, shadow flag, daily video limit or per-tier dollar caps', async () => {
-      const { config } = await loadConfig({ NODE_ENV: 'production', BILLING_LEDGER_ENFORCE: 'false', BILLING_SHADOW_ENABLED: 'true' });
-      const removed = ['BILLING_LEDGER_ENFORCE', 'BILLING_SHADOW_ENABLED', 'VIDEO_DAILY_LIMIT', 'COST_LIMITS_PER_TIER'];
+    it('should expose no ledger switch, shadow flag, daily video limit, per-tier dollar caps or chat allowance', async () => {
+      const { config } = await loadConfig({
+        NODE_ENV: 'production', BILLING_LEDGER_ENFORCE: 'false', BILLING_SHADOW_ENABLED: 'true', CHAT_FREE_MESSAGES_PER_DAY: '50',
+      });
+      const removed = ['BILLING_LEDGER_ENFORCE', 'BILLING_SHADOW_ENABLED', 'VIDEO_DAILY_LIMIT', 'COST_LIMITS_PER_TIER', 'CHAT_FREE_MESSAGES_PER_DAY'];
       expect(removed.filter((key) => key in config)).toEqual([]);
     });
   });

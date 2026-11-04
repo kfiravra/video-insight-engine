@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { DirectionProvider } from '@/contexts/DirectionContext';
 import { VieMenu } from '@/components/vie';
+import { getLabels } from '@/lib/i18n';
 import { UsageMenuItem } from '../UsageMenuItem';
 
 function LocationProbe() {
@@ -27,7 +28,7 @@ describe('UsageMenuItem', () => {
   it('should be a menu item, which the menu can focus with the keyboard', () => {
     renderMenu();
 
-    expect(screen.getByRole('menuitem', { name: 'Minutes & plan' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Tokens & plan' })).toBeInTheDocument();
   });
 
   it('should not be a link inside the menu', () => {
@@ -39,7 +40,7 @@ describe('UsageMenuItem', () => {
   it('should open the billing page when selected with Enter', async () => {
     const user = userEvent.setup();
     renderMenu();
-    screen.getByRole('menuitem', { name: 'Minutes & plan' }).focus();
+    screen.getByRole('menuitem', { name: 'Tokens & plan' }).focus();
 
     await user.keyboard('{Enter}');
 
@@ -49,14 +50,14 @@ describe('UsageMenuItem', () => {
   it('should open the billing page when clicked', async () => {
     renderMenu();
 
-    await userEvent.setup().click(screen.getByRole('menuitem', { name: 'Minutes & plan' }));
+    await userEvent.setup().click(screen.getByRole('menuitem', { name: 'Tokens & plan' }));
 
     expect(screen.getByTestId('path')).toHaveTextContent('/settings/billing');
   });
 
-  it('should be labelled in Hebrew under a Hebrew direction context', () => {
-    renderMenu('he');
+  it('should read its label from the billing table of the surrounding language', () => {
+    renderMenu('ar');
 
-    expect(screen.getByRole('menuitem', { name: 'דקות ומסלול' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: getLabels('ar').billing.manageLink })).toBeInTheDocument();
   });
 });

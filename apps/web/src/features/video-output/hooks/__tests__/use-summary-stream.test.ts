@@ -309,6 +309,65 @@ describe("useSummaryStream", () => {
       expect(result.current.error).toBe("This video didn't finish processing. Retry starts it again as a new run.");
     });
 
+    it("should keep the billing code of a stream the gateway refused for want of tokens (402)", async () => {
+      server.use(
+        http.get(`${API_URL}/videos/:id/stream`, () =>
+          HttpResponse.json(
+            { error: "INSUFFICIENT_TOKENS", message: "This needs 840 tokens; 0 available", statusCode: 402, needed: 840, available: 0 },
+            { status: 402 },
+          ),
+        ),
+      );
+
+      const { result } = renderHook(() =>
+        useSummaryStream({ videoSummaryId: "video-refused-402", enabled: true })
+      );
+
+      await waitFor(() => {
+        expect(result.current.phase).toBe("error");
+      });
+      expect(result.current.errorCode).toBe("INSUFFICIENT_TOKENS");
+      expect(result.current.error).toBe("You don't have enough tokens to process this video. Add tokens, then retry.");
+    });
+
+    it("should keep the billing code of a stream refused for a blocked account (403)", async () => {
+      server.use(
+        http.get(`${API_URL}/videos/:id/stream`, () =>
+          HttpResponse.json({ error: "ACCOUNT_BLOCKED", message: "x", statusCode: 403 }, { status: 403 }),
+        ),
+      );
+
+      const { result } = renderHook(() =>
+        useSummaryStream({ videoSummaryId: "video-refused-403", enabled: true })
+      );
+
+      await waitFor(() => {
+        expect(result.current.phase).toBe("error");
+      });
+      expect([result.current.errorCode, result.current.error]).toEqual([
+        "ACCOUNT_BLOCKED",
+        "This account can't start new videos right now.",
+      ]);
+    });
+
+    it("should fall back to the status line for a refused stream without a JSON body", async () => {
+      server.use(
+        http.get(`${API_URL}/videos/:id/stream`, () => new HttpResponse("<html>Bad gateway</html>", { status: 502 })),
+      );
+
+      const { result } = renderHook(() =>
+        useSummaryStream({ videoSummaryId: "video-refused-502", enabled: true })
+      );
+
+      await waitFor(() => {
+        expect(result.current.phase).toBe("error");
+      });
+      expect([result.current.errorCode, result.current.error]).toEqual([
+        null,
+        "Our servers are having issues. Please try again later.",
+      ]);
+    });
+
     it("should keep no error code when the server sent none", async () => {
       const events = [{ event: "error", data: { event: "error", message: "Internal error" } }];
       server.use(

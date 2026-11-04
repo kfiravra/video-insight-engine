@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 
 import { RAGChatPanel } from '../RAGChatPanel';
 
@@ -111,6 +112,39 @@ describe('RAGChatPanel', () => {
       );
 
       expect(screen.getByText('▌')).toBeInTheDocument();
+    });
+  });
+
+  describe('billing refusals', () => {
+    it('should link a refused reply to the billing page', () => {
+      render(
+        <MemoryRouter>
+          <RAGChatPanel
+            {...defaultProps}
+            messages={[
+              createMessage({
+                id: 'msg-2',
+                role: 'assistant',
+                content: "You're out of tokens — add tokens to keep chatting.",
+                billingLink: true,
+              }),
+            ]}
+          />
+        </MemoryRouter>,
+      );
+
+      expect(screen.getByRole('link', { name: 'Tokens & plan' })).toHaveAttribute('href', '/settings/billing');
+    });
+
+    it('should not link an ordinary reply', () => {
+      render(
+        <RAGChatPanel
+          {...defaultProps}
+          messages={[createMessage({ id: 'msg-2', role: 'assistant', content: 'React is a UI library.' })]}
+        />,
+      );
+
+      expect(screen.queryByTestId('chat-billing-link')).toBeNull();
     });
   });
 

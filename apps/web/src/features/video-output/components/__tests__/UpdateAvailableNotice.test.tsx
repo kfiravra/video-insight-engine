@@ -60,12 +60,18 @@ describe("UpdateAvailableNotice", () => {
       expect(screen.getByRole("button", { name: "Update to latest version" })).toBeEnabled();
     });
 
-    it("should say the update counts as a new video that uses the free video or minutes", () => {
+    it("should say the update runs as a new video that spends tokens", () => {
       renderNotice();
 
       expect(screen.getByRole("status")).toHaveTextContent(
-        "Updating counts as a new video and uses your free video or minutes.",
+        "Updating runs it again as a new video and spends tokens.",
       );
+    });
+
+    it("should not promise a free video", () => {
+      renderNotice();
+
+      expect(screen.getByRole("status")).not.toHaveTextContent(/free video/i);
     });
 
     it("should render nothing when the video has no update available", () => {
@@ -145,33 +151,33 @@ describe("UpdateAvailableNotice", () => {
   });
 
   describe("refusals", () => {
-    it("should show the minutes callout when the update needs more minutes (402)", async () => {
-      refuseWith(402, { error: "INSUFFICIENT_MINUTES", message: "x", needed: 31, available: 12 });
+    it("should show the tokens callout when the update needs more tokens (402)", async () => {
+      refuseWith(402, { error: "INSUFFICIENT_TOKENS", message: "x", needed: 840, available: 300 });
       renderNotice();
 
       await userEvent.click(screen.getByRole("button", { name: "Update to latest version" }));
 
-      const callout = await screen.findByTestId("minutes-callout");
-      expect(callout).toHaveTextContent("This video needs 31 minutes and you have 12 minutes to spend.");
+      const callout = await screen.findByTestId("tokens-callout");
+      expect(callout).toHaveTextContent("This video needs ≈ 840 tokens and you have 300 tokens.");
     });
 
     it("should leave the button usable after a refusal so the user can try again", async () => {
-      refuseWith(402, { error: "INSUFFICIENT_MINUTES", message: "x", needed: 31, available: 12 });
+      refuseWith(402, { error: "INSUFFICIENT_TOKENS", message: "x", needed: 840, available: 300 });
       renderNotice();
 
       await userEvent.click(screen.getByRole("button", { name: "Update to latest version" }));
-      await screen.findByTestId("minutes-callout");
+      await screen.findByTestId("tokens-callout");
 
       expect(screen.getByRole("button", { name: "Update to latest version" })).toBeEnabled();
     });
 
     it("should not invalidate anything when the update is refused", async () => {
-      refuseWith(402, { error: "INSUFFICIENT_MINUTES", message: "x", needed: 31, available: 12 });
+      refuseWith(402, { error: "INSUFFICIENT_TOKENS", message: "x", needed: 840, available: 300 });
       const { queryClient } = renderNotice();
       const invalidate = vi.spyOn(queryClient, "invalidateQueries");
 
       await userEvent.click(screen.getByRole("button", { name: "Update to latest version" }));
-      await screen.findByTestId("minutes-callout");
+      await screen.findByTestId("tokens-callout");
 
       expect(invalidate).not.toHaveBeenCalled();
     });

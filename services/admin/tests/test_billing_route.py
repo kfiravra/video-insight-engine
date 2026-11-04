@@ -10,7 +10,6 @@ import pytest
 from bson import ObjectId
 
 from src.main import app
-from src.services.billing_account import to_iso
 from tests.billing_fakes import (
     ACCOUNT_OID,
     NOW,
@@ -120,10 +119,10 @@ async def test_should_return_the_no_account_shape_for_a_user_without_a_billing_r
 
 @pytest.mark.anyio
 async def test_should_return_plan_buckets_and_caps_for_an_account(use_db: UseDb) -> None:
-    caps = {"maxVideoMinutes": 20, "freeVideosPerDay": 2, "maxConcurrent": 3, "blocked": True}
+    caps = {"maxVideoMinutes": 20, "maxConcurrent": 3, "blocked": True}
     use_db(
         make_db(
-            billingAccounts=[make_account(caps=caps)], creditLots=[make_lot(1, minutesRemaining=90)]
+            billingAccounts=[make_account(caps=caps)], creditLots=[make_lot(1, tokensRemaining=900)]
         )
     )
 
@@ -138,17 +137,17 @@ async def test_should_return_plan_buckets_and_caps_for_an_account(use_db: UseDb)
         "periodStart": "2026-10-01T00:00:00.000Z",
         "periodEnd": "2027-10-01T00:00:00.000Z",
     }
-    assert body["planMinutes"] == {
+    assert body["planTokens"] == {
         "cycleStart": "2026-10-01T00:00:00.000Z",
         "cycleEnd": "2026-11-01T00:00:00.000Z",
-        "granted": 600,
-        "used": 140,
-        "remaining": 460,
+        "granted": 20_000,
+        "used": 4_200,
+        "remaining": 15_800,
     }
-    assert body["credits"] == {"available": 90}
+    assert body["credits"] == {"available": 900}
+    assert (body["debt"], body["balance"], body["signupGrantAt"]) == (0, 16_700, None)
     assert body["caps"] == {
         "maxVideoMinutes": 20,
-        "freeVideosPerDay": 2,
         "maxConcurrent": 3,
         "blocked": True,
     }
@@ -157,34 +156,34 @@ async def test_should_return_plan_buckets_and_caps_for_an_account(use_db: UseDb)
 
 
 @pytest.mark.anyio
-async def test_should_report_no_plan_minutes_remaining_once_the_cycle_has_ended(
+async def test_should_report_no_plan_tokens_remaining_once_the_cycle_has_ended(
     use_db: UseDb,
 ) -> None:
     ended = make_account()
     ended["buckets"]["plan"]["cycleEnd"] = NOW - timedelta(minutes=1)
     use_db(make_db(billingAccounts=[ended]))
 
-    plan_minutes = (await api_get()).json()["account"]["planMinutes"]
+    plan_tokens = (await api_get()).json()["account"]["planTokens"]
 
-    assert plan_minutes["remaining"] == 0
-    assert plan_minutes["granted"] == 600
+    assert plan_tokens["remaining"] == 0
+    assert plan_tokens["granted"] == 20_000
 
 
 @pytest.mark.anyio
-async def test_should_report_no_plan_minutes_on_the_free_plan(use_db: UseDb) -> None:
+async def test_should_report_no_plan_tokens_on_the_free_plan(use_db: UseDb) -> None:
     free = make_account(plan={"id": "free", "status": "active", "source": None})
     free["buckets"]["plan"] = {
         "cycleStart": None,
         "cycleEnd": None,
-        "minutesGranted": 0,
-        "minutesUsed": 0,
+        "tokensGranted": 0,
+        "tokensUsed": 0,
     }
     use_db(make_db(billingAccounts=[free]))
 
     body = (await api_get()).json()["account"]
 
     assert body["plan"]["periodEnd"] is None
-    assert body["planMinutes"]["remaining"] == 0
+    assert body["planTokens"]["remaining"] == 0
 
 
 @pytest.mark.anyio
@@ -195,88 +194,81 @@ async def test_should_leave_unset_caps_null(use_db: UseDb) -> None:
 
     assert caps == {
         "maxVideoMinutes": None,
-        "freeVideosPerDay": None,
         "maxConcurrent": None,
         "blocked": None,
     }
 
 
-# ─── Free video ───
+# ─── Debt, signup grant, accounts from before the token migration ───
 
 
 @pytest.mark.anyio
-async def test_should_show_the_free_video_ready_when_none_was_used(use_db: UseDb) -> None:
-    use_db(make_db(billingAccounts=[make_account()]))
-
-    free = (await api_get()).json()["account"]["free"]
-
-    assert free == {
-        "perWindow": 1,
-        "usedInWindow": 0,
-        "available": True,
-        "nextFreeAt": None,
-        "maxVideoMinutes": 30,
+async def test_should_show_debt_as_a_negative_balance(use_db: UseDb) -> None:
+    owing = make_account(plan={"id": "free", "status": "active", "source": None})
+    owing["buckets"] = {
+        "plan": {"cycleStart": None, "cycleEnd": None, "tokensGranted": 0, "tokensUsed": 0},
+        "credit": {"tokensAvailable": 0},
+        "debt": {"tokens": 120},
     }
+    use_db(make_db(billingAccounts=[owing]))
+
+    body = (await api_get()).json()["account"]
+
+    assert (body["debt"], body["balance"]) == (120, -120)
 
 
 @pytest.mark.anyio
-async def test_should_show_when_the_next_free_video_opens(use_db: UseDb) -> None:
-    used_at = NOW - timedelta(hours=2)
-    account = make_account()
-    account["buckets"]["free"]["recentFreeVideoAt"] = [used_at]
-    use_db(make_db(billingAccounts=[account]))
+async def test_should_show_when_the_signup_grant_was_written(use_db: UseDb) -> None:
+    use_db(make_db(billingAccounts=[make_account(signupGrantAt=datetime(2026, 10, 2, 9))]))
 
-    free = (await api_get()).json()["account"]["free"]
+    body = (await api_get()).json()["account"]
 
-    assert free["available"] is False
-    assert free["usedInWindow"] == 1
-    assert free["nextFreeAt"] == to_iso(used_at + timedelta(hours=24))
+    assert body["signupGrantAt"] == "2026-10-02T09:00:00.000Z"
 
 
 @pytest.mark.anyio
-async def test_should_reopen_the_free_video_at_exactly_24_hours(use_db: UseDb) -> None:
-    account = make_account()
-    account["buckets"]["free"]["recentFreeVideoAt"] = [NOW - timedelta(hours=24)]
-    use_db(make_db(billingAccounts=[account]))
+async def test_should_read_a_minute_account_as_an_empty_token_account(use_db: UseDb) -> None:
+    legacy = make_account()
+    legacy["buckets"] = {
+        "free": {"recentFreeVideoAt": []},
+        "plan": {
+            "cycleStart": datetime(2026, 10, 1),
+            "cycleEnd": datetime(2026, 11, 1),
+            "minutesGranted": 600,
+            "minutesUsed": 140,
+        },
+        "credit": {"minutesAvailable": 150},
+    }
+    legacy["holds"] = [
+        {
+            "requestId": "old-run",
+            "userId": USER_OID,
+            "youtubeId": "dQw4w9WgXcQ",
+            "durationSec": 300,
+            "minutes": 5,
+            "split": {"free": 5, "plan": 0, "credit": 0, "lots": []},
+            "freeVideoAt": datetime(2026, 10, 28),
+            "planCycleStart": None,
+            "createdAt": datetime(2026, 10, 28),
+        }
+    ]
+    minute_lot = {
+        "_id": ObjectId("9" * 24),
+        "accountId": ACCOUNT_OID,
+        "minutesGranted": 150,
+        "minutesRemaining": 150,
+        "source": {"kind": "admin", "ref": "d" * 24},
+        "expiresAt": None,
+        "createdAt": datetime(2026, 10, 5),
+    }
+    use_db(make_db(billingAccounts=[legacy], creditLots=[minute_lot]))
 
-    free = (await api_get()).json()["account"]["free"]
+    body = (await api_get()).json()
 
-    assert free["available"] is True
-    assert free["usedInWindow"] == 0
-
-
-@pytest.mark.anyio
-async def test_should_open_the_slot_of_the_oldest_video_when_the_cap_allows_two(
-    use_db: UseDb,
-) -> None:
-    oldest, newer = NOW - timedelta(hours=10), NOW - timedelta(hours=1)
-    account = make_account(caps={"freeVideosPerDay": 2})
-    account["buckets"]["free"]["recentFreeVideoAt"] = [newer, oldest]
-    use_db(make_db(billingAccounts=[account]))
-
-    free = (await api_get()).json()["account"]["free"]
-
-    assert free["perWindow"] == 2
-    assert free["available"] is False
-    assert free["nextFreeAt"] == to_iso(oldest + timedelta(hours=24))
-
-
-@pytest.mark.anyio
-async def test_should_report_the_free_video_disabled_when_the_cap_is_zero(use_db: UseDb) -> None:
-    use_db(make_db(billingAccounts=[make_account(caps={"freeVideosPerDay": 0})]))
-
-    free = (await api_get()).json()["account"]["free"]
-
-    assert (free["available"], free["nextFreeAt"], free["perWindow"]) == (False, None, 0)
-
-
-@pytest.mark.anyio
-async def test_should_tighten_the_free_video_length_with_the_max_video_cap(use_db: UseDb) -> None:
-    use_db(make_db(billingAccounts=[make_account(caps={"maxVideoMinutes": 12})]))
-
-    free = (await api_get()).json()["account"]["free"]
-
-    assert free["maxVideoMinutes"] == 12
+    assert body["account"]["planTokens"]["granted"] == 0
+    assert (body["account"]["credits"], body["account"]["debt"]) == ({"available": 0}, 0)
+    assert body["lots"] == []
+    assert (body["holds"][0]["tokens"], body["holds"][0]["split"]["lots"]) == (0, [])
 
 
 # ─── Lots, holds, grants ───
@@ -285,10 +277,10 @@ async def test_should_tighten_the_free_video_length_with_the_max_video_cap(use_d
 @pytest.mark.anyio
 async def test_should_count_only_unexpired_lots_as_available_credit(use_db: UseDb) -> None:
     lots = [
-        make_lot(1, minutesRemaining=40),
-        make_lot(2, minutesRemaining=60, expiresAt=None),
-        make_lot(3, minutesRemaining=25, expiresAt=NOW - timedelta(days=1)),
-        make_lot(4, minutesRemaining=0),
+        make_lot(1, tokensRemaining=40),
+        make_lot(2, tokensRemaining=60, expiresAt=None),
+        make_lot(3, tokensRemaining=25, expiresAt=NOW - timedelta(days=1)),
+        make_lot(4, tokensRemaining=0),
     ]
     use_db(make_db(billingAccounts=[make_account()], creditLots=lots))
 
@@ -300,7 +292,7 @@ async def test_should_count_only_unexpired_lots_as_available_credit(use_db: UseD
 @pytest.mark.anyio
 async def test_should_list_lots_newest_first_with_expiry_state(use_db: UseDb) -> None:
     lots = [
-        make_lot(1, minutesRemaining=0),
+        make_lot(1, tokensRemaining=0),
         make_lot(2, expiresAt=NOW - timedelta(days=1)),
         make_lot(3, expiresAt=None, priceUsdCents=None, source={"kind": "admin", "ref": "d" * 24}),
     ]
@@ -312,8 +304,8 @@ async def test_should_list_lots_newest_first_with_expiry_state(use_db: UseDb) ->
     assert [lot["expired"] for lot in listed] == [False, True, False]
     assert listed[0] == {
         "lotId": f"{3:024x}",
-        "minutesGranted": 150,
-        "minutesRemaining": 150,
+        "tokensGranted": 5_000,
+        "tokensRemaining": 5_000,
         "source": {"kind": "admin", "ref": "d" * 24},
         "priceUsdCents": None,
         "expiresAt": None,
@@ -340,14 +332,12 @@ async def test_should_map_open_holds(use_db: UseDb) -> None:
         "userId": USER_OID,
         "youtubeId": "dQw4w9WgXcQ",
         "durationSec": 1830,
-        "minutes": 31,
+        "tokens": 1_200,
         "split": {
-            "free": 0,
-            "plan": 11,
-            "credit": 20,
-            "lots": [{"lotId": ObjectId("1" * 24), "minutes": 20}],
+            "plan": 400,
+            "credit": 800,
+            "lots": [{"lotId": ObjectId("1" * 24), "tokens": 800}],
         },
-        "freeVideoAt": None,
         "planCycleStart": datetime(2026, 10, 1),
         "createdAt": datetime(2026, 10, 28, 11, 55),
     }
@@ -362,14 +352,12 @@ async def test_should_map_open_holds(use_db: UseDb) -> None:
             "userId": USER_ID,
             "youtubeId": "dQw4w9WgXcQ",
             "durationSec": 1830,
-            "minutes": 31,
+            "tokens": 1_200,
             "split": {
-                "free": 0,
-                "plan": 11,
-                "credit": 20,
-                "lots": [{"lotId": "1" * 24, "minutes": 20}],
+                "plan": 400,
+                "credit": 800,
+                "lots": [{"lotId": "1" * 24, "tokens": 800}],
             },
-            "freeVideoAt": None,
             "planCycleStart": "2026-10-01T00:00:00.000Z",
             "createdAt": "2026-10-28T11:55:00.000Z",
         }
@@ -382,7 +370,7 @@ async def test_should_list_live_recurring_grants_and_hide_deleted_ones(use_db: U
         return {
             "_id": ObjectId(f"{0x200 + n:024x}"),
             "accountId": ACCOUNT_OID,
-            "minutes": 100 * n,
+            "tokens": 1_000 * n,
             "every": "month",
             "active": True,
             "nextRunAt": datetime(2026, 11, 1),
@@ -403,7 +391,7 @@ async def test_should_list_live_recurring_grants_and_hide_deleted_ones(use_db: U
     assert [g["reason"] for g in listed] == ["demo account 2", "demo account 3"]
     assert listed[0] == {
         "grantId": f"{0x202:024x}",
-        "minutes": 200,
+        "tokens": 2_000,
         "every": "month",
         "active": True,
         "nextRunAt": "2026-11-01T00:00:00.000Z",

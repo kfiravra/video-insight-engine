@@ -158,7 +158,7 @@ is unchanged, so the evaluator below keeps reading it as before.
 | `high_failure_rate` | critical | failure rate over the last hour > `failure_rate_threshold` (≥ 10 calls) | 1 h cooldown |
 | `backup_stale` | critical | newest backup manifest older than `BACKUP_MAX_AGE_HOURS` | 6 h cooldown |
 
-`daily_global_cost` is the operator's global spend alarm and nothing more: no request is blocked by global spend (vie-api's minutes ledger is the only gate on what a user can run; there is no per-user dollar cap). It sums the Python ledger schema (`cost_usd`, `timestamp`). It is suppressed per UTC day, not by a rolling window, so the first breach after midnight still alerts.
+`daily_global_cost` is the operator's global spend alarm and nothing more: no request is blocked by global spend (vie-api's token ledger is the only gate on what a user can run; there is no per-user dollar cap). It sums the Python ledger schema (`cost_usd`, `timestamp`). It is suppressed per UTC day, not by a rolling window, so the first breach after midnight still alerts.
 
 ### Per-User Costs (`/users/`)
 
@@ -171,9 +171,8 @@ A run is counted per distinct summarizer `request_id`; assistant chat adds cost,
 - `creditAdjustmentUsd`, the retired dollar credit, exists only there, and the Adjustments tab reads `userCostAdjustments`;
 - a day that has no attributed `llm_usage` rows keeps the history row's cost and video count, which covers the time before a run streamed over HTTP was attributed to its user. A day that has attributed rows takes its cost from them and only the credit from history, so nothing is counted twice.
 
-A user is listed when they still exist and have spend in the range, a minutes account (`billingAccounts`), or
-signed up in the range (a new user has neither yet, and the admin must still find them to grant
-minutes). An erased user is not listed: GDPR keeps a tombstone account (`ownerType: "user"`) but deletes the
+A user is listed when they still exist and have spend in the range, a token account (`billingAccounts`), or
+signed up in the range (so the admin can find a new user to grant tokens). An erased user is not listed: GDPR keeps a tombstone account (`ownerType: "user"`) but deletes the
 `users` document. The **Plan** column is `billingAccounts.plan.id`, `free` when the user has no account row;
 vie-api stores `billingAccounts.ownerId` as an ObjectId, so the reads and the `/tiers/distribution` `$lookup`
 compare it as one (a hex string matches nothing).
@@ -183,7 +182,7 @@ compare it as one (a hex string matches nothing).
 | GET | `/users/costs?days=7&limit=50&offset=0` | Users by effective USD over the trailing window, highest first, with email/name (`users`) and `plan` |
 | GET | `/users/{user_id}/costs?days=30` | One user's daily breakdown + last 20 audit rows |
 | GET | `/users/{user_id}/activity?days=30` | User-360: videos generated (`userVideos` join), assistant LLM calls (`llm_usage` where `user_id`), and daily cost timeline — all in one payload |
-| POST | `/users/{user_id}/grant-credit` | Grant minutes: body `{minutes (1–100000), reason (1–500), expiresAt?}`, proxied to vie-api's `POST /api/admin/billing/accounts/{id}/credits` as the session's admin. Answers vie-api's `{before, after, lotId, auditId}`. Named admin session only (the machine key gets `403`) |
+| POST | `/users/{user_id}/grant-credit` | Grant tokens: body `{tokens (1–1000000), reason (1–500), expiresAt?}`, proxied to vie-api's `POST /api/admin/billing/accounts/{id}/credits` as the session's admin. Answers vie-api's `{before, after, lotId, auditId}`. Named admin session only (the machine key gets `403`) |
 
 `grant-credit` no longer writes anything here. It used to add USD to `userCosts` /
 `userCostAdjustments` with a self-attested `adminId` in the body; vie-api's ledger is the only
@@ -194,30 +193,33 @@ scans the service source and fails if any write to them comes back.
 
 ### Billing Account (`/billing/`)
 
-Read-only view of a user's minutes account, behind the **Account** tab in the Users
-drawer. Reads the minutes-ledger collections that vie-api's `BillingService` writes
-(see [Data Models — Billing Collections](./DATA-MODELS.md#billing-collections-minutes-ledger));
+Read-only view of a user's token account, behind the **Account** tab in the Users
+drawer. Reads the token-ledger collections that vie-api's `BillingService` writes
+(see [Data Models — Billing Collections](./DATA-MODELS.md#billing-collections-token-ledger));
 this router only calls `find` / `find_one` and never writes to them. The machine key and
 named admin sessions can both call it.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/billing/accounts/{user_id}?limit=50&before=<iso>` | The account (plan, free-video window, plan minutes, spendable credit, caps, open holds), up to 100 credit lots (newest first), open holds, live recurring grants, and one page of the ledger (newest first) |
+| GET | `/billing/accounts/{user_id}?limit=50&before=<iso>` | The account (plan, Pro-cycle tokens, spendable credit, debt, balance, signup-grant date, caps, open holds), up to 100 token lots (newest first), open holds (the estimate each holds), live recurring grants, and one page of the ledger (newest first; each row's `unit` + `amount`, minute rows from before the token migration included) |
 
 - **Errors:** `400` for an id that is not 24 hex characters or a `before` that is not an ISO 8601
   timestamp; `404` for an unknown user; `422` for `limit` outside 1–200.
 - **Ledger paging:** pass the previous response's `ledgerNextBefore` as `before`; it is `null` on the
   last page. A page never ends inside a run of entries sharing one `createdAt`, so none are skipped.
-- **No account yet:** vie-api creates `billingAccounts` rows lazily and vie-admin never writes, so a
-  user who has not submitted a video gets `200` with `account: null` and empty lists.
+- **No account yet:** vie-api creates the account (with its signup grant) at registration or on the
+  user's first billing read; vie-admin never writes, so a user without one gets `200` with
+  `account: null` and empty lists.
+- **Before the token migration:** an account still in minutes reads as an empty token account (as in
+  vie-api), minute lots and minute recurring grants are not listed, and a minute hold shows 0 tokens.
 - **Shape:** `AccountDetail` from `packages/types/src/billing.ts` plus `ledgerNextBefore` (ids hex, dates
   ISO 8601 with milliseconds). Fields vie-api omits when absent are `null` here. The UI can switch to
   vie-api's `GET /api/admin/billing/accounts/:userId` without changing.
 - **Stored state, not rolled:** vie-api rolls an ended Pro cycle forward in memory before it answers;
-  this view shows what is stored. A Pro cycle that ended with no request since reports `0` plan minutes
+  this view shows what is stored. A Pro cycle that ended with no request since reports `0` plan tokens
   remaining (its last totals stay visible) until the user's next request rolls it.
-- **Constants:** the free-video window (1 video, 24 h, 30 min) mirrors `FREE_VIDEO` in
-  `packages/types/src/billing.ts`; a test fails if they drift.
+- **Constants:** `MAX_ADMIN_TOKENS` (1,000,000) mirrors vie-api's `services/billing/tokens.ts`; a test
+  fails if they drift.
 
 ### Billing Actions and Audit (`/billing/…`, `/audit`)
 
@@ -232,13 +234,13 @@ submission (8–128 of `A-Za-z0-9_-`) and it is forwarded: a retry after a timeo
 | Method | Path | Body | vie-api permission |
 |--------|------|------|--------------------|
 | POST | `/billing/accounts/{user_id}/plan` | `{planId: free\|pro, periodEnd?, reason}` | `plan:set` |
-| POST | `/billing/accounts/{user_id}/caps` | `{maxVideoMinutes?, freeVideosPerDay?, maxConcurrent?, blocked?, reason}`; `null` clears a cap | `caps:set` |
-| POST | `/billing/accounts/{user_id}/adjust` | `{bucket: plan\|credit, minutes (signed, not 0), reason}` | `billing:grant` |
-| POST | `/billing/accounts/{user_id}/recurring-grants` | `{minutes, every: month, active, reason}` | `billing:grant` |
+| POST | `/billing/accounts/{user_id}/caps` | `{maxVideoMinutes?, maxConcurrent?, blocked?, reason}`; `null` clears a cap | `caps:set` |
+| POST | `/billing/accounts/{user_id}/adjust` | `{bucket: plan\|credit, tokens (signed, not 0), reason}`; a positive one repays debt first | `billing:grant` |
+| POST | `/billing/accounts/{user_id}/recurring-grants` | `{tokens, every: month, active, reason}` | `billing:grant` |
 | DELETE | `/billing/accounts/{user_id}/recurring-grants/{grant_id}` | `{reason}` | `billing:grant` |
 | GET | `/audit?targetId=&actorId=&limit=&before=` | | `audit:read` (the machine key may read). `before` is vie-api's opaque `nextBefore` cursor (`<ISO>_<id>`, up to 64 characters) |
 
-Granting minutes is `POST /users/{user_id}/grant-credit` (above). vie-api answers are passed through
+Granting tokens is `POST /users/{user_id}/grant-credit` (above). vie-api answers are passed through
 (`400` validation with its `{error, message}` envelope, `404`, `403` for a demoted admin, `409`
 `ACCOUNT_BUSY`); a `504` means vie-api timed out and the change may have been applied, so reload the
 account before retrying (or retry with the same `Idempotency-Key`). The same key with a different
@@ -269,14 +271,14 @@ React SPA served as static files from the same container.
 - **Health** — ServiceHealth, 7-day uptime grid
 - **Alerts** — Alert thresholds, recent alerts table
 - **Users** — cost table; the user drawer (`components/users/UserDetailDrawer.tsx`) has Overview, **Account**, Videos, Assistant and Adjustments (read-only USD history) tabs. The Account tab (`AccountPanel`) is:
-  - a **Grant minutes** form (`GrantCreditForm`), always visible;
-  - **action buttons** (`AccountActions`, in `AccountTab`'s `actions` slot): **Set plan** (free or Pro, optional term end, default 12 months), **Caps** (max video minutes, free videos per day, runs at once, block; a field left as it was is not sent, an emptied one clears the cap), **Adjust** (plan or credit bucket, signed minutes, never 0) and **Add recurring grant** (minutes a month, active), plus an **Audit log** link filtered to the user;
-  - the read-only account view: plan and term, free-video status (ready or next at), plan minutes used and left, spendable credits with a lot table, open holds, recurring grants (each row has a **Delete** button), and the paged ledger with actor, reason and cost.
+  - a **Grant tokens** form (`GrantCreditForm`), always visible;
+  - **action buttons** (`AccountActions`, in `AccountTab`'s `actions` slot): **Set plan** (free or Pro, optional term end, default 12 months), **Caps** (max video minutes 1–180, runs at once, block; a field left as it was is not sent, an emptied one clears the cap), **Adjust** (plan or credit bucket, signed tokens, never 0; a positive adjustment repays debt first) and **Add recurring grant** (tokens a month, active), plus an **Audit log** link filtered to the user;
+  - the read-only account view: plan and term, the balance (debt shown as "−120 tokens (owes 120)"), Pro-cycle tokens used and left, spendable credits with a lot table in tokens, open holds (the estimate in tokens and where it was taken from), recurring grants (each row has a **Delete** button), and the paged ledger with each row's signed amount in its own unit (minute rows from before the token migration stay in minutes), the `repay` and `convert` types, the `debt` bucket, actor, reason and cost.
 - **Audit** (`/audit-log`) — the admin action log, newest first: time, action, actor (email when recorded), target, reason, and a **Changes** toggle that shows only the fields that differ between the row's before and after snapshots (`updatedAt` and `version` are left out; they change on every write). Filter by target id or actor id (kept in the URL, so `/audit-log?targetId=<userId>` is linkable); **Load older entries** pages with the `nextBefore` cursor. The page path is not `/audit` because `GET /audit` is the API route.
 
-Every Account action is a dialog (`ActionDialog`) that requires a **reason** (1–500 characters, recorded in the ledger and the audit log) and shows the server's own explanation when it refuses (`describeApiError`). Each submission carries an `Idempotency-Key`; resubmitting the identical request after a failure or timeout reuses it, so a change that did apply is not applied twice. The account (`['billing-account', userId]`) and the audit log are refetched after a success and after any failure that may have followed an applied change (a timeout, a 5xx, a dropped connection), so an uncertain outcome shows the real state; a 4xx refusal changed nothing and refetches nothing. While the request is in flight the dialog cannot be closed (Escape, the backdrop and Cancel are inert), so the operator sees the outcome before they can open a fresh dialog and a fresh key. Escape, Cancel or a click that starts and ends on the backdrop close it otherwise; focus moves into the dialog once when it opens, Tab stays inside, and focus returns to the button that opened it. A plan term end and a lot's expiry are shown in UTC, the zone they are entered in. The ranges the forms check (`CAP_LIMITS`, the 100000-minute and 500-character limits, the 600 Pro minutes) are copies of the server's; `lib/limits-drift.test.ts` reads the server sources and fails when one moves. A session that signed in with the machine key sees the `403` "A named admin session is required" message, since only named admin sessions may change anything.
+Every Account action is a dialog (`ActionDialog`) that requires a **reason** (1–500 characters, recorded in the ledger and the audit log) and shows the server's own explanation when it refuses (`describeApiError`). Each submission carries an `Idempotency-Key`; resubmitting the identical request after a failure or timeout reuses it, so a change that did apply is not applied twice. The account (`['billing-account', userId]`) and the audit log are refetched after a success and after any failure that may have followed an applied change (a timeout, a 5xx, a dropped connection), so an uncertain outcome shows the real state; a 4xx refusal changed nothing and refetches nothing. While the request is in flight the dialog cannot be closed (Escape, the backdrop and Cancel are inert), so the operator sees the outcome before they can open a fresh dialog and a fresh key. Escape, Cancel or a click that starts and ends on the backdrop close it otherwise; focus moves into the dialog once when it opens, Tab stays inside, and focus returns to the button that opened it. A plan term end and a lot's expiry are shown in UTC, the zone they are entered in. The ranges the forms check (`CAP_LIMITS`, the 1,000,000-token and 500-character limits, the 20,000 Pro tokens a month) are copies of the server's; `lib/limits-drift.test.ts` reads the server sources and fails when one moves. A session that signed in with the machine key sees the `403` "A named admin session is required" message, since only named admin sessions may change anything.
 
-The action and audit client is `ui/src/lib/billing-actions.ts` (`billingActions`, `auditApi`), with the form-to-request builders and their ranges in `lib/billing-forms.ts` and the before/after comparison in `lib/audit-diff.ts`. Grant minutes keeps `api.users.grantCredit` from `lib/api.ts`.
+The action and audit client is `ui/src/lib/billing-actions.ts` (`billingActions`, `auditApi`), with the form-to-request builders and their ranges in `lib/billing-forms.ts` and the before/after comparison in `lib/audit-diff.ts`. Grant tokens keeps `api.users.grantCredit` from `lib/api.ts`.
 
 ## Security
 

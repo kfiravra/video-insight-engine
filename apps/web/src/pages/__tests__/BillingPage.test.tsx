@@ -5,7 +5,8 @@ import type { ReactNode } from 'react';
 import type { UsageSummary } from '@vie/types';
 import { BillingPage } from '../BillingPage';
 import * as usageHook from '@/hooks/use-usage';
-import { HOUR, MINUTE, freeVideo, freeVideoWithoutCount, inMs, renderIn, usageSummary } from '@/components/usage/__tests__/usage-fixtures';
+import { getLabels } from '@/lib/i18n';
+import { debtSummary, proSummary, renderIn, usageSummary } from '@/components/usage/__tests__/usage-fixtures';
 
 vi.mock('@/components/layout/Layout', () => ({
   Layout: ({ children }: { children: ReactNode }) => <div data-testid="layout">{children}</div>,
@@ -28,34 +29,36 @@ function mockUsage(data: UsageSummary | undefined, state: QueryState = {}) {
   } as unknown as ReturnType<typeof usageHook.useUserUsage>);
 }
 
-const PRO = usageSummary({
-  plan: { id: 'pro', periodEnd: '2027-10-01T12:00:00.000Z' },
-  planMinutes: { granted: 600, used: 188, remaining: 412, cycleEnd: '2026-11-01T12:00:00.000Z' },
-  credits: {
-    available: 175,
-    lots: [
-      { minutes: 150, expiresAt: '2027-03-01T12:00:00.000Z' },
-      { minutes: 25, expiresAt: null },
-    ],
+const PRO = proSummary(
+  { periodEnd: '2027-10-01T12:00:00.000Z', cycleEnd: '2026-12-01T12:00:00.000Z' },
+  {
+    credits: {
+      available: 5_250,
+      lots: [
+        { tokens: 5_000, expiresAt: '2027-03-01T12:00:00.000Z' },
+        { tokens: 250, expiresAt: null },
+      ],
+    },
+    holds: [{ youtubeId: 'dQw4w9WgXcQ', tokens: 840 }],
   },
-  holds: [{ youtubeId: 'dQw4w9WgXcQ', minutes: 31 }],
-});
+);
 
 describe('BillingPage', () => {
   afterEach(() => {
     usageSpy?.mockRestore();
+    vi.unstubAllEnvs();
   });
 
   describe('states', () => {
-    it('should show a loading state while the minutes load', () => {
+    it('should show a loading state while the tokens load', () => {
       mockUsage(undefined, { isLoading: true });
 
       renderIn(<BillingPage />);
 
-      expect(screen.getByRole('status')).toHaveTextContent(/loading your minutes/i);
+      expect(screen.getByRole('status')).toHaveTextContent(/loading your tokens/i);
     });
 
-    it('should offer a retry when the minutes cannot be loaded', async () => {
+    it('should offer a retry when the tokens cannot be loaded', async () => {
       const refetch = vi.fn();
       mockUsage(undefined, { isError: true, refetch });
       renderIn(<BillingPage />);
@@ -64,164 +67,145 @@ describe('BillingPage', () => {
 
       expect(refetch).toHaveBeenCalledOnce();
     });
-  });
 
-  describe('free account', () => {
-    it('should title the page and name the free plan', () => {
-      mockUsage(usageSummary());
-
-      renderIn(<BillingPage />);
-
-      expect(screen.getByRole('heading', { level: 1, name: 'Minutes & plan' })).toBeInTheDocument();
-      expect(screen.getByTestId('billing-plan')).toHaveTextContent('Free');
-    });
-
-    it('should describe the free video allowance', () => {
-      mockUsage(usageSummary());
-
-      renderIn(<BillingPage />);
-
-      expect(screen.getByTestId('billing-plan')).toHaveTextContent('One free video every 24 hours.');
-    });
-
-    it('should show the free video and zero credits', () => {
-      mockUsage(usageSummary());
-
-      renderIn(<BillingPage />);
-
-      const minutes = screen.getByTestId('billing-minutes');
-      expect(minutes).toHaveTextContent('ready');
-      expect(minutes).toHaveTextContent('0 minutes');
-    });
-
-    it('should show when the next free video opens', () => {
-      const nextFreeAt = inMs(7 * HOUR + 30 * MINUTE + 30_000);
-      mockUsage(usageSummary({ free: freeVideo({ available: false, nextFreeAt }) }));
-
-      renderIn(<BillingPage />);
-
-      expect(screen.getByTestId('billing-minutes')).toHaveTextContent('next in 7h 30m');
-    });
-
-    it('should say there are no credits and nothing running', () => {
-      mockUsage(usageSummary());
-
-      renderIn(<BillingPage />);
-
-      expect(screen.getByTestId('billing-lots')).toHaveTextContent('No credits yet.');
-      expect(screen.getByTestId('billing-holds')).toHaveTextContent('Nothing running right now.');
-    });
-  });
-
-  describe('what the free plan allows', () => {
-    it('should say the free video is turned off, and not promise one a day, when caps switch it off', () => {
-      mockUsage(usageSummary({ free: freeVideo({ available: false, perWindow: 0 }) }));
-
-      renderIn(<BillingPage />);
-
-      const plan = screen.getByTestId('billing-plan');
-      expect(plan).toHaveTextContent('The free video is turned off for this account.');
-      expect(plan).not.toHaveTextContent('One free video every 24 hours.');
-    });
-
-    it('should show no length hint next to a free video that is switched off', () => {
-      mockUsage(usageSummary({ free: freeVideo({ available: false, perWindow: 0 }) }));
-
-      renderIn(<BillingPage />);
-
-      expect(screen.getByTestId('billing-minutes')).not.toHaveTextContent('per video');
-    });
-
-    it('should count the free videos when caps allow more than one', () => {
-      mockUsage(usageSummary({ free: freeVideo({ perWindow: 3 }) }));
-
-      renderIn(<BillingPage />);
-
-      expect(screen.getByTestId('billing-plan')).toHaveTextContent('3 free videos every 24 hours.');
-    });
-
-    it('should keep the standard note for one free video and for a server that does not send the count', () => {
-      mockUsage(usageSummary({ free: freeVideo({ perWindow: 1 }) }));
-      const { unmount } = renderIn(<BillingPage />);
-      const withCount = screen.getByTestId('billing-plan').textContent;
-      unmount();
-
-      mockUsage(usageSummary({ free: freeVideoWithoutCount() }));
-      renderIn(<BillingPage />);
-
-      expect([withCount, screen.getByTestId('billing-plan').textContent]).toEqual([
-        expect.stringContaining('One free video every 24 hours.'),
-        expect.stringContaining('One free video every 24 hours.'),
-      ]);
-    });
-
-    it.each([
-      ['he', 2, 'שני סרטונים חינם כל 24 שעות.'],
-      ['he', 5, '5 סרטונים חינם כל 24 שעות.'],
-      ['ar', 2, 'فيديوهان مجانيان كل 24 ساعة.'],
-      ['ar', 3, '3 فيديوهات مجانية كل 24 ساعة.'],
-      ['ar', 11, '11 فيديو مجاني كل 24 ساعة.'],
-    ])('should count %i free videos in %s with the right plural form', (language, perWindow, expected) => {
-      mockUsage(usageSummary({ free: freeVideo({ perWindow }) }));
-
-      renderIn(<BillingPage />, language);
-
-      expect(screen.getByTestId('billing-plan')).toHaveTextContent(expected);
-    });
-
-    it.each([
-      ['he', 'הסרטון החינמי כבוי עבור החשבון הזה.'],
-      ['ar', 'الفيديو المجاني متوقف لهذا الحساب.'],
-    ])('should say the free video is off in %s', (language, expected) => {
-      mockUsage(usageSummary({ free: freeVideo({ available: false, perWindow: 0 }) }));
-
-      renderIn(<BillingPage />, language);
-
-      expect(screen.getByTestId('billing-plan')).toHaveTextContent(expected);
-    });
-  });
-
-  describe('a failed refresh', () => {
     it('should keep showing the last summary when a refresh fails', () => {
       mockUsage(PRO, { isError: true });
 
       renderIn(<BillingPage />);
 
-      expect(screen.getByTestId('billing-minutes')).toHaveTextContent('412 of 600 minutes left');
+      expect(screen.getByTestId('billing-balance')).toHaveTextContent('12,400 of 20,000 left');
       expect(screen.queryByRole('button', { name: 'Try Again' })).toBeNull();
     });
   });
 
-  describe('credit lot expiry wording', () => {
-    it('should say "valid until" in Hebrew, not that the lot expired', () => {
-      mockUsage(usageSummary({ credits: { available: 5, lots: [{ minutes: 5, expiresAt: '2027-03-01T12:00:00.000Z' }] } }));
+  describe('a new free account', () => {
+    it('should title the page "Tokens & plan" and show the balance with a Free pill', () => {
+      mockUsage(usageSummary());
 
-      renderIn(<BillingPage />, 'he');
+      renderIn(<BillingPage />);
 
-      const [row] = within(screen.getByTestId('billing-lots')).getAllByRole('listitem');
-      expect(row.textContent).toContain('בתוקף עד');
-      expect(row.textContent).not.toContain('פג תוקף');
+      expect(screen.getByRole('heading', { level: 1, name: 'Tokens & plan' })).toBeInTheDocument();
+      const balance = screen.getByTestId('billing-balance');
+      expect(within(balance).getByTestId('usage-balance')).toHaveTextContent('1,000 tokens');
+      expect(within(balance).getByTestId('plan-pill')).toHaveTextContent('Free');
+    });
+
+    it('should list the signup grant as a lot that never expires and say nothing is running', () => {
+      mockUsage(usageSummary());
+
+      renderIn(<BillingPage />);
+
+      const rows = within(screen.getByTestId('billing-lots')).getAllByRole('listitem');
+      expect(rows.map((row) => row.textContent)).toEqual(['1,000 tokensNever expires']);
+      expect(screen.getByTestId('billing-holds')).toHaveTextContent('Nothing running right now.');
+    });
+
+    it('should say there are no credits when there are no lots', () => {
+      mockUsage(usageSummary({ balance: 0, credits: { available: 0, lots: [] } }));
+
+      renderIn(<BillingPage />);
+
+      expect(screen.getByTestId('billing-lots')).toHaveTextContent('No credits yet.');
+    });
+  });
+
+  describe('the Pro card', () => {
+    it('should offer Pro at $20 a month for 20,000 tokens', () => {
+      mockUsage(usageSummary());
+
+      renderIn(<BillingPage />);
+
+      const card = screen.getByTestId('plan-card');
+      expect(card).toHaveTextContent('$20/month');
+      expect(card).toHaveTextContent('20,000 tokens every month');
+    });
+
+    it('should open the payments notice inline when "Go Pro" is pressed', async () => {
+      mockUsage(usageSummary());
+      renderIn(<BillingPage />);
+      const card = screen.getByTestId('plan-card');
+      const button = within(card).getByRole('button', { name: 'Go Pro' });
+
+      await userEvent.setup().click(button);
+
+      const notice = within(card).getByTestId('payments-placeholder');
+      expect(notice).toHaveTextContent("Payments aren't live yet — tokens are added by the team.");
+      // Announced: the live region exists before the click fills it.
+      expect(notice.parentElement).toHaveAttribute('aria-live', 'polite');
+      expect(button).toHaveAttribute('aria-expanded', 'true');
+    });
+
+    it('should keep the notice closed until a button is pressed', () => {
+      mockUsage(usageSummary());
+
+      renderIn(<BillingPage />);
+
+      expect(screen.queryByTestId('payments-placeholder')).toBeNull();
+    });
+
+    it('should use the call-to-action colour for "Go Pro"', () => {
+      mockUsage(usageSummary());
+
+      renderIn(<BillingPage />);
+
+      expect(screen.getByRole('button', { name: 'Go Pro' }).className).toContain('bg-cta');
+    });
+
+    it('should mark Pro as the current plan, with its term and reset dates, and offer no "Go Pro"', () => {
+      mockUsage(PRO);
+
+      renderIn(<BillingPage />);
+
+      const card = screen.getByTestId('plan-card');
+      expect(card).toHaveTextContent('Your plan');
+      expect(card).toHaveTextContent('Current term ends Oct 1, 2027');
+      expect(card).toHaveTextContent('Monthly tokens reset on Dec 1, 2026');
+      expect(within(card).queryByRole('button')).toBeNull();
+    });
+  });
+
+  describe('the pack card', () => {
+    it('should offer the $5 pack of 5,000 tokens that expires 12 months after purchase', () => {
+      mockUsage(usageSummary());
+
+      renderIn(<BillingPage />);
+
+      const card = screen.getByTestId('pack-card-pack_5');
+      expect(card).toHaveTextContent('$5');
+      expect(card).toHaveTextContent('5,000 tokens');
+      expect(card).toHaveTextContent('Expires 12 months after purchase');
+    });
+
+    it('should open the payments notice inline when "Buy tokens" is pressed, on Pro too', async () => {
+      mockUsage(PRO);
+      renderIn(<BillingPage />);
+      const card = screen.getByTestId('pack-card-pack_5');
+
+      await userEvent.setup().click(within(card).getByRole('button', { name: 'Buy tokens' }));
+
+      expect(within(card).getByTestId('payments-placeholder')).toBeInTheDocument();
+      expect(within(screen.getByTestId('plan-card')).queryByTestId('payments-placeholder')).toBeNull();
+    });
+
+    it('should use the call-to-action colour for "Buy tokens"', () => {
+      mockUsage(usageSummary());
+
+      renderIn(<BillingPage />);
+
+      expect(screen.getByRole('button', { name: 'Buy tokens' }).className).toContain('bg-cta');
     });
   });
 
   describe('Pro account', () => {
-    it('should show the plan term and the cycle reset date', () => {
+    it('should show the Pro cycle left and the balance across cycle and credits', () => {
       mockUsage(PRO);
 
       renderIn(<BillingPage />);
 
-      const plan = screen.getByTestId('billing-plan');
-      expect(plan).toHaveTextContent('Pro');
-      expect(plan).toHaveTextContent('Current term ends Oct 1, 2027');
-      expect(plan).toHaveTextContent('Monthly minutes reset on Nov 1, 2026');
-    });
-
-    it('should show Pro minutes left this cycle', () => {
-      mockUsage(PRO);
-
-      renderIn(<BillingPage />);
-
-      expect(screen.getByTestId('billing-minutes')).toHaveTextContent('412 of 600 minutes left');
+      const balance = screen.getByTestId('billing-balance');
+      expect(balance).toHaveTextContent('12,400 of 20,000 left');
+      expect(within(balance).getByTestId('usage-balance')).toHaveTextContent('17,400 tokens');
+      expect(within(balance).getByTestId('plan-pill')).toHaveTextContent('Pro');
     });
 
     it('should list each credit lot with its expiry', () => {
@@ -231,48 +215,76 @@ describe('BillingPage', () => {
 
       const rows = within(screen.getByTestId('billing-lots')).getAllByRole('listitem');
       expect(rows.map((row) => row.textContent)).toEqual([
-        '150 minutesExpires Mar 1, 2027',
-        '25 minutesNever expires',
+        '5,000 tokensExpires Mar 1, 2027',
+        '250 tokensNever expires',
       ]);
     });
 
-    it('should list the runs in progress with the minutes they hold', () => {
+    it('should list the runs in progress with the estimate they hold', () => {
       mockUsage(PRO);
 
       renderIn(<BillingPage />);
 
       const [row] = within(screen.getByTestId('billing-holds')).getAllByRole('listitem');
       expect(row).toHaveTextContent('dQw4w9WgXcQ');
-      expect(row).toHaveTextContent('31 minutes');
+      expect(row).toHaveTextContent('≈ 840 tokens');
     });
   });
 
-  describe('what the page does not do', () => {
-    it('should tell the user that the team adds minutes for now', () => {
+  describe('debt', () => {
+    it('should show the negative balance and the shortfall', () => {
+      mockUsage(debtSummary(120));
+
+      renderIn(<BillingPage />);
+
+      const balance = screen.getByTestId('billing-balance');
+      expect(within(balance).getByTestId('usage-balance')).toHaveTextContent('-120 tokens');
+      expect(within(balance).getByTestId('usage-debt')).toHaveTextContent("You're 120 tokens short — add tokens to continue.");
+    });
+  });
+
+  describe('team note and money', () => {
+    it('should tell the user that the team adds tokens for now', () => {
       mockUsage(usageSummary());
 
       renderIn(<BillingPage />);
 
-      expect(screen.getByTestId('billing-team-note')).toHaveTextContent('Minutes are added by the team for now.');
+      expect(screen.getByTestId('billing-team-note')).toHaveTextContent('Tokens are added by the team for now.');
     });
 
-    it('should offer no checkout, purchase or upgrade control', () => {
+    it('should offer the team contact link under the note when a support address is configured', () => {
+      vi.stubEnv('VITE_SUPPORT_EMAIL', 'support@vie.ad');
+      mockUsage(usageSummary());
+
+      renderIn(<BillingPage />);
+
+      const contact = within(screen.getByTestId('billing-team-note')).getByRole('link', {
+        name: 'Email the team: support@vie.ad',
+      });
+      expect(contact.getAttribute('href')).toMatch(/^mailto:support@vie\.ad\?subject=/);
+    });
+
+    it('should show the note without a link when no support address is configured', () => {
+      vi.stubEnv('VITE_SUPPORT_EMAIL', '');
+      mockUsage(usageSummary());
+
+      renderIn(<BillingPage />);
+
+      expect(within(screen.getByTestId('billing-team-note')).queryByRole('link')).toBeNull();
+    });
+
+    it('should print a dollar sign only on the Pro and pack cards', () => {
       mockUsage(PRO);
-
       renderIn(<BillingPage />);
 
-      expect(screen.queryByRole('button', { name: /buy|checkout|subscribe|upgrade|pay/i })).toBeNull();
-    });
+      const outsideCards = [
+        screen.getByTestId('billing-balance'),
+        screen.getByTestId('billing-lots'),
+        screen.getByTestId('billing-holds'),
+        screen.getByTestId('billing-team-note'),
+      ].map((section) => section.textContent);
 
-    it.each([
-      ['free', usageSummary()],
-      ['pro', PRO],
-    ])('should print no dollar sign for a %s account', (_name, summary) => {
-      mockUsage(summary);
-
-      renderIn(<BillingPage />);
-
-      expect(screen.getByTestId('layout').textContent).not.toContain('$');
+      expect(outsideCards.join('')).not.toContain('$');
     });
   });
 
@@ -281,7 +293,7 @@ describe('BillingPage', () => {
 
     renderIn(<BillingPage />);
 
-    expect(screen.getByTestId('billing-plan')).toHaveTextContent("can't start new videos");
+    expect(screen.getByTestId('billing-balance')).toHaveTextContent("can't start new videos");
   });
 
   it('should link back to the library', () => {
@@ -293,60 +305,33 @@ describe('BillingPage', () => {
   });
 
   describe('right-to-left languages', () => {
-    it('should title the page and give the team note in Hebrew', () => {
+    it.each(['he', 'ar'])('should title the page and give the team note from the %s table', (language) => {
       mockUsage(usageSummary());
 
-      renderIn(<BillingPage />, 'he');
+      renderIn(<BillingPage />, language);
 
-      expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('דקות ומסלול');
-      expect(screen.getByTestId('billing-team-note')).toHaveTextContent('בינתיים הצוות מוסיף דקות.');
+      const { pageTitle, teamNote } = getLabels(language).billing;
+      expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(pageTitle);
+      expect(screen.getByTestId('billing-team-note')).toHaveTextContent(teamNote);
     });
 
-    it('should use the Hebrew plural forms for the lots', () => {
-      mockUsage(
-        usageSummary({
-          credits: {
-            available: 3,
-            lots: [
-              { minutes: 1, expiresAt: null },
-              { minutes: 2, expiresAt: null },
-            ],
-          },
-        }),
-      );
+    it('should say "valid until" in Hebrew for a lot with an expiry, not that it expired', () => {
+      mockUsage(usageSummary({ credits: { available: 5_000, lots: [{ tokens: 5_000, expiresAt: '2027-03-01T12:00:00.000Z' }] } }));
 
       renderIn(<BillingPage />, 'he');
 
-      const rows = within(screen.getByTestId('billing-lots')).getAllByRole('listitem');
-      expect(rows.map((row) => row.textContent)).toEqual(['דקה אחתללא תפוגה', 'שתי דקותללא תפוגה']);
+      const [row] = within(screen.getByTestId('billing-lots')).getAllByRole('listitem');
+      expect(row.textContent).toContain('בתוקף עד');
+      expect(row.textContent).not.toContain('פג תוקף');
     });
 
-    it('should use the Arabic dual, few and many forms for the lots', () => {
-      mockUsage(
-        usageSummary({
-          credits: {
-            available: 16,
-            lots: [
-              { minutes: 2, expiresAt: null },
-              { minutes: 3, expiresAt: null },
-              { minutes: 11, expiresAt: null },
-            ],
-          },
-        }),
-      );
+    it.each(['he', 'ar'])('should keep Latin digits and the price as written in %s', (language) => {
+      mockUsage(usageSummary());
 
-      renderIn(<BillingPage />, 'ar');
+      renderIn(<BillingPage />, language);
 
-      const rows = within(screen.getByTestId('billing-lots')).getAllByRole('listitem');
-      expect(rows.map((row) => row.textContent?.split('بلا')[0])).toEqual(['دقيقتان', '3 دقائق', '11 دقيقة']);
-    });
-
-    it('should write the Pro balance in Arabic', () => {
-      mockUsage(PRO);
-
-      renderIn(<BillingPage />, 'ar');
-
-      expect(screen.getByTestId('billing-minutes')).toHaveTextContent('تبقّى 412 من 600 دقيقة');
+      expect(screen.getByTestId('plan-card')).toHaveTextContent('$20');
+      expect(screen.getByTestId('plan-card').textContent).toMatch(/20,000/);
     });
 
     it.each(['he', 'ar'])('should render %s inside a right-to-left container', (language) => {
@@ -354,15 +339,7 @@ describe('BillingPage', () => {
 
       renderIn(<BillingPage />, language);
 
-      expect(screen.getByTestId('billing-plan').closest('[dir="rtl"]')).not.toBeNull();
-    });
-
-    it.each(['he', 'ar'])('should print no dollar sign in %s', (language) => {
-      mockUsage(PRO);
-
-      renderIn(<BillingPage />, language);
-
-      expect(screen.getByTestId('layout').textContent).not.toContain('$');
+      expect(screen.getByTestId('billing-balance').closest('[dir="rtl"]')).not.toBeNull();
     });
   });
 });

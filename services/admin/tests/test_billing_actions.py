@@ -42,17 +42,17 @@ MUTATIONS: list[tuple[str, str, str, dict[str, Any], str, bytes]] = [
         "adjust",
         "POST",
         f"/billing/accounts/{USER_ID}/adjust",
-        {"bucket": "credit", "minutes": -20, "reason": "clawback"},
+        {"bucket": "credit", "tokens": -20, "reason": "clawback"},
         f"billing/accounts/{USER_ID}/adjust",
-        b'{"reason":"clawback","bucket":"credit","minutes":-20}',
+        b'{"reason":"clawback","bucket":"credit","tokens":-20}',
     ),
     (
         "recurring-grants (create)",
         "POST",
         f"/billing/accounts/{USER_ID}/recurring-grants",
-        {"minutes": 300, "every": "month", "active": True, "reason": "demo"},
+        {"tokens": 10000, "every": "month", "active": True, "reason": "demo"},
         f"billing/accounts/{USER_ID}/recurring-grants",
-        b'{"reason":"demo","minutes":300,"every":"month","active":true}',
+        b'{"reason":"demo","tokens":10000,"every":"month","active":true}',
     ),
     (
         "recurring-grants (delete)",
@@ -199,7 +199,7 @@ async def test_rejects_a_malformed_user_id(name, method, path, body, _api, _sent
 @pytest.mark.anyio
 @pytest.mark.parametrize(("name", "method", "path", "body", "_api", "_sent"), MUTATIONS, ids=IDS)
 async def test_passes_vie_apis_errors_through(name, method, path, body, _api, _sent, admin_session):
-    detail = {"error": "VALIDATION_ERROR", "message": "minutes must not be 0"}
+    detail = {"error": "VALIDATION_ERROR", "message": "tokens must not be 0"}
     factory, _ = _mock_client(_upstream(400, detail))
 
     with patch("src.services.vie_api_client.httpx.AsyncClient", factory):
@@ -264,9 +264,38 @@ async def test_caps_leaves_absent_caps_out_of_the_forwarded_body(admin_session):
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("minutes", [0, 100_001, 2.5])
-async def test_adjust_rejects_bad_minutes(minutes, admin_session):
-    body = {"bucket": "credit", "minutes": minutes, "reason": "x"}
+@pytest.mark.parametrize(
+    "caps",
+    [
+        {"maxVideoMinutes": 0},
+        {"maxVideoMinutes": 181},
+        {"maxConcurrent": 0},
+        {"maxConcurrent": 1001},
+    ],
+)
+async def test_caps_rejects_a_cap_outside_vie_apis_range(caps, admin_session):
+    body = {**caps, "reason": "x"}
+
+    assert (
+        await _call("POST", f"/billing/accounts/{USER_ID}/caps", admin_session, body)
+    ).status_code == 422
+
+
+@pytest.mark.anyio
+async def test_caps_forwards_the_range_edges(admin_session):
+    body = {"maxVideoMinutes": 180, "maxConcurrent": 1, "reason": "x"}
+
+    _, _, kwargs = await _forwarded(
+        "POST", f"/billing/accounts/{USER_ID}/caps", admin_session, body
+    )
+
+    assert json.loads(kwargs["content"]) == body
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("tokens", [0, 1_000_001, 2.5])
+async def test_adjust_rejects_bad_tokens(tokens, admin_session):
+    body = {"bucket": "credit", "tokens": tokens, "reason": "x"}
 
     assert (
         await _call("POST", f"/billing/accounts/{USER_ID}/adjust", admin_session, body)
@@ -275,7 +304,7 @@ async def test_adjust_rejects_bad_minutes(minutes, admin_session):
 
 @pytest.mark.anyio
 async def test_recurring_grant_rejects_a_period_other_than_month(admin_session):
-    body = {"minutes": 300, "every": "week", "active": True, "reason": "x"}
+    body = {"tokens": 10000, "every": "week", "active": True, "reason": "x"}
     path = f"/billing/accounts/{USER_ID}/recurring-grants"
 
     assert (await _call("POST", path, admin_session, body)).status_code == 422

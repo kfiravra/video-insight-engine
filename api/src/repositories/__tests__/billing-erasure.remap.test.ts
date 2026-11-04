@@ -40,8 +40,11 @@ describe('ErasureIdMap', () => {
 
 describe('remapKey', () => {
   it.each([
-    ['hold:run-1:free', 'run-1', 'new-run', 'hold:new-run:free'],
+    ['hold:run-1:plan', 'run-1', 'new-run', 'hold:new-run:plan'],
+    ['debit:run-1:extra:debt', 'run-1', 'new-run', 'debit:new-run:extra:debt'],
+    ['repay:release:run-1:lot:l1', 'run-1', 'new-run', 'repay:release:new-run:lot:l1'],
     ['admin:abc:lot:l1', 'abc', 'def', 'admin:def:lot:l1'],
+    ['grant:signup:aaaaaaaaaaaaaaaaaaaaaaaa', 'aaaaaaaaaaaaaaaaaaaaaaaa', 'tomb', 'grant:signup:tomb'],
     ['roll:acct:grant:2026-11-01', 'run-1', 'new-run', 'roll:acct:grant:2026-11-01'],
   ])('should rewrite %s with %s → %s', (key, oldRef, newRef, expected) => {
     expect(remapKey(key, oldRef, newRef)).toBe(expected);

@@ -237,7 +237,7 @@ describe('api client', () => {
   });
 
   describe('api.users.grantCredit', () => {
-    it('should POST minutes and reason as JSON with the idempotency key as a header', async () => {
+    it('should POST tokens and reason as JSON with the idempotency key as a header', async () => {
       const { api, setApiKey } = await import('./api');
       setApiKey('key');
       const fetchMock = vi.fn().mockResolvedValue({
@@ -247,13 +247,13 @@ describe('api client', () => {
       });
       vi.stubGlobal('fetch', fetchMock);
 
-      await api.users.grantCredit('u'.repeat(24), { minutes: 150, reason: 'goodwill' }, 'dialog-open-0001');
+      await api.users.grantCredit('u'.repeat(24), { tokens: 150, reason: 'goodwill' }, 'dialog-open-0001');
 
       const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
       expect(url).toBe(`/users/${'u'.repeat(24)}/grant-credit`);
       expect(init.method).toBe('POST');
       expect(init.headers).toMatchObject({ 'Content-Type': 'application/json', 'Idempotency-Key': 'dialog-open-0001' });
-      expect(init.body).toBe(JSON.stringify({ minutes: 150, reason: 'goodwill' }));
+      expect(init.body).toBe(JSON.stringify({ tokens: 150, reason: 'goodwill' }));
     });
 
     it('should send no Idempotency-Key header when none is given', async () => {
@@ -262,7 +262,7 @@ describe('api client', () => {
       const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve({}) });
       vi.stubGlobal('fetch', fetchMock);
 
-      await api.users.grantCredit('u'.repeat(24), { minutes: 5, reason: 'x' });
+      await api.users.grantCredit('u'.repeat(24), { tokens: 5, reason: 'x' });
 
       const headers = (fetchMock.mock.calls[0] as [string, RequestInit])[1].headers as Record<string, string>;
       expect(headers).not.toHaveProperty('Idempotency-Key');

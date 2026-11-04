@@ -326,8 +326,6 @@ services:
       DISPATCH_GUARD_TTL_SECONDS: ${DISPATCH_GUARD_TTL_SECONDS:-900}
       # Submissions per user per hour, one bucket for /api/videos, the assistant's generate route and playlist import (0 = off)
       SUBMIT_BURST_LIMIT_PER_HOUR: ${SUBMIT_BURST_LIMIT_PER_HOUR:-20}
-      # Chat messages a FREE account may send per rolling 24 h, one allowance for both chat routes (0 = off)
-      CHAT_FREE_MESSAGES_PER_DAY: ${CHAT_FREE_MESSAGES_PER_DAY:-50}
       # Billing repair job: stale holds, lot expiry, recurring grants, drift check,
       # llm_usage.user_id after 90 days, GDPR hard-delete sweep (needs the replica set)
       BILLING_REPAIR_ENABLED: ${BILLING_REPAIR_ENABLED:-true}
@@ -621,6 +619,8 @@ services:
         # Sentry — empty DSN = SDK not initialized (apps/web/src/main.tsx)
         VITE_SENTRY_DSN: ${VITE_SENTRY_DSN:-}
         VITE_SENTRY_RELEASE: ${VITE_SENTRY_RELEASE:-}
+        # Billing page contact link (mailto); empty = no link
+        VITE_SUPPORT_EMAIL: ${VITE_SUPPORT_EMAIL:-}
     image: vie-web:latest
     container_name: vie-web
     restart: unless-stopped

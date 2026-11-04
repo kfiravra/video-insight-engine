@@ -18,7 +18,7 @@ import { renderWithClient, setField, submitDialog, typeReason, USER_ID } from '.
 
 const GRANT: BillingRecurringGrant = {
   grantId: 'g'.repeat(24),
-  minutes: 300,
+  tokens: 3000,
   every: 'month',
   active: true,
   nextRunAt: '2026-11-01T00:00:00.000Z',
@@ -44,7 +44,7 @@ describe('RecurringGrantDialog', () => {
 
   it('should require a reason and send nothing without one', async () => {
     setup();
-    setField('recurring-minutes', '300');
+    setField('recurring-tokens', '3000');
 
     submitDialog();
 
@@ -55,7 +55,7 @@ describe('RecurringGrantDialog', () => {
   it('should create an active monthly grant', async () => {
     mockCreate.mockResolvedValue({ auditId: 'x', grantId: 'g' });
     setup();
-    setField('recurring-minutes', '300');
+    setField('recurring-tokens', '3000');
     typeReason('demo account');
 
     submitDialog();
@@ -63,7 +63,7 @@ describe('RecurringGrantDialog', () => {
     await waitFor(() => expect(mockCreate).toHaveBeenCalledOnce());
     expect(mockCreate).toHaveBeenCalledWith(
       USER_ID,
-      { minutes: 300, every: 'month', active: true, reason: 'demo account' },
+      { tokens: 3000, every: 'month', active: true, reason: 'demo account' },
       expect.any(String),
     );
   });
@@ -71,7 +71,7 @@ describe('RecurringGrantDialog', () => {
   it('should create an inactive grant when the box is unticked', async () => {
     mockCreate.mockResolvedValue({ auditId: 'x', grantId: 'g' });
     setup();
-    setField('recurring-minutes', '300');
+    setField('recurring-tokens', '3000');
     fireEvent.click(screen.getByTestId('recurring-active'));
     typeReason('paused');
 
@@ -81,37 +81,37 @@ describe('RecurringGrantDialog', () => {
     expect(mockCreate.mock.calls[0][1]).toMatchObject({ active: false });
   });
 
-  it.each(['0', '-3', ''])('should reject "%s" minutes before calling the server', async (minutes) => {
+  it.each(['0', '-3', ''])('should reject "%s" tokens before calling the server', async (tokens) => {
     setup();
-    setField('recurring-minutes', minutes);
+    setField('recurring-tokens', tokens);
     typeReason('demo');
 
     submitDialog();
 
-    expect((await screen.findByRole('alert')).textContent).toMatch(/Minutes must be/);
+    expect((await screen.findByRole('alert')).textContent).toMatch(/Tokens must be/);
     expect(mockCreate).not.toHaveBeenCalled();
   });
 
   it('should show the explanation the server gave when it refuses', async () => {
-    mockCreate.mockRejectedValue(new ApiError(400, 'API error: 400', 'minutes: Number must be at most 100000'));
+    mockCreate.mockRejectedValue(new ApiError(400, 'API error: 400', 'tokens: Number must be at most 1000000'));
     setup();
-    setField('recurring-minutes', '300');
+    setField('recurring-tokens', '3000');
     typeReason('demo');
 
     submitDialog();
 
-    expect((await screen.findByTestId('action-error')).textContent).toBe('minutes: Number must be at most 100000');
+    expect((await screen.findByTestId('action-error')).textContent).toBe('tokens: Number must be at most 1000000');
   });
 
   it('should report the grant that was added', async () => {
     mockCreate.mockResolvedValue({ auditId: 'x', grantId: 'g' });
     const { onDone } = setup();
-    setField('recurring-minutes', '300');
+    setField('recurring-tokens', '3000');
     typeReason('demo');
 
     submitDialog();
 
-    await waitFor(() => expect(onDone).toHaveBeenCalledWith('Recurring grant of 300 minutes a month added.'));
+    await waitFor(() => expect(onDone).toHaveBeenCalledWith('Recurring grant of 3,000 tokens a month added.'));
   });
 });
 
@@ -127,7 +127,7 @@ describe('DeleteGrantButton', () => {
   }
 
   function openDialog() {
-    fireEvent.click(screen.getByRole('button', { name: 'Delete recurring grant of 300 minutes' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete recurring grant of 3000 tokens' }));
   }
 
   it('should open no dialog until the button is pressed', () => {
@@ -141,7 +141,7 @@ describe('DeleteGrantButton', () => {
 
     openDialog();
 
-    expect(screen.getByRole('dialog', { name: 'Delete recurring grant' }).textContent).toContain('300 minutes');
+    expect(screen.getByRole('dialog', { name: 'Delete recurring grant' }).textContent).toContain('3000 tokens');
   });
 
   it('should require a reason and send nothing without one', async () => {

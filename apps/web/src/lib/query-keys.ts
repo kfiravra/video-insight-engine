@@ -10,6 +10,13 @@ export const queryKeys = {
     detail: (id: string) => [...queryKeys.videos.details(), id] as const,
   },
 
+  // What a submit would hold, by URL. Its own root: invalidating video lists
+  // or details never refetches estimates.
+  videoEstimates: {
+    all: ["video-estimate"] as const,
+    byUrl: (url: string) => [...queryKeys.videoEstimates.all, url] as const,
+  },
+
   // Folders
   folders: {
     all: ["folders"] as const,

@@ -11,9 +11,9 @@ interface RetryErrorNoticeProps {
 
 /**
  * Why a retry / re-summarize did not start. A retry is a billed submit, so it can
- * be refused like any other: not enough minutes (402) or too long (422) get the
- * minutes callout with its link to /settings/billing, the other billing refusals a
- * plain localised alert, and anything else the error's own message.
+ * be refused like any other: not enough tokens (402) or too long (422) get the
+ * tokens callout (402 with its link to /settings/billing), the other billing
+ * refusals a plain localised alert, and anything else the error's own message.
  */
 export function RetryErrorNotice({ error, className }: RetryErrorNoticeProps) {
   if (!error) return null;

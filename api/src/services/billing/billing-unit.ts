@@ -1,9 +1,11 @@
 import { ObjectId } from 'mongodb';
-import { DatabaseError, ValidationError } from '../../utils/errors.js';
-import { StaleAccountVersionError } from '../../repositories/billing.repository.js';
+import { DatabaseError, NotFoundError, ValidationError } from '../../utils/errors.js';
+import { emptyAccountState, StaleAccountVersionError } from '../../repositories/billing.repository.js';
 import { AccountDraft } from './account-draft.js';
+import { repayDebt } from './debt.js';
 import { KeyedMutex } from './keyed-mutex.js';
-import { rollPlanCycle } from './plan-cycle.js';
+import { applySignupGrant } from './maintenance-ops.js';
+import { rollContext, rollPlanCycle } from './plan-cycle.js';
 import type { ClientSession } from 'mongodb';
 import type {
   BillingAccountDocument,
@@ -32,6 +34,12 @@ export function parseObjectId(value: string, label: string): ObjectId {
   return new ObjectId(value);
 }
 
+/** Bring the draft to now: roll the Pro cycle, and let a new cycle repay debt first. */
+function rollToNow(draft: AccountDraft): void {
+  const grantKey = rollPlanCycle(draft);
+  if (grantKey) repayDebt(draft, grantKey, rollContext(draft));
+}
+
 /**
  * The read → transition → write cycle every billing change goes through:
  * load the account and its open lots inside a transaction, roll the plan
@@ -39,7 +47,10 @@ export function parseObjectId(value: string, label: string): ObjectId {
  * draft — conditional on the version that was read — in the same
  * transaction. A stale version or a write conflict retries the whole unit.
  * Units on the same account are queued in-process first (KeyedMutex), so
- * only writers in other processes ever meet as write conflicts.
+ * only writers in other processes ever meet as write conflicts. An owner
+ * without an account gets one with its signup grant (`ensureAccount`), but
+ * only a live user: never an erased (or unknown) id, whose account and grant
+ * would put back the link the GDPR erasure removed.
  */
 export class BillingUnits {
   private readonly accountLocks = new KeyedMutex();
@@ -47,21 +58,43 @@ export class BillingUnits {
   constructor(
     private readonly repo: BillingRepository,
     private readonly clock: () => Date,
+    /** True for a user that exists and is not deleted: only those get a new account. */
+    private readonly ownerExists: (ownerId: string) => Promise<boolean>,
   ) {}
+
+  /**
+   * The owner's account, created with its signup grant when it has none: the
+   * account, the grant's lot and its ledger entry in one transaction. Race-safe
+   * on the `{ownerType, ownerId}` unique index — a concurrent first request
+   * that loses reads the winner's account (one grant, never two).
+   */
+  async ensureAccount(ownerId: string): Promise<BillingAccountDocument> {
+    const owner = parseObjectId(ownerId, 'userId');
+    const found = await this.repo.findAccount('user', ownerId);
+    if (found) return found;
+    if (!(await this.ownerExists(ownerId))) throw new NotFoundError('User');
+    const now = this.clock();
+    const account: BillingAccountDocument = { _id: new ObjectId(), ownerType: 'user', ownerId: owner, ...emptyAccountState(now) };
+    const draft = new AccountDraft(account, [], now);
+    applySignupGrant(draft);
+    const created = { ...draft.account };
+    if (await this.repo.createAccount(created, draft.newLots, draft.entries)) return created;
+    const winner = await this.repo.findAccount('user', ownerId);
+    if (!winner) throw new DatabaseError(`billing account for ${ownerId} was neither created nor found`);
+    return winner;
+  }
 
   /** The account rolled to now, in memory only (quotes, summaries, admin reads). */
   async read(ownerId: string): Promise<AccountDraft> {
-    parseObjectId(ownerId, 'userId');
-    const account = await this.repo.getOrCreateAccount('user', ownerId);
+    const account = await this.ensureAccount(ownerId);
     const lots = await this.repo.listOpenLots(account._id);
     const draft = new AccountDraft(account, lots, this.clock());
-    rollPlanCycle(draft);
+    rollToNow(draft);
     return draft;
   }
 
   async write<T>(ownerId: string, op: (unit: BillingUnit) => Promise<T>): Promise<UnitOutcome<T>> {
-    parseObjectId(ownerId, 'userId');
-    const { _id: accountId } = await this.repo.getOrCreateAccount('user', ownerId);
+    const { _id: accountId } = await this.ensureAccount(ownerId);
     return this.writeAccount(accountId, op);
   }
 
@@ -98,7 +131,7 @@ export class BillingUnits {
   ): Promise<UnitOutcome<T>> {
     const lots = await this.repo.listOpenLots(account._id, session);
     const draft = new AccountDraft(account, lots, this.clock());
-    rollPlanCycle(draft);
+    rollToNow(draft);
     const value = await op({ draft, session });
     const committed = await this.persist(draft, session);
     return { value, account: committed, lots: draft.lots };

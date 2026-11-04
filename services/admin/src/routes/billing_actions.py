@@ -1,13 +1,13 @@
 """Billing actions and the audit log — proxies to vie-api's admin billing routes.
 
-vie-api (``BillingService``) is the only writer of the minutes ledger and of
+vie-api (``BillingService``) is the only writer of the token ledger and of
 ``adminAudit``. These routes validate the request shape, then forward it with
 the signed ``X-Admin-Actor`` of the session's admin, so the ledger entries and
 the audit row name the real admin and the reason, never a body field. Only a
 named admin session may change anything (the machine key gets 403 from the
 middleware); the audit log may be read with either credential.
 
-Granting credit minutes lives next to the user's other views, at
+Granting tokens lives next to the user's other views, at
 ``POST /users/{id}/grant-credit`` (``routes/users.py``). The read-only account
 view is ``routes/billing.py``.
 
@@ -25,12 +25,17 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validato
 from src.auth import AdminActor, current_actor, current_user_actor
 from src.services.vie_api_client import (
     IDEMPOTENCY_KEY_PATTERN,
-    MAX_ADMIN_MINUTES,
+    MAX_ADMIN_TOKENS,
     OBJECT_ID_PATTERN,
     call_vie_api,
 )
 
 router = APIRouter(tags=["billing-actions"])
+
+# vie-api's cap ranges (MAX_VIDEO_MINUTES in @vie/types, billing-admin.ts), so a
+# bad cap fails here with a 422 instead of a round trip.
+MAX_VIDEO_MINUTES = 180
+MAX_CONCURRENT = 1000
 
 UserId = Annotated[str, Path(pattern=OBJECT_ID_PATTERN, description="users._id (24-character hex)")]
 GrantId = Annotated[str, Path(pattern=OBJECT_ID_PATTERN)]
@@ -58,28 +63,25 @@ class SetPlanRequest(_Mutation):
 class SetCapsRequest(_Mutation):
     """A cap that is present is set; an explicit ``null`` clears it; an absent one is left alone."""
 
-    maxVideoMinutes: int | None = None
-    freeVideosPerDay: int | None = None
-    maxConcurrent: int | None = None
+    maxVideoMinutes: int | None = Field(None, ge=1, le=MAX_VIDEO_MINUTES)
+    maxConcurrent: int | None = Field(None, ge=1, le=MAX_CONCURRENT)
     blocked: bool | None = None
 
 
 class AdjustRequest(_Mutation):
     bucket: Literal["plan", "credit"]
-    minutes: int = Field(
-        ..., ge=-MAX_ADMIN_MINUTES, le=MAX_ADMIN_MINUTES, description="Signed, not 0"
-    )
+    tokens: int = Field(..., ge=-MAX_ADMIN_TOKENS, le=MAX_ADMIN_TOKENS, description="Signed, not 0")
 
-    @field_validator("minutes")
+    @field_validator("tokens")
     @classmethod
     def _not_zero(cls, value: int) -> int:
         if value == 0:
-            raise ValueError("minutes must not be 0")
+            raise ValueError("tokens must not be 0")
         return value
 
 
 class CreateRecurringGrantRequest(_Mutation):
-    minutes: int = Field(..., ge=1, le=MAX_ADMIN_MINUTES)
+    tokens: int = Field(..., ge=1, le=MAX_ADMIN_TOKENS)
     every: Literal["month"]
     active: bool
 
@@ -111,7 +113,7 @@ async def set_plan(
     actor: NamedAdmin,
     idempotency_key: IdempotencyKey = None,
 ) -> dict:
-    """Set a manual plan: Pro grants 600 minutes now for 12 months; free stops plan minutes."""
+    """Set a manual plan: Pro grants 20,000 tokens a month for 12 months; free stops them."""
     path = f"billing/accounts/{user_id}/plan"
     return await _forward("POST", path, body, actor, idempotency_key)
 
@@ -135,7 +137,10 @@ async def adjust_balance(
     actor: NamedAdmin,
     idempotency_key: IdempotencyKey = None,
 ) -> dict:
-    """A signed correction to the plan or credit minutes; never below zero."""
+    """A signed correction to the plan or credit tokens; never below zero.
+
+    A positive one repays the account's debt first.
+    """
     path = f"billing/accounts/{user_id}/adjust"
     return await _forward("POST", path, body, actor, idempotency_key)
 

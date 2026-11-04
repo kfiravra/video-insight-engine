@@ -334,8 +334,11 @@ describe('internal assistant routes', () => {
       expect(options.chatSessionId).toBeUndefined();
     });
 
-    it('should queue a run paid with plan minutes as paid', async () => {
-      mockContainer.billingEnforcement.admit.mockResolvedValueOnce({ requestId: 'r', minutes: 10, split: { free: 0, plan: 10, credit: 0, lots: [] } });
+    it('should queue a Pro account\'s run as paid', async () => {
+      mockContainer.billingEnforcement.admit.mockResolvedValueOnce({
+        hold: { requestId: 'r', tokens: 840, split: { plan: 840, credit: 0, lots: [] } },
+        queuePlan: 'paid',
+      });
       mockContainer.videoService.createVideo.mockResolvedValue({ video: {}, cached: false });
 
       await app.inject({
@@ -381,9 +384,9 @@ describe('internal assistant routes', () => {
       expect(mockContainer.idempotencyService.invalidateByHash).toHaveBeenCalledWith('test-hash');
     });
 
-    it('should answer 402 when the minutes cannot pay and nothing is cached to serve', async () => {
-      const { InsufficientMinutesError, RunNotAllowedError } = await import('../utils/errors.js');
-      mockContainer.billingEnforcement.admit.mockRejectedValueOnce(new InsufficientMinutesError(10, 0, null));
+    it('should answer 402 when the tokens cannot pay and nothing is cached to serve', async () => {
+      const { InsufficientTokensError, RunNotAllowedError } = await import('../utils/errors.js');
+      mockContainer.billingEnforcement.admit.mockRejectedValueOnce(new InsufficientTokensError(840, 160));
       mockContainer.videoService.createVideo.mockRejectedValueOnce(new RunNotAllowedError());
 
       const response = await app.inject({
@@ -393,7 +396,7 @@ describe('internal assistant routes', () => {
         payload: { url: 'https://youtu.be/dQw4w9WgXcQ' },
       });
 
-      expect([response.statusCode, response.json().error]).toEqual([402, 'INSUFFICIENT_MINUTES']);
+      expect([response.statusCode, response.json()]).toEqual([402, expect.objectContaining({ error: 'INSUFFICIENT_TOKENS', needed: 840, available: 160 })]);
       expect(mockContainer.videoService.createVideo.mock.calls[0][2]).toMatchObject({ serveOnly: true });
     });
 

@@ -17,6 +17,8 @@ export interface ChatMessage {
   /** Agent tool steps (e.g. "Created folder \"Series\"") rendered as ✓ lines. */
   steps?: string[];
   isStreaming?: boolean;
+  /** A reply that is a billing refusal (402 / 403): it links to /settings/billing. */
+  billingLink?: boolean;
   createdAt: string;
 }
 

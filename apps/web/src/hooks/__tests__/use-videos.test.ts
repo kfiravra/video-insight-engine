@@ -17,6 +17,8 @@ import {
   useMoveVideo,
   useBulkDeleteVideos,
   useBulkMoveVideos,
+  SETTLE_POLL_LIMIT,
+  SETTLE_POLL_MS,
 } from "../use-videos";
 
 const API_URL = "http://localhost:3000/api";
@@ -190,6 +192,76 @@ describe("useVideos", () => {
 
       await waitFor(() => {
         expect(result.current.isError).toBe(true);
+      });
+    });
+
+    describe("while a finished run's cost settles", () => {
+      const held = { state: "held", estimatedTokens: 840, chargedTokens: null };
+      const charged = { state: "charged", estimatedTokens: 840, chargedTokens: 758 };
+
+      function answerWith(billings: unknown[]) {
+        let calls = 0;
+        server.use(
+          http.get(`${API_URL}/videos/:id`, () => {
+            const billing = billings[Math.min(calls, billings.length - 1)];
+            calls += 1;
+            return HttpResponse.json({ ...createMockVideo({ id: "video-1", status: "completed" }), billing });
+          }),
+        );
+        return () => calls;
+      }
+
+      it("should poll a completed video until its hold settles, then stop", async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        try {
+          const calls = answerWith([held, held, charged]);
+          const { result } = renderHook(() => useVideo("video-1"), { wrapper: createWrapper() });
+
+          await waitFor(() => expect(result.current.data?.billing?.state).toBe("held"));
+          await act(() => vi.advanceTimersByTimeAsync(SETTLE_POLL_MS * 2));
+          await waitFor(() => expect(result.current.data?.billing?.state).toBe("charged"));
+
+          await act(() => vi.advanceTimersByTimeAsync(SETTLE_POLL_MS * 3));
+          expect(calls()).toBe(3);
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it("should stop polling after the cap when the hold never settles", async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        try {
+          const calls = answerWith([held]);
+          const { result } = renderHook(() => useVideo("video-1"), { wrapper: createWrapper() });
+
+          await waitFor(() => expect(result.current.isSuccess).toBe(true));
+          await act(() => vi.advanceTimersByTimeAsync(SETTLE_POLL_MS * (SETTLE_POLL_LIMIT + 5)));
+
+          expect(calls()).toBe(SETTLE_POLL_LIMIT);
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it("should not poll a video that is still processing", async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        try {
+          let calls = 0;
+          server.use(
+            http.get(`${API_URL}/videos/:id`, () => {
+              calls += 1;
+              return HttpResponse.json({ ...createMockVideo({ id: "video-1", status: "processing" }), billing: held });
+            }),
+          );
+          const { result } = renderHook(() => useVideo("video-1"), { wrapper: createWrapper() });
+
+          await waitFor(() => expect(result.current.isSuccess).toBe(true));
+          await act(() => vi.advanceTimersByTimeAsync(SETTLE_POLL_MS * 3));
+
+          expect(calls).toBe(1);
+        } finally {
+          vi.useRealTimers();
+        }
       });
     });
   });

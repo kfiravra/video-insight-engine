@@ -14,12 +14,11 @@ and the per-user cost timeline aggregate ``llm_usage`` instead.
   ``llm_usage`` rows those rows win and the history row for that day only
   contributes its credit; the two are never added, so nothing is counted twice.
 
-A user is listed when they exist and have spend in the range, a minutes account
-(``billingAccounts``), or signed up in the range: a new user has neither
-spend nor an account yet, and the admin still has to find them to grant
-minutes. Anyone else is idle and not shown, as before. An erased user (GDPR
-keeps a tombstone account with ``ownerType: "user"``) has no ``users`` document
-and is not listed.
+A user is listed when they exist and have spend in the range, a billing account
+(``billingAccounts``), or signed up in the range, so the admin can find a new
+user to grant tokens (vie-api creates the account at registration). Anyone else
+is idle and not shown, as before. An erased user (GDPR keeps a tombstone account
+with ``ownerType: "user"``) has no ``users`` document and is not listed.
 """
 
 from __future__ import annotations

@@ -1,29 +1,29 @@
 import { useBillingText } from "@/hooks/use-billing-text";
 import { useMinuteTick } from "@/hooks/use-minute-tick";
 import { describeBillingNotice } from "@/lib/billing-notice-text";
-import type { BillingNotice } from "@/lib/billing-errors";
+import { isTokensNotice, type BillingNotice } from "@/lib/billing-errors";
 import { cn } from "@/lib/utils";
-import { MinutesCallout } from "./MinutesCallout";
+import { TokensCallout } from "./TokensCallout";
 
 interface BillingNoticeAlertProps {
   notice: BillingNotice;
   className?: string;
 }
 
-/** A billing refusal at submit time: the minutes callout for 402 / 422, a plain alert for the rest. */
+/** A billing refusal at submit time: the tokens callout for 402 / 422, a plain alert for the rest. */
 export function BillingNoticeAlert({ notice, className }: BillingNoticeAlertProps) {
   const text = useBillingText();
   const now = useMinuteTick();
 
-  if (notice.kind === "insufficient" || notice.kind === "too_long") {
-    return <MinutesCallout notice={notice} className={className} />;
+  if (isTokensNotice(notice)) {
+    return <TokensCallout notice={notice} className={className} />;
   }
 
   return (
     <p
       role="alert"
       data-testid="billing-notice"
-      className={cn("text-sm text-destructive", className)}
+      className={cn("text-sm tabular-nums text-destructive", className)}
     >
       {describeBillingNotice(notice, text, now)}
     </p>

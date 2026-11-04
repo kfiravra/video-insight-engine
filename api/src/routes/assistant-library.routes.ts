@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { RateLimitedError } from '../utils/errors.js';
 import { disableSocketInactivityTimeout } from '../utils/sse.js';
+import { admitExecution } from '../services/billing/execution-gate.js';
 import { readSessionId } from '../plugins/request-id.js';
 
 // How many owned videos to fold into a single library-mode query. Bounded so a
@@ -27,11 +28,11 @@ const librarySearchBodySchema = z.object({
 });
 
 export async function assistantLibraryRoutes(fastify: FastifyInstance) {
-  const { assistantClient, videoRepository, chatFairUse } = fastify.container;
+  const { assistantClient, videoRepository, billingService } = fastify.container;
 
   // POST /api/assistant/library/chat
-  // Same 24 h free-account message allowance as the single-video chat, counted in
-  // the handler after the global rate limiter and validation (see assistant.routes.ts).
+  // Spends tokens like the single-video chat (see assistant.routes.ts): a positive
+  // balance to start, the real cost debited when the assistant reports it.
   fastify.post<{
     Body: z.infer<typeof libraryChatBodySchema>;
   }>('/library/chat', {
@@ -44,8 +45,6 @@ export async function assistantLibraryRoutes(fastify: FastifyInstance) {
         message: parsed.error.errors[0]?.message || 'Invalid request body',
       });
     }
-
-    await chatFairUse.consume(req.user.userId);
 
     // Derive owned YouTube ids server-side — never trust a client id list.
     const videos = await videoRepository.getUserVideos(req.user.userId, undefined, {
@@ -76,6 +75,7 @@ export async function assistantLibraryRoutes(fastify: FastifyInstance) {
     // 'close' at message completion — long before any disconnect. The
     // ServerResponse only closes on premature connection termination or after
     // we end the stream ourselves (by which point aborting is a no-op).
+    const executionId = await admitExecution(billingService, req.user.userId);
     const upstreamAbort = new AbortController();
     reply.raw.on('close', () => upstreamAbort.abort());
 
@@ -88,6 +88,7 @@ export async function assistantLibraryRoutes(fastify: FastifyInstance) {
         confirmToken: parsed.data.confirmToken,
         userId: req.user.userId,
         requestId: req.id,
+        executionId,
         sessionId: readSessionId(req.headers),
         signal: upstreamAbort.signal,
       });

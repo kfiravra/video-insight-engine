@@ -3,7 +3,7 @@ import { PLAN_IDS } from '@vie/types';
 import type { AdminAuditCursor } from '../repositories/admin-audit.repository.js';
 
 // Request shapes for /api/admin/billing/* and /api/admin/audit. These check
-// types, required fields and dates only; the ranges (minutes, caps, expiry in
+// types, required fields and dates only; the ranges (tokens, caps, expiry in
 // the future) belong to BillingService, which validates them again and is the
 // one place they are defined. Bodies are strict: a stray field such as
 // `adminId` is a 400, never silently ignored.
@@ -33,14 +33,13 @@ export const setPlanBodySchema = z
   .strict();
 
 export const grantCreditsBodySchema = z
-  .object({ minutes: z.number().int(), expiresAt: isoDate.nullable().optional(), reason })
+  .object({ tokens: z.number().int(), expiresAt: isoDate.nullable().optional(), reason })
   .strict();
 
 /** `null` clears a cap, an absent key leaves it. */
 export const setCapsBodySchema = z
   .object({
     maxVideoMinutes: z.number().int().nullable().optional(),
-    freeVideosPerDay: z.number().int().nullable().optional(),
     maxConcurrent: z.number().int().nullable().optional(),
     blocked: z.boolean().nullable().optional(),
     reason,
@@ -48,11 +47,11 @@ export const setCapsBodySchema = z
   .strict();
 
 export const adjustBodySchema = z
-  .object({ bucket: z.enum(['plan', 'credit']), minutes: z.number().int(), reason })
+  .object({ bucket: z.enum(['plan', 'credit']), tokens: z.number().int(), reason })
   .strict();
 
 export const createRecurringGrantBodySchema = z
-  .object({ minutes: z.number().int(), every: z.literal('month'), active: z.boolean(), reason })
+  .object({ tokens: z.number().int(), every: z.literal('month'), active: z.boolean(), reason })
   .strict();
 
 export const deleteRecurringGrantBodySchema = z.object({ reason }).strict();

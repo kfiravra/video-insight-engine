@@ -152,8 +152,20 @@ vie-web
 
 **Key files:**
 - `api/src/services/assistant-client.ts`
-- `services/assistant/src/main.py`
+- `services/assistant/src/server.py`
 - `docs/API-REFERENCE.md`
+
+### Token-ledger ids across services
+
+Who mints each id, who carries it, and who settles on it:
+
+| Id | Minted by | Carried as | Settled by |
+|---|---|---|---|
+| `billingRunId` (a video run) | vie-api `VideoSubmissionService` (UUID per submit; a playlist item's run id) | the cache row's dispatch stamp, read by the summarizer at run start | the summarizer's `POST /internal/run-cost {videoSummaryId, billingRunId, costUsd}` after `pipeline.timing` persists; a `failed` / cache-hit status releases it; the repair job settles a hold whose callback never came |
+| `requestId` | the Fastify request id (or a playlist item's run id) | `X-Request-ID`, `llm_usage.request_id` | the repair job's late settle (Σ `llm_usage` by it) and its assistant backfill |
+| `executionId` (a chat turn, library chat, action) | vie-api, per request (UUID) | `X-Execution-Id` to vie-assistant | the assistant's `POST /internal/assistant/usage {executionId, requestId, kind, costUsd}` when the request ends (`debit:exec:<executionId>:…`, once) |
+
+vie-api owns every token amount (`ceil(cost × 3 × 1000)`); the Python services only report dollars of real LLM cost.
 
 ---
 
@@ -276,9 +288,9 @@ One attempt of the pipeline = one `runId` = one Langfuse trace. Who owns which i
 |---|---|---|---|---|
 | `runId` | vie-api `dispatchPipeline` (one per dispatch); the summarizer mints a fresh one, with `retryOf`, for an attempt the api did not dispatch or whose id already ran | queue payload `runId`, `POST /summarize` body `runId`, status callback `runId` | `videoSummaryCache.currentRunId`, `runs[].runId` | summarizer (trace id), api (closes `runs[]`), `POST /api/videos` + `GET /api/videos/:id` responses, eval |
 | `traceId` | derived, never sent alone: `sha256(runId)` hex, first 32 chars (`traceIdForRun` in TS, `trace_id_for_run` in Python, same as `Langfuse.create_trace_id(seed=)`; one test vector pinned on both sides) | responses next to `runId` | `runs[].traceId` | admin deep links, eval |
-| `requestId` | vie-api request id | `X-Request-ID`, queue `requestId` | row `requestId`, `runs[].requestId`, `llm_usage.request_id` | billing settle, logs, Sentry |
+| `requestId` | vie-api request id | `X-Request-ID`, queue `requestId` | row `requestId`, `runs[].requestId`, `llm_usage.request_id` | billing repair (late settle, assistant backfill), logs, Sentry |
 | `sessionId` (P1) | the web, one uuid per chat surface (video chat / library chat), in the `vie-chat` store | `X-Session-Id` on every chat and action request → vie-api → vie-assistant; assistant → `/internal/assistant/generate` → `chatSessionId` in the queue payload and `POST /summarize` body | `runs[].chatSessionId`, `llm_usage.session_id` | Langfuse sessions `chat-<id>`, pipeline tag `chatSession:<id>`, logs, Sentry tag (api) |
-| `billingRunId` | vie-api submission (minutes ledger) | never sent | row `billingRunId` | billing only; unchanged by P0b |
+| `billingRunId` | vie-api submission (token ledger) | read off the row by the summarizer, sent back in `POST /internal/run-cost` | row `billingRunId` | billing only; unchanged by P0b |
 | session `pipeline-<videoSummaryId>` | derived by the summarizer | Langfuse only | | groups every attempt of a row |
 
 ### Correlation headers

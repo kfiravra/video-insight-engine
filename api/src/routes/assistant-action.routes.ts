@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { actionEnumSchema, actionParamsSchema } from '../schemas/assistant.schema.js';
 import { VideoNotFoundError } from '../utils/errors.js';
+import { admitExecution } from '../services/billing/execution-gate.js';
 import { readSessionId } from '../plugins/request-id.js';
 import type { AssistantAction } from '../services/assistant-client.js';
 import type { VideoRepository } from '../repositories/video.repository.js';
@@ -48,7 +49,7 @@ async function userCanReadVideo(videoRepository: VideoRepository, userId: string
 }
 
 export async function assistantActionRoutes(fastify: FastifyInstance): Promise<void> {
-  const { assistantClient, videoRepository } = fastify.container;
+  const { assistantClient, videoRepository, billingService } = fastify.container;
 
   // POST /api/assistant/action
   fastify.post<{
@@ -72,6 +73,8 @@ export async function assistantActionRoutes(fastify: FastifyInstance): Promise<v
     if (videoId && !(await userCanReadVideo(videoRepository, req.user.userId, videoId))) {
       throw new VideoNotFoundError();
     }
+    // Actions spend tokens like a chat turn (see assistant.routes.ts).
+    const executionId = await admitExecution(billingService, req.user.userId);
 
     try {
       const { status, body } = await assistantClient.action({
@@ -80,6 +83,7 @@ export async function assistantActionRoutes(fastify: FastifyInstance): Promise<v
         userId: req.user.userId,
         videoId,
         requestId: req.id,
+        executionId,
         sessionId: readSessionId(req.headers),
       });
 

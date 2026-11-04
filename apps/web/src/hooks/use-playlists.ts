@@ -49,6 +49,8 @@ export function usePlaylistImport() {
       queryClient.invalidateQueries({ queryKey: queryKeys.videos.lists() });
       queryClient.invalidateQueries({ queryKey: queryKeys.folders.lists() });
       queryClient.invalidateQueries({ queryKey: usageQueryKey });
+      // The imported videos are in the library now: a cached "≈ N tokens" for one is stale.
+      queryClient.invalidateQueries({ queryKey: queryKeys.videoEstimates.all });
     },
   });
 }

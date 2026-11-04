@@ -10,7 +10,7 @@ import {
   type AssistantSource,
 } from "@/lib/assistant";
 import { classifyBillingError } from "@/lib/billing-errors";
-import { describeBillingNotice } from "@/lib/billing-notice-text";
+import { describeChatRefusal } from "@/lib/billing-notice-text";
 import { useLabels } from "@/lib/i18n";
 import { usageQueryKey } from "@/hooks/use-usage";
 import { queryKeys } from "@/lib/query-keys";
@@ -45,27 +45,34 @@ const MUTATING_ACTIONS = new Set([
   "organize_library",
 ]);
 
-// Agent actions that start a run, which holds minutes: the usage tile must re-read them.
-const SPENDING_ACTIONS = new Set(["generate_video"]);
+// The assistant reports a turn's cost in the background once the reply has
+// ended, so the balance read on `done` can predate the debit; read it again
+// after this long.
+export const CHAT_USAGE_SETTLE_MS = 3_000;
 
 const RATE_LIMITED_MESSAGE = "Too many messages. Please wait a moment and try again.";
 const CONNECT_FAILED_MESSAGE = "Failed to connect to assistant. Please try again.";
 
+interface RequestFailure {
+  content: string;
+  /** A billing refusal (402 / 403): the reply links to /settings/billing. */
+  billing: boolean;
+}
+
 /**
- * Copy for a request that failed before any SSE event arrived. A used-up free
- * chat allowance (429 CHAT_LIMIT_REACHED) says, in the user's language, when
- * more messages open up, from the `nextAt` the gateway sends. The message is
- * saved in the persisted transcript, so it names a clock time, never a
- * countdown that would be wrong by the time it is read again.
+ * What the reply says when a turn was refused before any SSE event arrived.
+ * A turn needs a positive balance: 402 INSUFFICIENT_TOKENS says the tokens ran
+ * out (or how far below zero they are) and 403 ACCOUNT_BLOCKED that chats are
+ * off, in the user's language, with a link to the billing page. The text is
+ * saved in the persisted transcript, so it names no countdown.
  */
-function requestFailureMessage(err: unknown, billingText: BillingText): string {
+function requestFailure(err: unknown, billingText: BillingText): RequestFailure {
   const notice = classifyBillingError(err);
-  if (notice?.kind === "chat_limit") {
-    return describeBillingNotice(notice, billingText, Date.now());
-  }
+  const refusal = notice ? describeChatRefusal(notice, billingText) : null;
+  if (refusal) return { content: refusal, billing: true };
   const rateLimited =
     err instanceof ApiError && (err.status === 429 || err.code === "RATE_LIMITED");
-  return rateLimited ? RATE_LIMITED_MESSAGE : CONNECT_FAILED_MESSAGE;
+  return { content: rateLimited ? RATE_LIMITED_MESSAGE : CONNECT_FAILED_MESSAGE, billing: false };
 }
 
 /** Map the wire field `timestamp_seconds` (snake_case per the Python
@@ -130,8 +137,7 @@ export function useSidebarChat(options: UseSidebarChatOptions = {}) {
   // Tracks whether the current turn triggered a library-mutating agent action,
   // so we refetch the folder/video trees once at the end (not per tool call).
   const didMutateRef = useRef(false);
-  // Same, for an action that spent minutes (refetch the usage tile once per turn).
-  const didSpendRef = useRef(false);
+  const usageRecheckRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Reset on mount, clean up on unmount. Re-setting `true` here is essential:
   // React 19 StrictMode (dev) does mount → unmount → remount, and the cleanup
@@ -143,8 +149,20 @@ export function useSidebarChat(options: UseSidebarChatOptions = {}) {
     return () => {
       mountedRef.current = false;
       abortControllerRef.current?.abort();
+      if (usageRecheckRef.current) clearTimeout(usageRecheckRef.current);
     };
   }, []);
+
+  // Every turn is charged after its reply (and a generate_video holds a run's
+  // estimate): re-read the balance now and once more after the charge lands.
+  const refreshBalance = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: usageQueryKey });
+    if (usageRecheckRef.current) clearTimeout(usageRecheckRef.current);
+    usageRecheckRef.current = setTimeout(() => {
+      usageRecheckRef.current = null;
+      if (mountedRef.current) queryClient.invalidateQueries({ queryKey: usageQueryKey });
+    }, CHAT_USAGE_SETTLE_MS);
+  }, [queryClient]);
 
   // Stream a regular RAG chat turn (single-video or library mode). When
   // `confirmToken` is set, the request also redeems a pending server-side
@@ -248,9 +266,6 @@ export function useSidebarChat(options: UseSidebarChatOptions = {}) {
             if (typeof action === "string" && MUTATING_ACTIONS.has(action)) {
               didMutateRef.current = true;
             }
-            if (typeof action === "string" && SPENDING_ACTIONS.has(action)) {
-              didSpendRef.current = true;
-            }
 
             const step = event.content;
             if (!step) break;
@@ -297,12 +312,11 @@ export function useSidebarChat(options: UseSidebarChatOptions = {}) {
               queryClient.invalidateQueries({
                 queryKey: queryKeys.videos.lists(),
               });
+              // A generated video is in the library now: its cached "≈ N tokens" is stale.
+              queryClient.invalidateQueries({ queryKey: queryKeys.videoEstimates.all });
               didMutateRef.current = false;
             }
-            if (didSpendRef.current) {
-              queryClient.invalidateQueries({ queryKey: usageQueryKey });
-              didSpendRef.current = false;
-            }
+            refreshBalance();
             break;
         }
       };
@@ -320,21 +334,25 @@ export function useSidebarChat(options: UseSidebarChatOptions = {}) {
         // Ignore abort errors (user navigated away or sent another message)
         if (err instanceof Error && err.name === "AbortError") return;
 
+        const failure = requestFailure(err, billingText);
         setStatus("error");
         setMessages((prev) =>
           prev.map((m) =>
             m.id === assistantId
               ? {
                   ...m,
-                  content: requestFailureMessage(err, billingText),
+                  content: failure.content,
                   isStreaming: false,
+                  ...(failure.billing ? { billingLink: true } : {}),
                 }
               : m,
           ),
         );
+        // A refusal means the tile's balance is stale (another tab, a run that just settled).
+        if (failure.billing) queryClient.invalidateQueries({ queryKey: usageQueryKey });
       });
     },
-    [videoSummaryId, setMessages, setStatus, setPendingConfirmation, queryClient, billingText],
+    [videoSummaryId, setMessages, setStatus, setPendingConfirmation, queryClient, billingText, refreshBalance],
   );
 
   // Every message — single-video or library — now goes through the streaming
@@ -399,7 +417,6 @@ export function useSidebarChat(options: UseSidebarChatOptions = {}) {
   const clearMessages = useCallback(() => {
     abortControllerRef.current?.abort();
     didMutateRef.current = false;
-    didSpendRef.current = false;
     storeClearMessages();
   }, [storeClearMessages]);
 

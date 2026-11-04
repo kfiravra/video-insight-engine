@@ -23,7 +23,7 @@ import { AdminPermissionError, ConflictError, IdempotencyKeyReusedError } from '
 import { hashRequest } from '../../utils/request-hash.js';
 
 /**
- * Admin endpoints over the minutes ledger (`BillingService`, Contract 1):
+ * Admin endpoints over the token ledger (`BillingService`, Contract 1):
  *
  *   GET    /accounts/:userId                          billing:read
  *   POST   /accounts/:userId/plan                     plan:set
@@ -169,7 +169,7 @@ function registerPlanAndCredits(fastify: FastifyInstance): void {
       reason,
       input: body,
       run: (ctx) => fastify.container.billingService.grantLot(userId, grant, ctx),
-      details: (result) => ({ lotId: result.lotId, minutes: grant.minutes, expiresAt: grant.expiresAt ?? null }),
+      details: (result) => ({ lotId: result.lotId, tokens: grant.tokens, expiresAt: grant.expiresAt ?? null }),
     });
   });
 }
@@ -202,7 +202,7 @@ function registerCapsAndAdjust(fastify: FastifyInstance): void {
       reason,
       input: body,
       run: (ctx) => fastify.container.billingService.adjust(userId, adjustment, ctx),
-      details: () => ({ bucket: adjustment.bucket, minutes: adjustment.minutes }),
+      details: () => ({ bucket: adjustment.bucket, tokens: adjustment.tokens }),
     });
   });
 }

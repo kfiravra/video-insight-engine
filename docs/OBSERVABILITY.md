@@ -314,7 +314,7 @@ Every HTTP request to the API gets a UUID v4 stamped on the `x-request-id` respo
 - **API → frontend**: header echoed on every response (set in `api/src/plugins/request-id.ts`).
 - **API → RabbitMQ**: `requestId` field on the queue payload (`api/src/services/queue-topology.ts`).
 - **API → summarizer HTTP fallback**: `X-Request-ID` header on `triggerSummarization` (`api/src/services/summarizer-client.ts`).
-- **API → assistant**: `X-Request-ID` + `X-User-Id` headers on `/chat`, `/library/chat`, and `/action` (`api/src/services/assistant-client.ts`). The assistant binds them onto the LLM cost-tracking ctxvars so its `llm_usage` rows carry `request_id` + `user_id` (without `X-User-Id`, RAG-chat rows land unattributed).
+- **API → assistant**: `X-Request-ID` + `X-User-Id` headers on `/chat`, `/library/chat`, and `/action` (`api/src/services/assistant-client.ts`). The assistant binds them onto the LLM cost-tracking ctxvars so its `llm_usage` rows carry `request_id` + `user_id` (without `X-User-Id`, RAG-chat rows land unattributed). The same calls carry `X-Execution-Id`, under which the assistant reports the request's cost back for the token ledger ([SERVICE-ASSISTANT.md](./SERVICE-ASSISTANT.md#execution-cost-token-ledger)).
 - **Worker**: the runner binds `request_id`, `video_summary_id`, `youtube_id`, `user_id`, `attempt` to structlog contextvars before driving the pipeline. Every log line and Langfuse trace tag inside the pipeline carries them automatically.
 - **Assistant**: `add_request_context_middleware` reads the header (or generates one) and binds it on contextvars.
 

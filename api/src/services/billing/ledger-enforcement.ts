@@ -1,17 +1,20 @@
 import { AccountBlockedError } from '../../utils/errors.js';
+import { queuePlanFor } from '../queue-topology.js';
 import { rejectionToError } from './billing-errors.js';
 import { stampedRun } from './run-stamp.js';
 import type { FastifyBaseLogger } from 'fastify';
-import type { HoldView } from '@vie/types';
+import type { HoldView, VideoBilling } from '@vie/types';
+import type { QueuePlan } from '../queue-topology.js';
 import type { BillingGate, GateSubmission } from './billing-gate.js';
 import type { DispatchStampReader, SubmitOutcome } from './run-stamp.js';
-import type { BillingService, PlaylistQuote } from './billing.service.js';
+import type { BillingService, HoldOutcomeStatus, PlaylistQuote } from './billing.service.js';
 import type { LlmUsageRepository } from '../../repositories/llm-usage.repository.js';
 
-// The minutes ledger decides every submit, on the request path (P3.1; the
-// only gate since P3.2): quote → hold before createVideo, a refusal thrown
-// (402/422/403/429, METADATA_UNAVAILABLE fails closed), every give-back
-// awaited, the terminal status settled or released.
+// The token ledger decides every submit, on the request path (P3.1; the
+// only gate since P3.2): quote → hold of the estimate before createVideo, a
+// refusal thrown (402/422/403/429, METADATA_UNAVAILABLE fails closed), every
+// give-back awaited; the run settles on its real cost when the summarizer
+// reports it (run-cost), a failed or cache-hit status releases it.
 
 export interface LedgerEnforcementDeps {
   billing: BillingService;
@@ -27,6 +30,15 @@ export interface PlaylistItemToPrice {
   durationSec: number | null;
 }
 
+/** A held submit and the queue plan its run is published at (Pro accounts: `paid`). */
+export interface AdmittedRun {
+  hold: HoldView;
+  queuePlan: QueuePlan;
+}
+
+/** What a run-cost callback did: the settle's outcome, or `ignored` when the row no longer names that run. */
+export type RunCostStatus = HoldOutcomeStatus | 'ignored';
+
 /** The playlist as quoted up front (items of known length), each item's length resolved (null = unknown). */
 export interface PlaylistPlan {
   quote: PlaylistQuote;
@@ -37,10 +49,10 @@ export class LedgerEnforcement {
   constructor(private readonly deps: LedgerEnforcementDeps) {}
 
   /** Quote + hold before createVideo. Throws the refusal, or MetadataUnavailableError (fails closed). */
-  async admit(submission: GateSubmission): Promise<HoldView> {
+  async admit(submission: GateSubmission): Promise<AdmittedRun> {
     const admission = await this.deps.gate.admit(submission);
     if (!admission.admitted) throw rejectionToError(admission.rejection);
-    return admission.hold;
+    return { hold: admission.hold, queuePlan: queuePlanFor(admission.quote.planId) };
   }
 
   /**
@@ -63,27 +75,50 @@ export class LedgerEnforcement {
   }
 
   /**
-   * Terminal status of a dispatched run: completed → settle with the run's
-   * LLM $, failed → release, cached (the summarizer answered from its
-   * response cache, no run happened — I3) → release like a cached submit.
-   * Never throws — the status relay must not fail on it; a hold left open is
-   * settled or released by the repair job.
+   * Terminal status of a dispatched run. `completed` settles nothing: the run
+   * is charged on its real cost when the summarizer's run-cost callback
+   * arrives (or by the repair job). failed → release; cached (the summarizer
+   * answered from its response cache, no run happened — I3) → release like a
+   * cached submit. Never throws — the status relay must not fail on it; a
+   * hold left open is settled or released by the repair job.
    */
   async runFinished(videoSummaryId: string, outcome: 'completed' | 'failed' | 'cached'): Promise<void> {
+    if (outcome === 'completed') return;
     try {
       const run = stampedRun(await this.deps.dispatchStamps.findCacheById(videoSummaryId));
       if (!run) return;
       const costUsd = await this.deps.llmUsage.sumRunCost(run.costRequestId, videoSummaryId);
-      if (outcome === 'completed') await this.deps.billing.settle(run.runId, { costUsd });
-      else await this.deps.billing.release(run.runId, outcome, { costUsd });
+      await this.deps.billing.release(run.runId, outcome, { costUsd });
     } catch (err) {
       this.deps.logger.warn({ err, videoSummaryId, outcome }, 'billing_run_finish_failed');
     }
   }
 
   /**
-   * Quote a whole playlist up front, for the import summary ("needs 340 min,
-   * you have 120"). Only a blocked account is refused here, before any
+   * The summarizer's total cost of a completed run (POST /internal/run-cost):
+   * settle the hold of the run the row is stamped with. A `billingRunId` that
+   * no longer matches the stamp means a newer dispatch replaced it; that call
+   * settles nothing (`ignored`) and the repair job deals with the old hold.
+   */
+  async runCosted(videoSummaryId: string, billingRunId: string | null, costUsd: number): Promise<RunCostStatus> {
+    const run = stampedRun(await this.deps.dispatchStamps.findCacheById(videoSummaryId));
+    if (!run) return 'no_hold';
+    if (billingRunId !== null && billingRunId !== run.runId) {
+      this.deps.logger.warn({ videoSummaryId, billingRunId, stamped: run.runId }, 'billing_run_cost_stamp_mismatch');
+      return 'ignored';
+    }
+    return (await this.deps.billing.settleActual(run.runId, costUsd)).status;
+  }
+
+  /** The video detail's `billing`: what this user's run on the row's stamp holds or cost. */
+  async videoBilling(userId: string, videoSummaryId: string): Promise<VideoBilling> {
+    const run = stampedRun(await this.deps.dispatchStamps.findCacheById(videoSummaryId));
+    return this.deps.billing.videoBilling(run?.runId ?? null, userId);
+  }
+
+  /**
+   * Quote a whole playlist up front, for the import summary ("needs ≈ 9,600
+   * tokens, you have 4,200"). Only a blocked account is refused here, before any
    * pre-flight and whatever the items: any other refusal can still serve
    * cached or attachable items at no cost (Q6), so the import goes item by
    * item (see PlaylistService).

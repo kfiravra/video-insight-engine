@@ -9,7 +9,7 @@ interface AccountPanelProps {
 }
 
 /**
- * Everything on the user drawer's Account tab: the grant-minutes form, the
+ * Everything on the user drawer's Account tab: the grant-tokens form, the
  * action buttons and the read-only account view. Holds the "last change"
  * notice so a delete in the grants table and a dialog result show in one place.
  */

@@ -3,6 +3,8 @@ import { getLabels } from '../i18n';
 import type { PluralForms } from '../i18n';
 
 const LANGUAGES = ['en', 'he', 'ar'] as const;
+// Legitimately identical to English: a bare number template, the plan name.
+const SAME_AS_ENGLISH = new Set(['approxTokens', 'planPro', 'proCardTitle', 'duration']);
 const PLACEHOLDER = /\{(\w+)\}/g;
 
 function placeholders(text: string): string[] {
@@ -46,13 +48,82 @@ describe('billing labels', () => {
   );
 
   it.each(LANGUAGES)('should give %s plural forms an other fallback', (language) => {
-    const labels = getLabels(language).billing;
+    const { tokens, tokensOblique, minutes, minutesOblique, videos, videosOblique, months } = getLabels(language).billing;
 
-    expect([isPluralForms(labels.minutes), isPluralForms(labels.videos)]).toEqual([true, true]);
+    expect([tokens, tokensOblique, minutes, minutesOblique, videos, videosOblique, months].map(isPluralForms)).toEqual(
+      Array(7).fill(true),
+    );
+  });
+
+  it.each(['he', 'ar'] as const)('should translate every %s billing label away from English', (language) => {
+    const labels = getLabels(language).billing as unknown as Record<string, unknown>;
+    const sameAsEnglish = Object.entries(en)
+      .filter(([key]) => !SAME_AS_ENGLISH.has(key))
+      .filter(([key, value]) => JSON.stringify(labels[key]) === JSON.stringify(value))
+      .map(([key]) => key);
+
+    expect(sameAsEnglish).toEqual([]);
+  });
+
+  it.each(['he', 'ar'] as const)('should keep every %s plural form non-empty', (language) => {
+    const labels = getLabels(language).billing as unknown as Record<string, unknown>;
+    const empty = Object.entries(labels)
+      .filter(([, value]) => isPluralForms(value))
+      .flatMap(([key, forms]) =>
+        Object.entries(forms as PluralForms)
+          .filter(([, text]) => !text || !text.trim())
+          .map(([form]) => `${key}.${form}`),
+      );
+
+    expect(empty).toEqual([]);
+  });
+
+  it('should count Hebrew tokens with one, two and other forms', () => {
+    expect(getLabels('he').billing.tokens).toEqual({
+      one: 'טוקן אחד',
+      two: 'שני טוקנים',
+      other: '{count} טוקנים',
+    });
+  });
+
+  it('should put the Arabic token dual in the oblique case after a preposition', () => {
+    const { tokens, tokensOblique } = getLabels('ar').billing;
+
+    expect([tokens.two, tokensOblique.two]).toEqual(['توكنان', 'توكنين']);
+  });
+
+  it('should give Arabic tokens a form for every plural category', () => {
+    const { tokens, tokensOblique } = getLabels('ar').billing;
+
+    expect([tokens, tokensOblique].map((forms) => Object.keys(forms).sort())).toEqual(
+      Array(2).fill(['few', 'many', 'one', 'other', 'two', 'zero']),
+    );
+  });
+
+  it('should say in Arabic that the video needs tokens', () => {
+    expect(getLabels('ar').billing.calloutNeeds).toContain('يحتاج');
+  });
+
+  it('should keep the Latin Pro name untouched in he and ar', () => {
+    expect([getLabels('he').billing.proCardTitle, getLabels('ar').billing.proCardTitle]).toEqual(['Pro', 'Pro']);
   });
 
   it('should word the team note exactly as the product asks', () => {
-    expect(en.teamNote).toBe('Minutes are added by the team for now.');
+    expect(en.teamNote).toBe('Tokens are added by the team for now.');
+  });
+
+  it('should word the payments placeholder exactly as the product asks', () => {
+    expect(en.paymentsPlaceholder).toBe("Payments aren't live yet — tokens are added by the team.");
+  });
+
+  it('should count English tokens with one and other forms', () => {
+    expect(en.tokens).toEqual({ one: '{count} token', other: '{count} tokens' });
+  });
+
+  it.each(LANGUAGES)('should leave the minute and free-video era behind in %s', (language) => {
+    const keys = Object.keys(getLabels(language).billing);
+
+    expect(keys.filter((key) => /^freeVideo|^planMinutes|ChatLimit|^planFreeNote|^calloutFree/.test(key))).toEqual([]);
   });
 
   describe('wording fixes from the review', () => {
@@ -77,21 +148,9 @@ describe('billing labels', () => {
     });
 
     it.each(['en', 'he'] as const)('should keep the oblique plural forms the same as the plain ones in %s', (language) => {
-      const { minutes, videos, minutesOblique, videosOblique } = getLabels(language).billing;
+      const { tokens, minutes, videos, tokensOblique, minutesOblique, videosOblique } = getLabels(language).billing;
 
-      expect([minutesOblique, videosOblique]).toEqual([minutes, videos]);
-    });
-
-    it('should not use an adjective that has to agree with the Arabic number in "you have … to spend"', () => {
-      expect(getLabels('ar').billing.calloutNeeds).toContain('للاستخدام');
-    });
-
-    it('should give the plural free-video note an other fallback in every language', () => {
-      expect(['en', 'he', 'ar'].map((language) => typeof getLabels(language).billing.planFreeNoteMany.other)).toEqual([
-        'string',
-        'string',
-        'string',
-      ]);
+      expect([tokensOblique, minutesOblique, videosOblique]).toEqual([tokens, minutes, videos]);
     });
   });
 });

@@ -191,7 +191,7 @@ describe('internal routes', () => {
         });
       });
 
-      it('should settle the run\'s hold when a video completes', async () => {
+      it('should tell the ledger a video completed (which settles nothing: POST /internal/run-cost does)', async () => {
         const videoSummaryId = new ObjectId().toHexString();
         const userId = 'completed-user-123';
 
@@ -280,7 +280,7 @@ describe('internal routes', () => {
           expect(mockContainer.videoRepository.closeRun).not.toHaveBeenCalled();
         });
 
-        it('should still settle the hold when closing the run fails', async () => {
+        it('should still run the billing hook when closing the run fails', async () => {
           mockContainer.videoRepository.closeRun.mockRejectedValueOnce(new Error('mongo blip'));
           const videoSummaryId = new ObjectId().toHexString();
 
@@ -493,7 +493,7 @@ describe('internal routes', () => {
         expect(mockContainer.idempotencyService.invalidateByVideoSummaryId).not.toHaveBeenCalled();
       });
 
-      it('should settle a shared video\'s run once when the completion event has no userId', async () => {
+      it('should tell the ledger once about a shared video\'s completion when the event has no userId', async () => {
         const videoSummaryId = new ObjectId().toHexString();
         const sharedUserA = new ObjectId();
         const sharedUserB = new ObjectId();

@@ -71,7 +71,7 @@ function resolveLoginInput(body: unknown): LoginInput {
 }
 
 export async function authRoutes(fastify: FastifyInstance) {
-  const { authService } = fastify.container;
+  const { authService, billingService } = fastify.container;
 
   // POST /api/auth/register
   // TODO: v1.5 — Accept optional referralSlug in registration body, store on user record
@@ -88,6 +88,12 @@ export async function authRoutes(fastify: FastifyInstance) {
     }
     const input = registerSchema.parse(req.body);
     const user = await authService.register(input);
+    // The token account and its one-time signup grant, so the usage tile shows
+    // the grant at once. Non-blocking: the first billing read creates the same
+    // account (with the grant) if this fails.
+    await billingService.ensureAccount(user.id).catch((err: unknown) => {
+      req.log.warn({ err, userId: user.id }, 'billing_signup_account_failed');
+    });
     const tokens = generateAuthTokens(fastify, reply, user);
     return reply.code(201).send({ ...tokens, user });
   });

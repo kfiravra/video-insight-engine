@@ -4,6 +4,7 @@ import type { ClientSession } from 'mongodb';
 import type { BillingOwnerType } from '@vie/types';
 import type {
   BillingAccountDocument,
+  BillingHoldDocument,
   AccountMutableFields,
   CreditLotDocument,
   LedgerEntryDocument,
@@ -73,14 +74,14 @@ function retryDelay(attempt: number): Promise<void> {
   return sleep(Math.floor(Math.random() * ceiling));
 }
 
-/** Initial state of a fresh account (the owner fields come from the upsert filter). */
-function newAccountState(now: Date): Omit<BillingAccountDocument, '_id' | 'ownerType' | 'ownerId'> {
+/** State of a fresh account, before its signup grant. */
+export function emptyAccountState(now: Date): Omit<BillingAccountDocument, '_id' | 'ownerType' | 'ownerId'> {
   return {
     plan: { id: 'free', status: 'active', source: null, periodStart: null, periodEnd: null },
     buckets: {
-      free: { recentFreeVideoAt: [] },
-      plan: { cycleStart: null, cycleEnd: null, minutesGranted: 0, minutesUsed: 0 },
-      credit: { minutesAvailable: 0 },
+      plan: { cycleStart: null, cycleEnd: null, tokensGranted: 0, tokensUsed: 0 },
+      credit: { tokensAvailable: 0 },
+      debt: { tokens: 0 },
     },
     holds: [],
     caps: {},
@@ -90,8 +91,70 @@ function newAccountState(now: Date): Omit<BillingAccountDocument, '_id' | 'owner
   };
 }
 
+/** What an account written before the token migration may lack. */
+type StoredAccount = Omit<BillingAccountDocument, 'buckets' | 'holds'> & {
+  buckets: Partial<{
+    plan: Partial<BillingAccountDocument['buckets']['plan']>;
+    credit: Partial<BillingAccountDocument['buckets']['credit']>;
+    debt: Partial<BillingAccountDocument['buckets']['debt']>;
+  }>;
+  holds?: Array<Partial<BillingHoldDocument> & Pick<BillingHoldDocument, 'requestId' | 'userId' | 'createdAt'>>;
+};
+
+function normalizeHold(hold: NonNullable<StoredAccount['holds']>[number]): BillingHoldDocument {
+  if (typeof hold.tokens === 'number' && hold.split) return hold as BillingHoldDocument;
+  // A minute hold from before the migration: holds nothing in tokens.
+  return {
+    ...hold,
+    youtubeId: hold.youtubeId ?? null,
+    durationSec: hold.durationSec ?? 0,
+    tokens: 0,
+    split: { plan: 0, credit: 0, lots: [] },
+    minuteSplit: hold.minuteSplit ?? hold.split,
+    planCycleStart: hold.planCycleStart ?? null,
+  };
+}
+
 /**
- * Data access for the minutes ledger. No business rules: BillingService
+ * An account as the token ledger reads it. One written before the token
+ * migration lacks the token fields and reads as empty (0 tokens, no debt);
+ * the spreads keep its minute fields (`buckets.free`, `minutesUsed`, …), so a
+ * write before the migration does not drop what the migration converts.
+ */
+export function normalizeAccount(stored: BillingAccountDocument): BillingAccountDocument {
+  const doc = stored as unknown as StoredAccount;
+  const { plan = {}, credit = {}, debt = {} } = doc.buckets ?? {};
+  return {
+    ...doc,
+    buckets: {
+      ...doc.buckets,
+      plan: {
+        ...plan,
+        cycleStart: plan.cycleStart ?? null,
+        cycleEnd: plan.cycleEnd ?? null,
+        tokensGranted: plan.tokensGranted ?? 0,
+        tokensUsed: plan.tokensUsed ?? 0,
+      },
+      credit: { ...credit, tokensAvailable: credit.tokensAvailable ?? 0 },
+      debt: { tokens: debt.tokens ?? 0 },
+    },
+    holds: (doc.holds ?? []).map(normalizeHold),
+  };
+}
+
+function normalized(doc: BillingAccountDocument | null): BillingAccountDocument | null {
+  return doc ? normalizeAccount(doc) : null;
+}
+
+/** Lots and recurring grants written in tokens (the migration converts the minute ones). */
+const TOKEN_LOT = { tokensGranted: { $exists: true } } as const;
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Data access for the token ledger. No business rules: BillingService
  * decides what to write; this class writes it (idempotently where the
  * collection has a unique key) and owns the transaction/retry mechanics.
  */
@@ -174,28 +237,28 @@ export class BillingRepository {
   // ─── Accounts ───
 
   /**
-   * Find-or-create, race-safe on the `{ownerType, ownerId}` unique index:
-   * concurrent first submits both upsert, the loser's duplicate-key error
-   * resolves to the winner's row. A plain read first keeps the common case
-   * off the write path. Call outside a transaction.
+   * Insert a new account with its first lots and entries (the signup grant)
+   * in one transaction. False when an account for the owner already exists
+   * (a concurrent first request won the unique `{ownerType, ownerId}` index).
    */
-  async getOrCreateAccount(ownerType: BillingOwnerType, ownerId: string): Promise<BillingAccountDocument> {
-    const filter = { ownerType, ownerId: new ObjectId(ownerId) };
-    const found = await this.accounts.findOne(filter);
-    if (found) return found;
+  async createAccount(
+    account: BillingAccountDocument,
+    lots: CreditLotDocument[],
+    entries: NewLedgerEntry[],
+  ): Promise<boolean> {
     try {
-      const doc = await this.accounts.findOneAndUpdate(
-        filter,
-        { $setOnInsert: newAccountState(new Date()) },
-        { upsert: true, returnDocument: 'after' },
-      );
-      if (doc) return doc;
+      await this.withTransaction(async (session) => {
+        await this.accounts.insertOne(account, { session, ignoreUndefined: true });
+        await this.insertLots(lots, session);
+        for (const entry of entries) {
+          await this.ledger.insertOne({ _id: new ObjectId(), ...entry }, { session, ignoreUndefined: true });
+        }
+      });
+      return true;
     } catch (err) {
-      if (!isDuplicateKey(err)) throw err;
+      if (isDuplicateKey(err)) return false;
+      throw err;
     }
-    const existing = await this.accounts.findOne(filter);
-    if (!existing) throw new Error(`billing account upsert returned no document for ${ownerType}:${ownerId}`);
-    return existing;
   }
 
   async findAccount(
@@ -203,15 +266,15 @@ export class BillingRepository {
     ownerId: string,
     session?: ClientSession,
   ): Promise<BillingAccountDocument | null> {
-    return this.accounts.findOne({ ownerType, ownerId: new ObjectId(ownerId) }, { session });
+    return normalized(await this.accounts.findOne({ ownerType, ownerId: new ObjectId(ownerId) }, { session }));
   }
 
   async findAccountById(accountId: ObjectId, session?: ClientSession): Promise<BillingAccountDocument | null> {
-    return this.accounts.findOne({ _id: accountId }, { session });
+    return normalized(await this.accounts.findOne({ _id: accountId }, { session }));
   }
 
   async findAccountByHold(requestId: string, session?: ClientSession): Promise<BillingAccountDocument | null> {
-    return this.accounts.findOne({ 'holds.requestId': requestId }, { session });
+    return normalized(await this.accounts.findOne({ 'holds.requestId': requestId }, { session }));
   }
 
   /**
@@ -224,11 +287,14 @@ export class BillingRepository {
     fields: AccountMutableFields,
     session?: ClientSession,
   ): Promise<BillingAccountDocument | null> {
-    const { plan, buckets, holds, caps, capsAuditIds } = fields;
-    return this.accounts.findOneAndUpdate(
-      { _id: accountId, version: expectedVersion },
-      { $set: { plan, buckets, holds, caps, capsAuditIds, updatedAt: new Date() }, $inc: { version: 1 } },
-      { returnDocument: 'after', session, ignoreUndefined: true },
+    const { plan, buckets, holds, caps, capsAuditIds, signupGrantAt } = fields;
+    const set = { plan, buckets, holds, caps, capsAuditIds, signupGrantAt, updatedAt: new Date() };
+    return normalized(
+      await this.accounts.findOneAndUpdate(
+        { _id: accountId, version: expectedVersion },
+        { $set: set, $inc: { version: 1 } },
+        { returnDocument: 'after', session, ignoreUndefined: true },
+      ),
     );
   }
 
@@ -261,6 +327,12 @@ export class BillingRepository {
   async findLedgerByKeys(keys: string[], session?: ClientSession): Promise<LedgerEntryDocument[]> {
     if (keys.length === 0) return [];
     return this.ledger.find({ idempotencyKey: { $in: keys } }, { session }).toArray();
+  }
+
+  /** The debits already written for an execution (`debit:exec:<executionId>:…`). */
+  async findExecutionDebits(executionId: string, session?: ClientSession): Promise<LedgerEntryDocument[]> {
+    const prefix = new RegExp(`^debit:exec:${escapeRegex(executionId)}:`);
+    return this.ledger.find({ idempotencyKey: prefix }, { session }).toArray();
   }
 
   /** Every entry whose `source.ref` is `ref` (a run's requestId, an admin auditId, …). */
@@ -303,14 +375,14 @@ export class BillingRepository {
   }
 
   /**
-   * Lots with minutes left, in spend order: dated lots by `expiresAt` asc,
+   * Lots with tokens left, in spend order: dated lots by `expiresAt` asc,
    * then never-expiring ones (Mongo sorts null FIRST, so they are a second
    * query), each by `createdAt` then `_id`. Expired-but-unswept lots are
    * included — spendability is the caller's rule. Sequential on purpose: a
    * transaction's session must not run operations in parallel.
    */
   async listOpenLots(accountId: ObjectId, session?: ClientSession): Promise<CreditLotDocument[]> {
-    const open = { accountId, minutesRemaining: { $gt: 0 } };
+    const open = { accountId, tokensRemaining: { $gt: 0 } };
     const order = { expiresAt: 1, createdAt: 1, _id: 1 } as const;
     const dated = await this.lots.find({ ...open, expiresAt: { $type: 'date' } }, { session }).sort(order).toArray();
     const undated = await this.lots.find({ ...open, expiresAt: null }, { session }).sort(order).toArray();
@@ -322,21 +394,21 @@ export class BillingRepository {
     return this.lots.find({ _id: { $in: lotIds } }, { session }).toArray();
   }
 
-  /** Every lot of an account, spent ones included, newest first; `limit` for the admin view. */
+  /** Every token lot of an account, spent ones included, newest first; `limit` for the admin view. */
   async listLots(accountId: ObjectId, limit?: number, session?: ClientSession): Promise<CreditLotDocument[]> {
-    const cursor = this.lots.find({ accountId }, { session }).sort({ createdAt: -1, _id: -1 });
+    const cursor = this.lots.find({ accountId, ...TOKEN_LOT }, { session }).sort({ createdAt: -1, _id: -1 });
     return (limit === undefined ? cursor : cursor.limit(limit)).toArray();
   }
 
   /**
-   * Move a lot's `minutesRemaining` by `delta`, refusing to take it below
+   * Move a lot's `tokensRemaining` by `delta`, refusing to take it below
    * zero. Throws `StaleAccountVersionError` when the lot no longer has the
-   * minutes (changed since it was read), so the transaction retries.
+   * tokens (changed since it was read), so the transaction retries.
    */
   async changeLotRemaining(lotId: ObjectId, delta: number, session?: ClientSession): Promise<void> {
     if (delta === 0) return;
-    const filter = delta < 0 ? { _id: lotId, minutesRemaining: { $gte: -delta } } : { _id: lotId };
-    const result = await this.lots.updateOne(filter, { $inc: { minutesRemaining: delta } }, { session });
+    const filter = delta < 0 ? { _id: lotId, tokensRemaining: { $gte: -delta } } : { _id: lotId };
+    const result = await this.lots.updateOne(filter, { $inc: { tokensRemaining: delta } }, { session });
     if (result.matchedCount === 0) throw new StaleAccountVersionError(`credit lot ${lotId.toHexString()} changed concurrently`);
   }
 
@@ -362,9 +434,10 @@ export class BillingRepository {
     return this.recurringGrants.findOne({ accountId, auditId }, { session });
   }
 
-  /** Live (not deleted) grants, oldest first. */
+  /** Live (not deleted) token grants, oldest first. */
   async listRecurringGrants(accountId: ObjectId): Promise<RecurringGrantDocument[]> {
-    return this.recurringGrants.find({ accountId, deletedAt: null }).sort({ createdAt: 1, _id: 1 }).toArray();
+    const filter = { accountId, deletedAt: null, tokens: { $exists: true } };
+    return this.recurringGrants.find(filter).sort({ createdAt: 1, _id: 1 }).toArray();
   }
 
   /** Move a grant to its next run, only if nobody did since `expectedNextRunAt` was read. */

@@ -58,7 +58,10 @@ def _matches(doc: dict[str, Any], query: dict[str, Any]) -> bool:
     for key, expected in query.items():
         actual = doc.get(key)
         if isinstance(expected, dict) and any(k.startswith("$") for k in expected):
-            if not all(_matches_operator(actual, op, val) for op, val in expected.items()):
+            if "$exists" in expected and (key in doc) != expected["$exists"]:
+                return False
+            operators = {op: val for op, val in expected.items() if op != "$exists"}
+            if not all(_matches_operator(actual, op, val) for op, val in operators.items()):
                 return False
         elif _comparable(actual) != _comparable(expected):
             return False
@@ -133,14 +136,14 @@ def make_account(**overrides: Any) -> dict[str, Any]:
             "periodEnd": datetime(2027, 10, 1),
         },
         "buckets": {
-            "free": {"recentFreeVideoAt": []},
             "plan": {
                 "cycleStart": datetime(2026, 10, 1),
                 "cycleEnd": datetime(2026, 11, 1),
-                "minutesGranted": 600,
-                "minutesUsed": 140,
+                "tokensGranted": 20_000,
+                "tokensUsed": 4_200,
             },
-            "credit": {"minutesAvailable": 150},
+            "credit": {"tokensAvailable": 5_000},
+            "debt": {"tokens": 0},
         },
         "holds": [],
         "caps": {},
@@ -156,8 +159,8 @@ def make_lot(n: int, **overrides: Any) -> dict[str, Any]:
     doc: dict[str, Any] = {
         "_id": ObjectId(f"{n:024x}"),
         "accountId": ACCOUNT_OID,
-        "minutesGranted": 150,
-        "minutesRemaining": 150,
+        "tokensGranted": 5_000,
+        "tokensRemaining": 5_000,
         "source": {"kind": "payment", "ref": f"txn_{n}"},
         "priceUsdCents": 500,
         "expiresAt": datetime(2027, 10, 1),
@@ -174,7 +177,8 @@ def make_entry(n: int, created_at: datetime, **overrides: Any) -> dict[str, Any]
         "userId": USER_OID,
         "type": "grant",
         "bucket": "credit",
-        "minutes": 150,
+        "unit": "tokens",
+        "tokens": 5_000,
         "source": {"kind": "admin", "ref": "c" * 24},
         "idempotencyKey": f"admin:{n}",
         "createdAt": created_at,

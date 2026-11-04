@@ -27,6 +27,7 @@ import type { Folder as FolderEntity } from '@/types';
 import { SAMPLE_VIDEO } from '@/features/video-output/lib/onboarding-constants';
 import { showDuplicateToast } from '@/features/video-output/lib/duplicate-toast';
 import { BillingNoticeAlert } from '@/components/usage/BillingNoticeAlert';
+import { EstimateHint } from '@/components/usage/EstimateHint';
 import { classifyBillingError, type BillingNotice } from '@/lib/billing-errors';
 
 type Mode = 'video' | 'playlist';
@@ -80,6 +81,12 @@ export function VideoIntakeForm({ className, initialUrl }: VideoIntakeFormProps)
 
   const trimmed = url.trim();
   const isInvalidUrl = trimmed.length > 0 && !isYouTubeUrl(trimmed);
+  // The estimate is for a single video only, and steps aside while a refusal or error explains more.
+  const estimateUrl =
+    !isInvalidUrl && !error && !billingNotice && !isLoading &&
+    detectMode(trimmed, mode) === 'video' && hasVideoId(trimmed)
+      ? trimmed
+      : null;
 
   // Submit a handed-over URL once the form has mounted. Deferred a tick with
   // cleanup so StrictMode's mount → unmount → mount fires a single submit from
@@ -294,7 +301,10 @@ export function VideoIntakeForm({ className, initialUrl }: VideoIntakeFormProps)
         </p>
       )}
 
-      {/* Billing refusal: not enough minutes (402), too long (422), blocked / busy / burst (403/429) */}
+      {/* What this video would hold: "≈ 840 tokens" or free; never blocks the submit */}
+      <EstimateHint url={estimateUrl} className="mt-2 flex justify-center" />
+
+      {/* Billing refusal: not enough tokens (402), too long (422), blocked / busy / burst (403/429) */}
       {billingNotice && <BillingNoticeAlert notice={billingNotice} className="text-center" />}
 
       {/* Error */}

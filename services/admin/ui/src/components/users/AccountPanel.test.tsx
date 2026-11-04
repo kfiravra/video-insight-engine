@@ -41,9 +41,11 @@ function snapshot(overrides: Partial<BillingAccountSnapshot> = {}): BillingAccou
     ownerType: 'user',
     ownerId: USER_ID,
     plan: { id: 'free', status: 'active', source: null, periodStart: null, periodEnd: null },
-    free: { perWindow: 1, usedInWindow: 0, available: true, nextFreeAt: null, maxVideoMinutes: 30 },
-    planMinutes: { cycleStart: null, cycleEnd: null, granted: 0, used: 0, remaining: 0 },
+    planTokens: { cycleStart: null, cycleEnd: null, granted: 0, used: 0, remaining: 0 },
     credits: { available: 0 },
+    debt: 0,
+    balance: 0,
+    signupGrantAt: null,
     caps: {},
     openHolds: 0,
     version: 1,
@@ -54,7 +56,7 @@ function snapshot(overrides: Partial<BillingAccountSnapshot> = {}): BillingAccou
 
 const GRANT = {
   grantId: 'g'.repeat(24),
-  minutes: 300,
+  tokens: 3000,
   every: 'month' as const,
   active: true,
   nextRunAt: '2026-11-01T00:00:00.000Z',
@@ -118,10 +120,10 @@ describe('AccountPanel', () => {
       expect(names.map((name) => screen.queryByRole('button', { name }) !== null)).toEqual([true, true, true, true]);
     });
 
-    it('should keep granting minutes as the form above the account', async () => {
+    it('should keep granting tokens as the form above the account', async () => {
       renderPanel();
 
-      expect(await screen.findByTestId('grant-credit-minutes')).toBeTruthy();
+      expect(await screen.findByTestId('grant-credit-tokens')).toBeTruthy();
     });
 
     it('should still offer the actions to a user with no account yet', async () => {
