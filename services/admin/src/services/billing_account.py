@@ -1,10 +1,11 @@
 """Builds the admin's read-only view of a user's billing account.
 
 Maps the documents vie-api's ``BillingService`` writes into the wire shapes in
-``billing_models``. The snapshot arithmetic (rolling free window, plan minutes
-left, spendable credit) mirrors ``toSnapshot`` in
-``api/src/services/billing/views.ts``; the constants mirror ``FREE_VIDEO`` in
-``packages/types/src/billing.ts`` and a test fails if either drifts.
+``billing_models``. The snapshot arithmetic (plan tokens left, spendable
+credit, debt, balance) mirrors ``toSnapshot`` in
+``api/src/services/billing/views.ts``. An account written before the token
+migration reads as an empty token account, as it does in vie-api; minute
+ledger rows show in their own unit.
 
 The view is the stored state as of now. Unlike vie-api it does not roll an
 ended Pro cycle forward in memory, so a cycle that ended with no request since
@@ -15,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Mapping, Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 from bson import ObjectId
@@ -29,24 +30,15 @@ from src.services.billing_models import (
     BucketSplit,
     CreditLotView,
     CreditsState,
-    FreeVideoState,
     HoldView,
     LedgerEntryView,
     LotSlice,
-    PlanMinutesState,
+    PlanTokensState,
     RecurringGrantView,
 )
 from src.services.billing_reader import BillingReader
 
 Document = Mapping[str, Any]
-
-# ─── Constants (mirror FREE_VIDEO in packages/types/src/billing.ts) ───
-
-FREE_VIDEOS_PER_WINDOW = 1
-FREE_WINDOW_HOURS = 24
-FREE_MAX_VIDEO_MINUTES = 30
-
-_FREE_WINDOW = timedelta(hours=FREE_WINDOW_HOURS)
 
 
 class UserNotFoundError(Exception):
@@ -81,34 +73,12 @@ def to_iso(value: datetime | None) -> str | None:
 # ─── Snapshot ───
 
 
-def _free_state(recent: Sequence[datetime], caps: Document, now: datetime) -> FreeVideoState:
-    """Rolling window (Q3): a free video counts while it is under 24 h old."""
-    configured = caps.get("freeVideosPerDay")
-    per_window = FREE_VIDEOS_PER_WINDOW if configured is None else configured
-    cutoff = now - _FREE_WINDOW
-    in_window = sorted(at for at in map(_as_utc, recent) if at > cutoff)
-    available = len(in_window) < per_window
-    next_free_at = None
-    if per_window > 0 and not available:
-        next_free_at = in_window[len(in_window) - per_window] + _FREE_WINDOW
-    max_minutes = FREE_MAX_VIDEO_MINUTES
-    if caps.get("maxVideoMinutes") is not None:
-        max_minutes = min(max_minutes, caps["maxVideoMinutes"])
-    return FreeVideoState(
-        perWindow=per_window,
-        usedInWindow=len(in_window),
-        available=available,
-        nextFreeAt=to_iso(next_free_at),
-        maxVideoMinutes=max_minutes,
-    )
-
-
-def _plan_minutes_state(account: Document, now: datetime) -> PlanMinutesState:
-    bucket = account["buckets"]["plan"]
-    granted, used = bucket["minutesGranted"], bucket["minutesUsed"]
+def _plan_tokens_state(account: Document, now: datetime) -> PlanTokensState:
+    bucket = account["buckets"].get("plan") or {}
+    granted, used = bucket.get("tokensGranted", 0), bucket.get("tokensUsed", 0)
     cycle_end = bucket.get("cycleEnd")
     running = account["plan"]["id"] == "pro" and cycle_end and _as_utc(cycle_end) > now
-    return PlanMinutesState(
+    return PlanTokensState(
         cycleStart=to_iso(bucket.get("cycleStart")),
         cycleEnd=to_iso(cycle_end),
         granted=granted,
@@ -123,11 +93,11 @@ def is_lot_expired(lot: Document, now: datetime) -> bool:
 
 
 def spendable_credit(open_lots: Sequence[Document], now: datetime) -> int:
-    """Minutes the credit lots can pay now: unexpired lots only."""
+    """Tokens the credit lots can pay now: unexpired lots only."""
     return sum(
-        lot["minutesRemaining"]
+        lot["tokensRemaining"]
         for lot in open_lots
-        if lot["minutesRemaining"] > 0 and not is_lot_expired(lot, now)
+        if lot.get("tokensRemaining", 0) > 0 and not is_lot_expired(lot, now)
     )
 
 
@@ -136,6 +106,9 @@ def build_snapshot(
 ) -> AccountSnapshot:
     caps = account.get("caps") or {}
     plan = account["plan"]
+    plan_tokens = _plan_tokens_state(account, now)
+    credits = spendable_credit(open_lots, now)
+    debt = (account["buckets"].get("debt") or {}).get("tokens", 0)
     return AccountSnapshot(
         accountId=str(account["_id"]),
         ownerType=account["ownerType"],
@@ -147,9 +120,11 @@ def build_snapshot(
             periodStart=to_iso(plan.get("periodStart")),
             periodEnd=to_iso(plan.get("periodEnd")),
         ),
-        free=_free_state(account["buckets"]["free"].get("recentFreeVideoAt") or [], caps, now),
-        planMinutes=_plan_minutes_state(account, now),
-        credits=CreditsState(available=spendable_credit(open_lots, now)),
+        planTokens=plan_tokens,
+        credits=CreditsState(available=credits),
+        debt=debt,
+        balance=plan_tokens.remaining + credits - debt,
+        signupGrantAt=to_iso(account.get("signupGrantAt")),
         caps=AccountCaps(**{k: caps.get(k) for k in AccountCaps.model_fields}),
         openHolds=len(account.get("holds") or []),
         version=account["version"],
@@ -169,22 +144,22 @@ def _opt_id(value: ObjectId | None) -> str | None:
 
 
 def build_hold(hold: Document) -> HoldView:
-    split = hold["split"]
+    """A hold; one from before the token migration (minutes) shows as a 0-token hold."""
+    tokens = hold.get("tokens")
+    split = hold["split"] if isinstance(tokens, int) else {}
     return HoldView(
         requestId=hold["requestId"],
         userId=str(hold["userId"]),
         youtubeId=hold.get("youtubeId"),
-        durationSec=hold["durationSec"],
-        minutes=hold["minutes"],
+        durationSec=hold.get("durationSec", 0),
+        tokens=tokens if isinstance(tokens, int) else 0,
         split=BucketSplit(
-            free=split["free"],
-            plan=split["plan"],
-            credit=split["credit"],
+            plan=split.get("plan", 0),
+            credit=split.get("credit", 0),
             lots=[
-                LotSlice(lotId=str(s["lotId"]), minutes=s["minutes"]) for s in split.get("lots", [])
+                LotSlice(lotId=str(s["lotId"]), tokens=s["tokens"]) for s in split.get("lots", [])
             ],
         ),
-        freeVideoAt=to_iso(hold.get("freeVideoAt")),
         planCycleStart=to_iso(hold.get("planCycleStart")),
         createdAt=_iso(hold["createdAt"]),
     )
@@ -193,8 +168,8 @@ def build_hold(hold: Document) -> HoldView:
 def build_lot(lot: Document, now: datetime) -> CreditLotView:
     return CreditLotView(
         lotId=str(lot["_id"]),
-        minutesGranted=lot["minutesGranted"],
-        minutesRemaining=lot["minutesRemaining"],
+        tokensGranted=lot["tokensGranted"],
+        tokensRemaining=lot["tokensRemaining"],
         source=_source(lot["source"]),
         priceUsdCents=lot.get("priceUsdCents"),
         expiresAt=to_iso(lot.get("expiresAt")),
@@ -204,15 +179,21 @@ def build_lot(lot: Document, now: datetime) -> CreditLotView:
 
 
 def build_ledger_entry(entry: Document) -> LedgerEntryView:
+    """A ledger row in its own unit: tokens, or minutes on pre-migration history."""
+    in_tokens = entry.get("unit") == "tokens"
     return LedgerEntryView(
         id=str(entry["_id"]),
         userId=str(entry["userId"]),
         type=entry["type"],
         bucket=entry["bucket"],
-        minutes=entry["minutes"],
+        unit="tokens" if in_tokens else "minutes",
+        amount=entry.get("tokens" if in_tokens else "minutes", 0),
+        mirrorsHold=entry.get("mirrorsHold"),
         lotId=_opt_id(entry.get("lotId")),
         source=_source(entry["source"]),
         idempotencyKey=entry["idempotencyKey"],
+        executionKind=entry.get("executionKind"),
+        executionId=entry.get("executionId"),
         youtubeId=entry.get("youtubeId"),
         durationSec=entry.get("durationSec"),
         costUsd=entry.get("costUsd"),
@@ -226,7 +207,7 @@ def build_ledger_entry(entry: Document) -> LedgerEntryView:
 def build_recurring_grant(grant: Document) -> RecurringGrantView:
     return RecurringGrantView(
         grantId=str(grant["_id"]),
-        minutes=grant["minutes"],
+        tokens=grant["tokens"],
         every=grant["every"],
         active=grant["active"],
         nextRunAt=_iso(grant["nextRunAt"]),

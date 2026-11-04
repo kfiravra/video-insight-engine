@@ -40,8 +40,8 @@ logger = structlog.get_logger(__name__)
 ACTOR_HEADER = "X-Admin-Actor"
 IDEMPOTENCY_HEADER = "Idempotency-Key"
 REQUEST_ID_HEADER = "X-Request-ID"
-# Upper bound for any single admin minutes amount, mirrored from vie-api's BillingService.
-MAX_ADMIN_MINUTES = 100_000
+# Upper bound for any single admin token amount, mirrored from vie-api's BillingService.
+MAX_ADMIN_TOKENS = 1_000_000
 # Shapes vie-api validates again; checked here so a bad request fails fast with a 422.
 OBJECT_ID_PATTERN = r"^[0-9a-fA-F]{24}$"
 IDEMPOTENCY_KEY_PATTERN = r"^[A-Za-z0-9_-]{8,128}$"

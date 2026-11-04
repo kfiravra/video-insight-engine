@@ -1,4 +1,4 @@
-"""Read-only billing account view (minutes ledger).
+"""Read-only billing account view (token ledger).
 
 vie-api's ``BillingService`` is the only writer of the billing collections; this
 router never writes. See docs/DATA-MODELS.md ("Billing Collections").
@@ -60,7 +60,7 @@ async def get_billing_account(
         str | None, Query(max_length=40, description="ISO 8601 createdAt cursor")
     ] = None,
 ) -> BillingAccountDetail:
-    """A user's minutes account: plan, buckets, caps, holds, lots, grants, ledger page.
+    """A user's token account: plan, buckets, debt, caps, holds, lots, grants, ledger page.
 
     ``account`` is null for a user with no billing row yet (vie-api creates it on
     the first video). Page the ledger by passing the previous page's

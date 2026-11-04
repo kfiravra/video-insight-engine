@@ -64,7 +64,7 @@ async def test_user_detail_rejects_invalid_object_id():
 
 USER_ID = "a" * 24
 GRANT_URL = f"/users/{USER_ID}/grant-credit"
-GRANT = {"minutes": 150, "reason": "support ticket 42"}
+GRANT = {"tokens": 5000, "reason": "support ticket 42"}
 
 
 def _mock_client(response: MagicMock | None = None, error: Exception | None = None):
@@ -98,13 +98,13 @@ async def test_grant_credit_requires_auth():
 
 @pytest.mark.anyio
 async def test_grant_credit_refuses_the_shared_machine_key():
-    """The machine key reads; granting minutes needs a named admin."""
+    """The machine key reads; granting tokens needs a named admin."""
     resp = await _grant({"Authorization": "Bearer test-admin-key"})
     assert resp.status_code == 403
 
 
 @pytest.mark.anyio
-async def test_grant_credit_forwards_minutes_and_reason_to_vie_api(admin_session):
+async def test_grant_credit_forwards_tokens_and_reason_to_vie_api(admin_session):
     upstream = _upstream(200, {"lotId": "l" * 24, "auditId": "u" * 24, "before": {}, "after": {}})
     factory, instance = _mock_client(upstream)
 
@@ -119,7 +119,7 @@ async def test_grant_credit_forwards_minutes_and_reason_to_vie_api(admin_session
         f"{settings.VIE_API_URL}/api/admin/billing/accounts/{USER_ID}/credits",
     )
     assert instance.request.call_args.kwargs["content"] == (
-        b'{"minutes":150,"reason":"support ticket 42"}'
+        b'{"tokens":5000,"reason":"support ticket 42"}'
     )
 
 
@@ -190,14 +190,14 @@ async def test_grant_credit_logs_the_grant_by_ids_never_the_reason(admin_session
         await _grant(admin_session)
 
     event = next(entry for entry in logs if entry["event"] == "credit_grant_requested")
-    assert (event["user_id"], event["minutes"]) == (USER_ID, 150)
+    assert (event["user_id"], event["tokens"]) == (USER_ID, 5000)
     assert "support ticket 42" not in repr(logs)
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("minutes", [0, -5, 100_001, 1.5, "ten"])
-async def test_grant_credit_rejects_bad_minutes(admin_session, minutes):
-    resp = await _grant(admin_session, {**GRANT, "minutes": minutes})
+@pytest.mark.parametrize("tokens", [0, -5, 1_000_001, 1.5, "ten"])
+async def test_grant_credit_rejects_bad_tokens(admin_session, tokens):
+    resp = await _grant(admin_session, {**GRANT, "tokens": tokens})
     assert resp.status_code == 422
 
 
@@ -210,7 +210,7 @@ async def test_grant_credit_rejects_a_bad_reason(admin_session, reason):
 
 @pytest.mark.anyio
 async def test_grant_credit_requires_a_reason(admin_session):
-    resp = await _grant(admin_session, {"minutes": 10})
+    resp = await _grant(admin_session, {"tokens": 10})
     assert resp.status_code == 422
 
 

@@ -53,17 +53,20 @@ class BillingReader:
         return await self._accounts.find_one({"ownerType": "user", "ownerId": user_id})
 
     async def open_lots(self, account_id: ObjectId) -> list[Document]:
-        """Lots that still hold minutes (expired-but-unswept included; the caller filters)."""
-        cursor = self._lots.find({"accountId": account_id, "minutesRemaining": {"$gt": 0}})
+        """Token lots that still hold tokens (expired-but-unswept included; the caller filters)."""
+        cursor = self._lots.find({"accountId": account_id, "tokensRemaining": {"$gt": 0}})
         return await cursor.limit(OPEN_LOT_LIMIT).to_list(OPEN_LOT_LIMIT)
 
     async def recent_lots(self, account_id: ObjectId) -> list[Document]:
-        cursor = self._lots.find({"accountId": account_id}).sort([("createdAt", -1), ("_id", -1)])
+        # Token lots only: minute lots from before the token migration are history.
+        query = {"accountId": account_id, "tokensGranted": {"$exists": True}}
+        cursor = self._lots.find(query).sort([("createdAt", -1), ("_id", -1)])
         return await cursor.limit(RECENT_LOT_LIMIT).to_list(RECENT_LOT_LIMIT)
 
     async def recurring_grants(self, account_id: ObjectId) -> list[Document]:
         """Live (not soft-deleted) grants, oldest first."""
-        cursor = self._grants.find({"accountId": account_id, "deletedAt": None})
+        query = {"accountId": account_id, "deletedAt": None, "tokens": {"$exists": True}}
+        cursor = self._grants.find(query)
         cursor = cursor.sort([("createdAt", 1), ("_id", 1)])
         return await cursor.limit(RECURRING_GRANT_LIMIT).to_list(RECURRING_GRANT_LIMIT)
 

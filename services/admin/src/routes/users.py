@@ -25,7 +25,7 @@ from src.services.user_costs import (
 )
 from src.services.vie_api_client import (
     IDEMPOTENCY_KEY_PATTERN,
-    MAX_ADMIN_MINUTES,
+    MAX_ADMIN_TOKENS,
     OBJECT_ID_PATTERN,
     call_vie_api,
 )
@@ -75,11 +75,11 @@ class UserCostDetail(BaseModel):
 
 
 class GrantCreditRequest(BaseModel):
-    """Minutes to add to a user's account as a credit lot."""
+    """Tokens to add to a user's account as a credit lot."""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    minutes: int = Field(..., ge=1, le=MAX_ADMIN_MINUTES, description="Whole minutes of credit")
+    tokens: int = Field(..., ge=1, le=MAX_ADMIN_TOKENS, description="Whole tokens of credit")
     reason: str = Field(..., min_length=1, max_length=500)
     expiresAt: AwareDatetime | None = Field(
         None, description="ISO 8601 with an offset; absent or null = the lot never expires"
@@ -243,9 +243,9 @@ async def grant_credit(
         str | None, Header(alias="Idempotency-Key", pattern=IDEMPOTENCY_KEY_PATTERN)
     ] = None,
 ) -> dict:
-    """Grant minutes: a proxy to vie-api's ``POST /api/admin/billing/accounts/{id}/credits``.
+    """Grant tokens: a proxy to vie-api's ``POST /api/admin/billing/accounts/{id}/credits``.
 
-    vie-api is the only writer of the minutes ledger. It creates the credit lot,
+    vie-api is the only writer of the token ledger. It creates the credit lot (repaying debt first),
     stamps the ledger entry and the ``adminAudit`` row with the admin named by
     the signed session (never a body field) and the reason, and returns
     ``{before, after, lotId, auditId}``. Send a stable ``Idempotency-Key`` per
@@ -254,7 +254,7 @@ async def grant_credit(
     history now; nothing here writes it.
     """
     logger.info(
-        "credit_grant_requested", user_id=user_id, admin_id=actor.user_id, minutes=body.minutes
+        "credit_grant_requested", user_id=user_id, admin_id=actor.user_id, tokens=body.tokens
     )
     return await call_vie_api(
         "POST",

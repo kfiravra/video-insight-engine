@@ -18,8 +18,13 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-BillingBucket = Literal["free", "plan", "credit"]
-LedgerEntryType = Literal["grant", "hold", "debit", "release", "expire", "refund", "adjust"]
+# ``free`` appears only on minute entries written before the token migration.
+LedgerBucket = Literal["plan", "credit", "debt", "free"]
+LedgerEntryType = Literal[
+    "grant", "hold", "debit", "release", "expire", "refund", "adjust", "repay", "convert"
+]
+LedgerUnit = Literal["tokens", "minutes"]
+ExecutionKind = Literal["video", "chat", "library_chat", "action"]
 BillingSourceKind = Literal["run", "payment", "admin", "migration", "recurring", "system"]
 
 
@@ -29,10 +34,9 @@ class BillingSource(BaseModel):
 
 
 class AccountCaps(BaseModel):
-    """Admin overrides; ``None`` = use the plan default."""
+    """Admin overrides; ``None`` = no override."""
 
     maxVideoMinutes: int | None = None
-    freeVideosPerDay: int | None = None
     maxConcurrent: int | None = None
     blocked: bool | None = None
 
@@ -45,15 +49,7 @@ class BillingPlanState(BaseModel):
     periodEnd: str | None
 
 
-class FreeVideoState(BaseModel):
-    perWindow: int
-    usedInWindow: int
-    available: bool
-    nextFreeAt: str | None
-    maxVideoMinutes: int
-
-
-class PlanMinutesState(BaseModel):
+class PlanTokensState(BaseModel):
     cycleStart: str | None
     cycleEnd: str | None
     granted: int
@@ -70,9 +66,12 @@ class AccountSnapshot(BaseModel):
     ownerType: Literal["user", "team"]
     ownerId: str
     plan: BillingPlanState
-    free: FreeVideoState
-    planMinutes: PlanMinutesState
+    planTokens: PlanTokensState
     credits: CreditsState
+    # Tokens owed (>= 0); balance = plan remaining + credits - debt.
+    debt: int
+    balance: int
+    signupGrantAt: str | None
     caps: AccountCaps
     openHolds: int
     version: int
@@ -81,11 +80,10 @@ class AccountSnapshot(BaseModel):
 
 class LotSlice(BaseModel):
     lotId: str
-    minutes: int
+    tokens: int
 
 
 class BucketSplit(BaseModel):
-    free: int
     plan: int
     credit: int
     lots: list[LotSlice]
@@ -96,17 +94,17 @@ class HoldView(BaseModel):
     userId: str
     youtubeId: str | None
     durationSec: float
-    minutes: int
+    # The estimate held.
+    tokens: int
     split: BucketSplit
-    freeVideoAt: str | None
     planCycleStart: str | None
     createdAt: str
 
 
 class CreditLotView(BaseModel):
     lotId: str
-    minutesGranted: int
-    minutesRemaining: int
+    tokensGranted: int
+    tokensRemaining: int
     source: BillingSource
     priceUsdCents: int | None = None
     expiresAt: str | None
@@ -118,11 +116,16 @@ class LedgerEntryView(BaseModel):
     id: str
     userId: str
     type: LedgerEntryType
-    bucket: BillingBucket
-    minutes: int
+    bucket: LedgerBucket
+    # The amount in its unit: tokens, or minutes on pre-migration history rows.
+    unit: LedgerUnit
+    amount: int
+    mirrorsHold: bool | None = None
     lotId: str | None = None
     source: BillingSource
     idempotencyKey: str
+    executionKind: ExecutionKind | None = None
+    executionId: str | None = None
     youtubeId: str | None = None
     durationSec: float | None = None
     # Internal margin data (LLM $ of the run); fine for admins, never for users.
@@ -135,7 +138,7 @@ class LedgerEntryView(BaseModel):
 
 class RecurringGrantView(BaseModel):
     grantId: str
-    minutes: int
+    tokens: int
     every: Literal["month"]
     active: bool
     nextRunAt: str
@@ -148,7 +151,7 @@ class RecurringGrantView(BaseModel):
 
 
 class BillingAccountDetail(BaseModel):
-    """``AccountDetail`` plus the ledger cursor; ``account`` is ``None`` before the first video."""
+    """``AccountDetail`` plus the ledger cursor; ``account`` is None until vie-api creates it."""
 
     account: AccountSnapshot | None
     lots: list[CreditLotView]
