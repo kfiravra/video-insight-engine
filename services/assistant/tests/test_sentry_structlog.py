@@ -73,3 +73,27 @@ def test_should_send_the_stack_of_a_logged_exception(sentry_events):
 
     event = next(e for e in sentry_events if e.get("level") == "error")
     assert event["exception"]["values"][-1]["type"] == "RuntimeError"
+
+
+def test_should_keep_the_event_fields_out_of_sentry(sentry_events):
+    with redirect_stdout(io.StringIO()):
+        configure_structlog(json_format=True, service_name="vie-assistant")
+        get_logger("src.tools.navigator").error(
+            "navigator_search_failed", query="my private search"
+        )
+    sentry_sdk.flush()
+
+    event = next(e for e in sentry_events if e.get("level") == "error")
+    assert "my private search" not in repr(event)
+
+
+def test_should_leave_the_unhandled_error_line_to_the_asgi_integration(sentry_events):
+    with redirect_stdout(io.StringIO()):
+        configure_structlog(json_format=True, service_name="vie-assistant")
+        try:
+            raise RuntimeError("boom")
+        except RuntimeError:
+            get_logger(sentry_init.UNHANDLED_ERROR_LOGGER).exception("unhandled_error")
+    sentry_sdk.flush()
+
+    assert [e for e in sentry_events if e.get("level") == "error"] == []

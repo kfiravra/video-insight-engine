@@ -1,7 +1,7 @@
 {
   "id": null,
   "uid": "vie-chat",
-  "title": "vie · Chat",
+  "title": "vie \u00b7 Chat",
   "description": "Assistant chat turns from the chat_turn_finished log events (video and library surfaces). All windows are rolling 1h.",
   "tags": [
     "vie"
@@ -45,7 +45,7 @@
         "query": "prometheus",
         "current": {},
         "options": [],
-        "regex": "",
+        "regex": "/grafanacloud-.+-prom$/",
         "hide": 0,
         "includeAll": false,
         "multi": false,
@@ -59,7 +59,7 @@
         "query": "loki",
         "current": {},
         "options": [],
-        "regex": "",
+        "regex": "/grafanacloud-.+-logs$/",
         "hide": 0,
         "includeAll": false,
         "multi": false,

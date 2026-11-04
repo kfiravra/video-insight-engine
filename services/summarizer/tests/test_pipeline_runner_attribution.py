@@ -12,12 +12,12 @@ where the middleware's fresh UUID must not shadow the dispatching request's id.
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import structlog
 from llm_common.context import llm_request_id_var, llm_user_id_var
 
-from src.routes import pipeline_runner
+from src.routes import pipeline_runner, run_events
 
 _CACHED = {
     "status": "completed",
@@ -191,6 +191,90 @@ class TestRunIdsOnTheLedger:
 class TestRunEvents:
     """D12: one `pipeline_run_finished` line per attempt (and per cache hit) for Grafana."""
 
+    @staticmethod
+    def _finished(events: MagicMock) -> dict[str, Any]:
+        calls = [c for c in events.info.call_args_list if c.args[0] == "pipeline_run_finished"]
+        assert len(calls) == 1
+        return calls[0].kwargs
+
+    async def _run(self, entry: dict[str, Any], phases, events: MagicMock) -> list[str]:
+        """Drive a registered attempt with every phase and side effect stubbed."""
+        from contextlib import asynccontextmanager
+
+        from llm_common.observability import trace_id_for_run
+
+        from src.services.pipeline.run_registry import RunIdentity
+
+        run = RunIdentity(run_id="run-full-1", trace_id=trace_id_for_run("run-full-1"), attempt=1)
+
+        @asynccontextmanager
+        async def no_trace(**_kwargs):
+            yield None
+
+        with (
+            patch.object(run_events, "_events", events),
+            patch.object(pipeline_runner.settings, "REDIS_ENABLED", False),
+            patch.object(pipeline_runner, "_register_run", AsyncMock(return_value=run)),
+            patch.object(pipeline_runner, "run_trace", no_trace),
+            patch.object(pipeline_runner, "_mark_processing", AsyncMock()),
+            patch.object(pipeline_runner, "PipelineContext", MagicMock()),
+            patch.object(pipeline_runner, "LocalLowresSource", MagicMock()),
+            patch.object(pipeline_runner, "LocalHiresSource", MagicMock()),
+            patch.object(pipeline_runner, "run_pipeline_phases", phases),
+            patch.object(pipeline_runner, "send_video_status", AsyncMock()),
+            patch.object(pipeline_runner, "clear_override", MagicMock()),
+        ):
+            return [
+                ev
+                async for ev in pipeline_runner.stream_summarization(
+                    "vsum_attr", entry, MagicMock(), MagicMock(), run_path="worker"
+                )
+            ]
+
+    async def test_should_report_a_completed_run_after_its_start(self):
+        events = MagicMock()
+
+        async def phases(*_args):
+            yield "data: {}\n\n"
+
+        await self._run(_entry(), phases, events)
+
+        names = [c.args[0] for c in events.info.call_args_list]
+        assert names == ["pipeline_run_started", "pipeline_run_finished"]
+        fields = self._finished(events)
+        assert (fields["status"], fields["run_id"], fields["path"], fields["error_code"]) == (
+            "completed",
+            "run-full-1",
+            "worker",
+            None,
+        )
+
+    async def test_should_report_a_failed_run_with_its_error_code(self):
+        events = MagicMock()
+
+        async def phases(*_args):
+            raise RuntimeError("extraction blew up")
+            yield  # pragma: no cover — makes this an async generator
+
+        await self._run(_entry(), phases, events)
+
+        fields = self._finished(events)
+        assert fields["status"] == "failed"
+        assert fields["error_code"]
+
+    async def test_should_write_no_run_event_when_the_run_fails_before_registering(self):
+        events = MagicMock()
+
+        async def phases(*_args):
+            yield "data: {}\n\n"  # pragma: no cover
+
+        with patch.object(
+            pipeline_runner, "_bind_usage_context", MagicMock(side_effect=RuntimeError("mongo"))
+        ):
+            await self._run(_entry(), phases, events)
+
+        events.info.assert_not_called()
+
     async def test_should_report_a_cache_hit_as_a_finished_cache_hit(self):
         events = MagicMock()
 
@@ -201,7 +285,7 @@ class TestRunEvents:
             yield "data: {}\n\n"
 
         with (
-            patch.object(pipeline_runner, "_events", events),
+            patch.object(run_events, "_events", events),
             patch.object(pipeline_runner.response_cache, "get_response", new=fake_get_response),
             patch.object(pipeline_runner, "_stream_cached_structured", new=stream),
             patch.object(pipeline_runner.settings, "REDIS_ENABLED", True),
@@ -213,9 +297,7 @@ class TestRunEvents:
                 )
             ]
 
-        names = [c.args[0] for c in events.info.call_args_list]
-        assert names == ["pipeline_run_finished"]
-        fields = events.info.call_args.kwargs
+        fields = self._finished(events)
         assert (fields["status"], fields["cache_hit"], fields["run_id"]) == (
             "cache_hit",
             True,
@@ -225,7 +307,7 @@ class TestRunEvents:
 
     async def test_should_write_no_run_event_when_the_row_has_no_video(self):
         events = MagicMock()
-        with patch.object(pipeline_runner, "_events", events):
+        with patch.object(run_events, "_events", events):
             _ = [
                 ev
                 async for ev in pipeline_runner.stream_summarization(
@@ -244,8 +326,8 @@ class TestRunEvents:
         run = RunIdentity(
             run_id="run-s1", trace_id=trace_id_for_run("run-s1"), attempt=2, retry_of="run-s0"
         )
-        with patch.object(pipeline_runner, "_events", events):
-            pipeline_runner._log_run_started(
+        with patch.object(run_events, "_events", events):
+            run_events.log_run_started(
                 run, video_summary_id="vs-1", youtube_id="yt-1", run_path="worker", bypass=True
             )
 
@@ -260,11 +342,12 @@ class TestRunEvents:
             "retry_of": "run-s0",
         }
 
-    def test_should_report_the_error_code_when_a_run_fails(self):
+    def test_should_round_the_duration_to_milliseconds(self):
         events = MagicMock()
-        with patch.object(pipeline_runner, "_events", events):
-            pipeline_runner._log_run_finished(
+        with patch.object(run_events, "_events", events):
+            run_events.log_run_finished(
                 "failed",
+                run_id="run-f1",
                 video_summary_id="vs-1",
                 youtube_id="yt-1",
                 duration_s=12.3456,
@@ -273,13 +356,7 @@ class TestRunEvents:
             )
 
         fields = events.info.call_args.kwargs
-        assert (
-            fields["status"],
-            fields["cache_hit"],
-            fields["duration_ms"],
-            fields["error_code"],
-        ) == (
-            "failed",
+        assert (fields["cache_hit"], fields["duration_ms"], fields["error_code"]) == (
             False,
             12345,
             "TRANSCRIPT_UNAVAILABLE",

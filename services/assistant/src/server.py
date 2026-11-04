@@ -10,6 +10,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from llm_common.context import bind_usage_ids, llm_feature_var, llm_session_id_var
+from llm_common.sentry_init import UNHANDLED_ERROR_LOGGER
 from llm_common.middleware import (
     REQUEST_ID_HEADER,
     add_request_context_middleware,
@@ -80,7 +81,8 @@ def create_app() -> FastAPI:
 
     @application.exception_handler(Exception)
     async def generic_error_handler(_request: Request, exc: Exception) -> JSONResponse:
-        logger.exception("unhandled_error", error=str(exc))
+        # Sentry ignores this logger: its ASGI integration reports the exception as unhandled.
+        get_logger(UNHANDLED_ERROR_LOGGER).exception("unhandled_error", error=str(exc))
         return JSONResponse(
             status_code=500,
             content={"error": "Internal server error", "code": "INTERNAL_ERROR"},

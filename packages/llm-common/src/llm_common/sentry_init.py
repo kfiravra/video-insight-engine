@@ -38,6 +38,9 @@ except ImportError:
     _SDK_AVAILABLE = False
 
 
+# The logger an app's catch-all exception handler writes to (see init_sentry).
+UNHANDLED_ERROR_LOGGER = "vie.unhandled"
+
 # ─── scrub: BEGIN (vendored verbatim into services/admin/src/sentry_scrub.py; the
 # admin's identity test fails on any drift, so change both in one commit) ───
 _SENSITIVE_HEADERS = frozenset(
@@ -257,6 +260,12 @@ def init_sentry(
             send_default_pii=False,
         )
         sentry_sdk.set_tag("service", service)
+        # The app's own "unhandled error" log line: the ASGI integration captures
+        # the exception itself, as unhandled; a logging event first would make
+        # Dedupe keep the handled copy.
+        from sentry_sdk.integrations.logging import ignore_logger
+
+        ignore_logger(UNHANDLED_ERROR_LOGGER)
         logger.info(
             "sentry_initialized environment=%s release=%s service=%s",
             environment,
@@ -376,9 +385,14 @@ def pipeline_stage_transaction(stage: str, **tags: str | None) -> StageTransacti
         # filtered alongside Sentry events emitted during the same job.
         bound = structlog.contextvars.get_contextvars()
         if isinstance(bound, dict):
-            rid = bound.get("request_id")
-            if isinstance(rid, str):
-                transaction.set_tag("requestId", rid)
+            for bound_key, tag in (
+                ("request_id", "requestId"),
+                ("run_id", "runId"),
+                ("session_id", "sessionId"),
+            ):
+                value = bound.get(bound_key)
+                if isinstance(value, str) and value:
+                    transaction.set_tag(tag, value)
         return transaction
     except Exception as exc:  # noqa: BLE001
         logger.debug("sentry_start_transaction_failed: %s", exc)

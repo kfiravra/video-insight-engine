@@ -26,9 +26,11 @@ import structlog
 from structlog.types import EventDict, Processor, WrappedLogger
 
 # The record attribute that carries structlog's event dict to the formatter.
-# Public on purpose: Sentry's logging integration copies non-underscore record
-# attributes into the event's ``extra``, so an error keeps its fields there.
-EVENT_DICT_ATTR = "vie_event"
+# Private on purpose: Sentry's logging integration copies only non-underscore
+# record attributes into events and breadcrumbs, and an event's fields (bound
+# user ids, search text) must not ship there; Sentry gets the event name, the
+# level, the stack and the scrubbed id tags.
+EVENT_DICT_ATTR = "_vie_event"
 # Marks the root handler this module installs, so a reconfiguration replaces it
 # instead of stacking a second one.
 _HANDLER_MARK = "_vie_structlog_handler"

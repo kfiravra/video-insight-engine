@@ -1,7 +1,7 @@
 {
   "id": null,
   "uid": "vie-box",
-  "title": "vie · Box",
+  "title": "vie \u00b7 Box",
   "description": "The single EC2/dev box: host, per-container resources, restarts and error logs. Source: Alloy (node exporter + cAdvisor + Loki).",
   "tags": [
     "vie"
@@ -45,7 +45,7 @@
         "query": "prometheus",
         "current": {},
         "options": [],
-        "regex": "",
+        "regex": "/grafanacloud-.+-prom$/",
         "hide": 0,
         "includeAll": false,
         "multi": false,
@@ -59,7 +59,7 @@
         "query": "loki",
         "current": {},
         "options": [],
-        "regex": "",
+        "regex": "/grafanacloud-.+-logs$/",
         "hide": 0,
         "includeAll": false,
         "multi": false,
@@ -418,8 +418,8 @@
             "type": "prometheus",
             "uid": "${prom}"
           },
-          "expr": "sum(rate(node_network_receive_bytes_total{environment=\"$env\"}[5m]))",
-          "legendFormat": "",
+          "expr": "sum(rate(container_network_receive_bytes_total{environment=\"$env\", name=~\"vie-.+\"}[5m]))",
+          "legendFormat": "in",
           "editorMode": "code",
           "range": true,
           "instant": false
@@ -483,8 +483,8 @@
             "type": "prometheus",
             "uid": "${prom}"
           },
-          "expr": "sum(rate(node_network_transmit_bytes_total{environment=\"$env\"}[5m]))",
-          "legendFormat": "",
+          "expr": "sum(rate(container_network_transmit_bytes_total{environment=\"$env\", name=~\"vie-.+\"}[5m]))",
+          "legendFormat": "out",
           "editorMode": "code",
           "range": true,
           "instant": false
@@ -1013,7 +1013,7 @@
             "type": "prometheus",
             "uid": "${prom}"
           },
-          "expr": "sum(rate(node_network_receive_bytes_total{environment=\"$env\"}[5m]))",
+          "expr": "sum(rate(container_network_receive_bytes_total{environment=\"$env\", name=~\"vie-.+\"}[5m]))",
           "legendFormat": "in",
           "editorMode": "code",
           "range": true,
@@ -1025,7 +1025,7 @@
             "type": "prometheus",
             "uid": "${prom}"
           },
-          "expr": "sum(rate(node_network_transmit_bytes_total{environment=\"$env\"}[5m]))",
+          "expr": "sum(rate(container_network_transmit_bytes_total{environment=\"$env\", name=~\"vie-.+\"}[5m]))",
           "legendFormat": "out",
           "editorMode": "code",
           "range": true,
@@ -2109,6 +2109,47 @@
         "x": 0,
         "y": 65
       }
+    },
+    {
+      "id": 25,
+      "type": "timeseries",
+      "title": "Disk used per container (writable layer + volumes cAdvisor sees)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${prom}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 77
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "expr": "sum by (name) (container_fs_usage_bytes{environment=\"$env\", name=~\"vie-.+\"})",
+          "legendFormat": "{{name}}"
+        }
+      ]
     }
   ]
 }

@@ -1,7 +1,7 @@
 {
   "id": null,
   "uid": "vie-pipeline",
-  "title": "vie · Pipeline",
+  "title": "vie \u00b7 Pipeline",
   "description": "Video pipeline throughput, latency and failures from the pipeline_run_finished log events, plus the RabbitMQ job and dead-letter queues. All windows are rolling 1h.",
   "tags": [
     "vie"
@@ -45,7 +45,7 @@
         "query": "prometheus",
         "current": {},
         "options": [],
-        "regex": "",
+        "regex": "/grafanacloud-.+-prom$/",
         "hide": 0,
         "includeAll": false,
         "multi": false,
@@ -59,7 +59,7 @@
         "query": "loki",
         "current": {},
         "options": [],
-        "regex": "",
+        "regex": "/grafanacloud-.+-logs$/",
         "hide": 0,
         "includeAll": false,
         "multi": false,

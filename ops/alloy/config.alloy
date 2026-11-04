@@ -89,19 +89,18 @@ prometheus.exporter.unix "host" {
   procfs_path = "/proc"
   sysfs_path  = "/sys"
 
-  set_collectors = ["cpu", "filesystem", "loadavg", "meminfo", "netdev", "uname"]
+  // No netdev: /proc/net follows the reader's network namespace, and Alloy sits on
+  // vie-network, so it would count its own eth0. The box's traffic is the sum of
+  // the containers' (cAdvisor reads each container's namespace).
+  set_collectors = ["cpu", "filesystem", "loadavg", "meminfo", "uname"]
 
   filesystem {
     fs_types_exclude     = "^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tmpfs|tracefs)$"
     mount_points_exclude = "^/(dev|proc|run|sys|var/lib/docker/.+)($|/)"
   }
-
-  netdev {
-    device_exclude = "^(veth.*|br-.*|docker0|lo)$"
-  }
 }
 
-// Per-container CPU, memory, network and start time (restarts) from the docker socket.
+// Per-container CPU, memory, disk, network and start time (restarts) from the docker socket.
 prometheus.exporter.cadvisor "containers" {
   docker_host      = "unix:///var/run/docker.sock"
   docker_only      = true
@@ -138,7 +137,7 @@ prometheus.relabel "keep" {
   rule {
     action        = "keep"
     source_labels = ["__name__"]
-    regex         = "up|node_cpu_seconds_total|node_load(1|5|15)|node_memory_(MemTotal|MemAvailable)_bytes|node_filesystem_(size|avail)_bytes|node_network_(receive|transmit)_bytes_total|node_uname_info|container_cpu_usage_seconds_total|container_memory_working_set_bytes|container_spec_memory_limit_bytes|container_network_(receive|transmit)_bytes_total|container_start_time_seconds|container_last_seen|rabbitmq_detailed_queue_messages(_ready|_unacked)?|rabbitmq_detailed_queue_consumers"
+    regex         = "up|node_cpu_seconds_total|node_load(1|5|15)|node_memory_(MemTotal|MemAvailable)_bytes|node_filesystem_(size|avail)_bytes|node_uname_info|container_cpu_usage_seconds_total|container_fs_usage_bytes|container_memory_working_set_bytes|container_spec_memory_limit_bytes|container_network_(receive|transmit)_bytes_total|container_start_time_seconds|container_last_seen|rabbitmq_detailed_queue_messages(_ready|_unacked)?|rabbitmq_detailed_queue_consumers"
   }
 
   // cAdvisor: keep the vie-* containers only (drops the root cgroup and system slices).
