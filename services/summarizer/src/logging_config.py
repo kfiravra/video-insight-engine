@@ -60,6 +60,15 @@ _NOISY_LOGGERS = (
 )
 
 
+# The ``service`` every log line of this process carries; set by configure_structlog.
+_SERVICE_NAME = "vie-summarizer"
+
+
+def configured_service_name() -> str:
+    """The process's log service name: ``vie-summarizer`` or ``vie-summarizer-worker``."""
+    return _SERVICE_NAME
+
+
 def configure_structlog(json_format: bool = False, service_name: str = "vie-summarizer") -> None:
     """
     Configure structlog and stdlib logging for the process (``llm_common.logging_setup``).
@@ -77,6 +86,8 @@ def configure_structlog(json_format: bool = False, service_name: str = "vie-summ
             consumers can tell the SSE-driving FastAPI process apart from the
             queue-driven worker.
     """
+    global _SERVICE_NAME
+    _SERVICE_NAME = service_name
     configure_logging(
         service_name=service_name,
         json_format=json_format,

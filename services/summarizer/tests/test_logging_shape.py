@@ -18,7 +18,8 @@ from contextlib import redirect_stdout
 import pytest
 import structlog
 
-from src.logging_config import configure_structlog, get_logger
+from src import logging_config
+from src.logging_config import configure_structlog, configured_service_name, get_logger
 
 
 @pytest.fixture(autouse=True)
@@ -28,10 +29,12 @@ def _isolate_structlog():
     root = logging.getLogger()
     saved_handlers = list(root.handlers)
     saved_level = root.level
+    saved_service = logging_config._SERVICE_NAME
     yield
     structlog.contextvars.clear_contextvars()
     root.handlers = saved_handlers
     root.level = saved_level
+    logging_config._SERVICE_NAME = saved_service
 
 
 def _emit_and_capture(service_name: str, msg: str, **bound) -> dict:
@@ -52,6 +55,12 @@ def _emit_and_capture(service_name: str, msg: str, **bound) -> dict:
 def test_log_line_includes_service_field():
     payload = _emit_and_capture("vie-summarizer-test", "ping")
     assert payload["service"] == "vie-summarizer-test"
+
+
+def test_should_expose_the_configured_service_name_for_alerts():
+    _emit_and_capture("vie-summarizer-worker", "ping")
+
+    assert configured_service_name() == "vie-summarizer-worker"
 
 
 def test_log_line_includes_request_id_when_bound():

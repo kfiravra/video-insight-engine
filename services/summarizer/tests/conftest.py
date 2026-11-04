@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from src.config import settings as _settings
 from src.models.schemas import ProcessingStatus, ErrorCode
 from src.services.media import download_utils as _download_utils
+from src.services.media import proxy_exit_alert as _proxy_exit_alert
 
 # Names of every per-stage override on the Settings object. Tests never want
 # these to fire — they would wrap a MagicMock with a real ``LLMService`` and
@@ -61,6 +62,15 @@ def _fresh_exit_memory(monkeypatch):
     The exit bookkeeping (download_utils._ExitMemory) is per-process state.
     """
     monkeypatch.setattr(_download_utils, "_EXIT_MEMORY", _download_utils._ExitMemory())
+
+
+@pytest.fixture(autouse=True)
+def _no_bench_alert_delivery(monkeypatch):
+    """Benching most of a test pool (routine in the rotation tests) never posts or writes an alert.
+
+    ``tests/test_proxy_bench_alert.py`` records the alerts instead.
+    """
+    monkeypatch.setattr(_proxy_exit_alert, "_deliver", lambda alert: None)
 
 
 # Every LiteLLM callback list a call copies ``litellm.callbacks`` into
