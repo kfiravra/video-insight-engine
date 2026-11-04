@@ -64,8 +64,9 @@ Registered in:
 | GET | `/usage/by-model` | Cost per model, sorted desc |
 | GET | `/usage/by-service` | Cost per service |
 | GET | `/usage/by-video` | Top videos by total cost (latest cache version only — `isLatest` lookup avoids duplicate rows from versioned/dedup'd docs) |
-| GET | `/usage/by-run` | Pipeline runs grouped by `request_id`, newest first; each run carries `regen_ordinal` (1 = first run, 2+ = regeneration), a best-effort `langfuse_url` (direct trace deep-link, null when unconfigured/unresolvable), `degraded` + `degraded_reasons` from the run's videoSummaryCache row (`partial_extraction`, `media_download_failed` — the runs panel badge reads `degraded · partial` / `degraded · media`), and child calls. Paginated (`days`, `limit`, `offset`). Rows missing `request_id` → "unattributed (legacy)" bucket |
-| GET | `/usage/video/{video_id}` | Per-video feature breakdown |
+| GET | `/usage/by-run` | Pipeline attempts (D10): the summarizer's rows grouped by `run_id`, newest first; rows from before P1 (no `run_id`) group by `request_id`, rows with neither → the "unattributed (legacy)" bucket. Optional `video_id` (a YouTube id) narrows to one video. Each run carries `run_id`, `request_id`, `regen_ordinal` (1 = first run, 2+ = regeneration, within the window), the attempt's `runs[]` entry fields `attempt`, `pipeline_version`, `bypass`, `path` (`worker`/`sse`/`dev`), `status`, `retry_of` (the ledger's own `attempt`/`pipeline_version`/`bypass` as the fallback), `langfuse_url` (the attempt's trace, from the entry's stored `traceId`, else the rows' `trace_id`; a legacy row links the newest entry with its request id), `session_url` (the row's Langfuse session `pipeline-<videoSummaryId>`), `degraded` + `degraded_reasons` from the videoSummaryCache row (`partial_extraction`, `media_download_failed` — the runs panel badge reads `degraded · partial` / `degraded · media`), and its calls (≤ 50). Paginated (`days`, `limit`, `offset`); cached 30 s |
+| GET | `/usage/by-session` | Chat sessions (D10): the assistant's rows grouped by `session_id` (the web's `X-Session-Id`), newest activity first; rows from before P1 share the `session_id: null` bucket. Each session: `user_id`, `video_summary_id` (null for the library chat), `turns` (distinct gateway requests: chat turns and the actions they sent), `tool_llm_calls` (LLM calls made inside tools; a tool that calls no model, like `create_folder`, is not in the ledger), `call_count`, `total_cost_usd`, `first_call`/`last_call`, `langfuse_url` (the Langfuse session `chat-<session_id>`). Paginated (`days`, `limit`, `offset`); cached 30 s |
+| GET | `/usage/video/{video_id}` | One video (its YouTube id): metadata, summary, feature breakdown, and `runs` — its pipeline attempts with their calls, as `/usage/by-run?video_id=` returns them (90 days, ≤ 50). `?flat=1` adds the old flat `calls` list (the newest 50 rows of every service) for one release |
 | GET | `/usage/anomalies` | Expensive calls above threshold |
 | GET | `/usage/recent` | Cursor-based pagination (before_id) |
 | GET | `/usage/duplicates` | Group by prompt_hash, find duplicates |
@@ -346,7 +347,7 @@ ALERT_COST_THRESHOLD_USD=0.50
 ALERT_DAILY_COST_THRESHOLD_USD=20
 # Langfuse — only to build "Open in Langfuse" run deep-links from the trace ids
 # stored on videoSummaryCache.runs[] (no Langfuse API call, no keys).
-# LANGFUSE_PROJECT_ID is required for links: blank → /usage/by-run returns langfuse_url=null.
+# LANGFUSE_PROJECT_ID is required for links: blank → /usage/by-run and /usage/by-session return null links.
 LANGFUSE_BASE_URL=https://cloud.langfuse.com
 LANGFUSE_PROJECT_ID=
 ```
