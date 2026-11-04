@@ -6,6 +6,7 @@ import logging
 import httpx
 
 from src.config import settings
+from src.services.run_context import current_run_id
 
 logger = logging.getLogger(__name__)
 
@@ -22,12 +23,16 @@ async def send_video_status(
     message: str | None = None,
     error: str | None = None,
     cache_hit: bool = False,
+    run_id: str | None = None,
 ):
     """Send video status update to API for WebSocket broadcast.
 
     ``cache_hit`` marks a ``completed`` that was served from the response
     cache with no run: vie-api releases the run's token hold as cached (I3).
+    ``run_id`` (default: the attempt bound in this context) lets vie-api close
+    that attempt's ``runs[]`` entry on a terminal status (P0b).
     """
+    run_id = run_id or current_run_id()
     try:
         async with httpx.AsyncClient() as client:
             payload = {
@@ -48,6 +53,8 @@ async def send_video_status(
                 payload["payload"]["error"] = error
             if cache_hit:
                 payload["payload"]["cacheHit"] = True
+            if run_id:
+                payload["payload"]["runId"] = run_id
 
             await client.post(
                 f"{settings.API_URL}/internal/status",

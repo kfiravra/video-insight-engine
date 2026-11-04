@@ -25,6 +25,10 @@ export interface PublishVideoJobInput {
   providers?: ProviderConfig;
   bypassCache?: boolean;
   requestId?: string;
+  /** The dispatch's run id and the pipeline version it runs (P0b). */
+  runId?: string;
+  pipelineVersion?: string;
+  chatSessionId?: string;
   /** Override for retry / replay paths. Defaults to 1. */
   attempt?: number;
 }
@@ -54,6 +58,9 @@ export class QueuePublisher {
       providers: input.providers ?? null,
       bypassCache: input.bypassCache ?? false,
       requestId: input.requestId ?? randomUUID(),
+      runId: input.runId,
+      pipelineVersion: input.pipelineVersion,
+      chatSessionId: input.chatSessionId,
       attempt: input.attempt ?? 1,
       createdAt: new Date().toISOString(),
     });

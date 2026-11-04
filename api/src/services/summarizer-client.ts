@@ -28,6 +28,12 @@ export interface SummarizeRequest {
    * structlog contextvars and Langfuse trace tags.
    */
   requestId?: string;
+  /** This attempt's run id (P0b); the summarizer stores it as the row's `currentRunId`. */
+  runId?: string;
+  pipelineVersion?: string;
+  bypassCache?: boolean;
+  /** P1 (D8): the chat session that asked for the run; no producer yet. */
+  chatSessionId?: string;
 }
 
 export interface PurgeVideoRequest {

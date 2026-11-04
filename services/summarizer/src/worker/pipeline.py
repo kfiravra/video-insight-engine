@@ -106,6 +106,7 @@ async def drive_pipeline(payload: VideoJobPayload) -> None:
     """
     # Import here to keep cold-start fast and avoid circular imports.
     from src.routes.pipeline_broker import produce_to_broker
+    from src.services.pipeline.run_registry import RunDispatch
 
     video_summary_id = payload.video_summary_id
     # FastAPI's Depends() doesn't run outside HTTP requests, so build the
@@ -146,6 +147,11 @@ async def drive_pipeline(payload: VideoJobPayload) -> None:
             owner,
             force_refresh=payload.bypass_cache,
             run_path="worker",
+            dispatch=RunDispatch(
+                run_id=payload.run_id,
+                attempt=payload.attempt,
+                chat_session_id=payload.chat_session_id,
+            ),
         )
     finally:
         await asyncio.to_thread(clear_override, video_summary_id)

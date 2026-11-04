@@ -95,6 +95,18 @@ describe('SummarizerClient', () => {
       });
     });
 
+    describe('run ids (P0b)', () => {
+      it('should send the run id, pipeline version and bypass flag in the body when given', async () => {
+        mockFetch.mockResolvedValueOnce({ ok: true });
+
+        client.triggerSummarization({ ...baseRequest, runId: 'run-h-1', pipelineVersion: 'v11', bypassCache: true });
+        await new Promise(resolve => setImmediate(resolve));
+
+        const body = JSON.parse(mockFetch.mock.calls[0][1].body as string);
+        expect([body.runId, body.pipelineVersion, body.bypassCache]).toEqual(['run-h-1', 'v11', true]);
+      });
+    });
+
     describe('retry logic', () => {
       beforeEach(() => {
         vi.useFakeTimers({ shouldAdvanceTime: true });

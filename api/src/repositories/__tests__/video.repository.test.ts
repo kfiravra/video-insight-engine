@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import { MongoClient, Db, ObjectId } from 'mongodb';
 import {
+  RUNS_KEPT,
   VideoRepository,
   type CreateVideoSummaryData,
 } from '../video.repository.js';
@@ -311,6 +312,55 @@ describe('VideoRepository', () => {
       await repo.stampDispatchContext(id, 'user-b', 'req-b');
 
       expect(await rowOf(id)).not.toHaveProperty('billingRunId');
+    });
+
+    const run = (runId: string) => ({ runId, traceId: `t-${runId}`, pipelineVersion: 'v11', bypass: false });
+
+    it('should set currentRunId and push a dispatched runs entry when given a run (P0b)', async () => {
+      const id = await seedRow('stamp-runs');
+
+      await repo.stampDispatchContext(id, 'user-a', 'req-a', 'bill-a', run('r1'));
+
+      const row = await rowOf(id);
+      expect(row?.currentRunId).toBe('r1');
+      expect(row?.runs).toEqual([
+        expect.objectContaining({
+          runId: 'r1', traceId: 't-r1', requestId: 'req-a', userId: 'user-a', attempt: 1,
+          pipelineVersion: 'v11', bypass: false, status: 'dispatched', dispatchedAt: expect.any(Date),
+        }),
+      ]);
+      expect(row?.billingRunId).toBe('bill-a');
+    });
+
+    it('should keep only the newest RUNS_KEPT entries when dispatched many times', async () => {
+      const id = await seedRow('stamp-runs-cap');
+      for (let i = 0; i < RUNS_KEPT + 2; i += 1) {
+        await repo.stampDispatchContext(id, 'user-a', undefined, undefined, run(`r${i}`));
+      }
+
+      const runs = (await rowOf(id))?.runs as { runId: string }[];
+      expect(runs).toHaveLength(RUNS_KEPT);
+      expect([runs[0].runId, runs.at(-1)?.runId]).toEqual(['r2', `r${RUNS_KEPT + 1}`]);
+    });
+
+    it('should close only the matching runs entry when its terminal status arrives', async () => {
+      const id = await seedRow('close-run');
+      await repo.stampDispatchContext(id, 'user-a', undefined, undefined, run('old'));
+      await repo.stampDispatchContext(id, 'user-a', undefined, undefined, run('new'));
+
+      await repo.closeRun(id, 'old', 'failed');
+
+      const runs = (await rowOf(id))?.runs as { runId: string; status: string; endedAt?: Date }[];
+      expect(runs.map(r => [r.runId, r.status])).toEqual([['old', 'failed'], ['new', 'dispatched']]);
+      expect(runs[0].endedAt).toBeInstanceOf(Date);
+    });
+
+    it('should do nothing when closing a run the row does not hold', async () => {
+      const id = await seedRow('close-run-missing');
+
+      await repo.closeRun(id, 'nope', 'completed');
+
+      expect(await rowOf(id)).not.toHaveProperty('runs');
     });
 
     it('should not change updatedAt (the stall sweeper reads it as liveness)', async () => {

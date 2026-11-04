@@ -1,33 +1,40 @@
-"""Langfuse I/O for the golden eval (public REST API over httpx).
+"""Langfuse I/O for the golden eval (Langfuse SDK v4 public-API client).
 
-Reads: per video, the pipeline trace ``pipeline:<videoSummaryId>`` created
-after the eval's POST, then its ``faithfulness`` score and its
-``tier_probe`` generation output (for the ``expectedFormat`` assertion).
-Every read goes through ``ReadPacer`` — Langfuse Cloud throttles the public
-read API hard (2026-10-07: 4 reads in 3 s, then 429 for > 30 s, which cost a
-baseline pass 16/18 faithfulness values).
+Reads: per video, its pipeline trace, then the trace's ``faithfulness`` score
+and its ``tier_probe`` generation output (for the ``expectedFormat``
+assertion). The trace id comes from the submit response (``traceId`` =
+``sha256(runId)`` hex, first 32 chars, P0b); a report from before P0b only has
+the videoSummaryId, so its trace is found by the trace name
+``pipeline:<videoSummaryId>`` (SDK v2 and P0a traces alike). Reads use the
+non-deprecated endpoints only:
+``api.observations.get_many`` (v2 observations) and
+``api.scores_v3.get_many_v3`` (v3 scores). Every read goes through
+``ReadPacer``: Langfuse Cloud throttles the public read API hard (2026-10-07:
+4 reads in 3 s, then 429 for > 30 s, which cost a baseline pass 16/18
+faithfulness values), so the SDK's own retries are off and the pacer owns them.
 
 Writes (``--publish-run``): one dataset run item per golden entry in the
 ``vie-golden-v1`` dataset, linked to that entry's pipeline trace, plus the
 eval's own metrics as ``golden.*`` scores on the same trace. A run item
-without a trace is rejected by Langfuse, so entries whose trace was not
-found are skipped with a warning.
+without a trace is rejected by Langfuse, so entries whose trace was not found
+are skipped with a warning.
 
-The REST API is used instead of the SDK so the eval needs no Langfuse SDK
-on the runner (the SDK's dataset-run method differs between v2 and v3).
+The SDK is imported lazily, so ``--dry-run`` imports this module without it.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
-from typing import Any
+from typing import Any, TypeVar
 
 import httpx
 from _eval_assertions import TraceSignals
@@ -35,25 +42,30 @@ from _eval_metrics import extract_faithfulness, extract_probe_format
 
 logger = logging.getLogger("run_eval.langfuse")
 
+T = TypeVar("T")
+
 _DEFAULT_HOST = "https://cloud.langfuse.com"
-# Scores land up to ~25 s after the pipeline ends (bounded faithfulness
-# drain) and Langfuse ingestion is asynchronous, so the read-back retries.
+# Re-poll rounds for a trace whose faithfulness score has not landed yet (the
+# judge runs in the background after the pipeline's response).
 SIGNAL_ROUNDS = 5
 SIGNAL_ROUND_WAIT_S = 30.0
-# Tolerates clock skew between the runner and the prod box.
+# The name lookup (pre-P0b reports) starts this long before the recorded submit.
 _SINCE_SKEW = timedelta(minutes=2)
-
-# Read pacing: one read in flight, starts ≥ READ_SPACING_S apart (≤ 30/min).
+# Read pacing: one read at a time, spaced, so the eval stays under the
+# public API's rate limit instead of tripping it.
 READ_CONCURRENCY = 1
 READ_SPACING_S = 2.0
-# 429 / 5xx retry: honour Retry-After, else exponential from RETRY_BASE_S
-# (capped at RETRY_MAX_WAIT_S); a read gives up after RETRY_ATTEMPTS or when
-# the pacer's total backoff budget is spent — then it fails and stays None.
+# Retry of a throttled / failed read: Retry-After when given, else exponential
+# backoff from RETRY_BASE_S capped at RETRY_MAX_WAIT_S; at most RETRY_ATTEMPTS
+# tries and BACKOFF_BUDGET_S of waiting in total per pacer.
 RETRY_ATTEMPTS = 6
 RETRY_BASE_S = 5.0
 RETRY_MAX_WAIT_S = 60.0
 BACKOFF_BUDGET_S = 900.0
 _RETRYABLE = frozenset({429, 500, 502, 503, 504})
+# The pacer owns retries; the SDK's own (2 by default) would spend the quota twice.
+_NO_SDK_RETRY: dict[str, Any] = {"max_retries": 0}
+_OBSERVATION_FIELDS = "basic,io"
 
 
 @dataclass(frozen=True)
@@ -75,9 +87,11 @@ class LangfuseConfig:
 @dataclass(frozen=True)
 class TraceTarget:
     video_summary_id: str
-    # None (a report row from before submittedAt was recorded): search by
-    # name only — every bypassCache run has its own videoSummaryId anyway.
+    # None (a report row from before submittedAt was recorded): the name lookup
+    # has no time bound — every bypassCache run has its own videoSummaryId anyway.
     submitted_at: datetime | None
+    # The run's trace id from the submit response (P0b); None on older reports.
+    trace_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -88,16 +102,39 @@ class RunItem:
     scores: dict[str, float | None] = field(default_factory=dict)
 
 
-def make_client(config: LangfuseConfig) -> httpx.AsyncClient:
-    return httpx.AsyncClient(
-        base_url=config.host, auth=(config.public_key, config.secret_key), timeout=30.0
+def _api_error() -> type[Exception]:
+    """The SDK's HTTP error class (``status_code``, ``headers``), imported lazily."""
+    from langfuse.api.core.api_error import ApiError
+
+    return ApiError
+
+
+@asynccontextmanager
+async def make_client(config: LangfuseConfig) -> AsyncIterator[Any]:
+    """The v4 SDK client; on exit ``flush`` sends the queued ``golden.*`` scores.
+
+    Tracing stays enabled: the SDK drops ``create_score`` calls otherwise. The
+    eval opens no spans of its own. Never ``shutdown`` here: the SDK keeps one
+    resource manager per public key and hands the same (dead) one to the next
+    client, so the eval's second ``make_client`` (``--publish-run`` after the
+    reads) would queue scores nothing sends and hang on exit. The SDK shuts
+    itself down at interpreter exit (``atexit``).
+    """
+    from langfuse import Langfuse
+
+    client = Langfuse(
+        public_key=config.public_key, secret_key=config.secret_key, base_url=config.host
     )
+    try:
+        yield client
+    finally:
+        await asyncio.to_thread(client.flush)
 
 
 # ─── Read pacing ───────────────────────────────────────────────────────
-def retry_wait(resp: httpx.Response, attempt: int) -> float:
-    """Seconds to wait before retrying ``resp``: Retry-After when given, else backoff."""
-    header = resp.headers.get("Retry-After", "").strip()
+def retry_wait(headers: Mapping[str, str] | None, attempt: int) -> float:
+    """Seconds to wait before a retry: Retry-After when given, else backoff."""
+    header = (headers or {}).get("Retry-After", (headers or {}).get("retry-after", "")).strip()
     if header.isdigit():
         return float(header)
     if header:
@@ -141,59 +178,107 @@ class ReadPacer:
                 await self._sleep(delay)
             self._next_start = self._clock() + self._spacing_s
 
-    async def _backoff(self, resp: httpx.Response, attempt: int) -> bool:
+    async def _backoff(
+        self, status: int | None, headers: Mapping[str, str] | None, attempt: int
+    ) -> bool:
         """Sleep before a retry; False when out of attempts or budget."""
-        wait = retry_wait(resp, attempt)
+        wait = retry_wait(headers, attempt)
         if attempt + 1 >= RETRY_ATTEMPTS or wait > self._budget_s:
             return False
         self._budget_s -= wait
-        logger.info("Langfuse %s — retrying in %.0f s", resp.status_code, wait)
+        logger.info("Langfuse %s — retrying in %.0f s", status, wait)
         await self._sleep(wait)
         return True
 
-    async def get(
-        self, client: httpx.AsyncClient, url: str, params: dict[str, Any] | None = None
-    ) -> httpx.Response:
-        """GET with pacing + retry; raises ``httpx.HTTPStatusError`` when it still fails."""
+    async def call(self, read: Callable[[], Awaitable[T]]) -> T:
+        """Run ``read`` with pacing + retry; re-raises the SDK error when it still fails."""
+        api_error = _api_error()
         async with self._slots:
-            for attempt in range(RETRY_ATTEMPTS):
+            attempt = 0
+            while True:
                 await self._wait_turn()
-                resp = await client.get(url, params=params)
-                if resp.status_code not in _RETRYABLE or not await self._backoff(resp, attempt):
-                    break
-        resp.raise_for_status()
-        return resp
+                try:
+                    return await read()
+                except api_error as exc:
+                    status = getattr(exc, "status_code", None)
+                    if status not in _RETRYABLE:
+                        raise
+                    if not await self._backoff(status, getattr(exc, "headers", None), attempt):
+                        raise
+                attempt += 1
 
 
 # ─── Reads ─────────────────────────────────────────────────────────────
-async def _find_trace_id(
-    client: httpx.AsyncClient, target: TraceTarget, pacer: ReadPacer
-) -> str | None:
-    params: dict[str, Any] = {
-        "name": f"pipeline:{target.video_summary_id}",
-        "orderBy": "timestamp.desc",
-        "limit": 1,
-    }
+def _as_json(model: Any) -> dict[str, Any]:
+    """An SDK model as the public API's camelCase JSON (what ``_eval_metrics`` reads)."""
+    if hasattr(model, "model_dump"):
+        return model.model_dump(by_alias=True, mode="json")
+    return dict(model)
+
+
+def _trace_name_filter(target: TraceTarget) -> str:
+    """v2 ``filter``: observations of the trace named ``pipeline:<videoSummaryId>``.
+
+    Filters on the trace name, not on a root observation: an SDK v2 trace (before
+    the P0a deploy) has no root observation of that name.
+    """
+    conditions: list[dict[str, Any]] = [
+        {
+            "type": "string",
+            "column": "traceName",
+            "operator": "=",
+            "value": f"pipeline:{target.video_summary_id}",
+        }
+    ]
     if target.submitted_at is not None:
-        since = target.submitted_at - _SINCE_SKEW
-        params["fromTimestamp"] = since.isoformat().replace("+00:00", "Z")
-    resp = await pacer.get(client, "/api/public/traces", params)
-    data = resp.json().get("data") or []
-    return data[0].get("id") if data else None
+        since = (target.submitted_at - _SINCE_SKEW).isoformat().replace("+00:00", "Z")
+        conditions.append(
+            {"type": "datetime", "column": "startTime", "operator": ">=", "value": since}
+        )
+    return json.dumps(conditions)
+
+
+async def _find_trace_id(client: Any, target: TraceTarget, pacer: ReadPacer) -> str | None:
+    """Pre-P0b reports only: the trace named ``pipeline:<videoSummaryId>`` (newest wins)."""
+    page = await pacer.call(
+        lambda: client.async_api.observations.get_many(
+            filter=_trace_name_filter(target),
+            fields="core",
+            limit=50,
+            request_options=_NO_SDK_RETRY,
+        )
+    )
+    if not page.data:
+        return None
+    newest = max(page.data, key=lambda o: str(getattr(o, "start_time", "") or ""))
+    return newest.trace_id
 
 
 async def fetch_signals(
-    client: httpx.AsyncClient,
+    client: Any,
     target: TraceTarget,
     pacer: ReadPacer | None = None,
     trace_id: str | None = None,
 ) -> TraceSignals | None:
-    """Signals of the newest matching trace (or ``trace_id``), ``None`` when absent."""
+    """Signals of the target's trace (or ``trace_id``), ``None`` when it cannot be found."""
     pacer = pacer or ReadPacer()
-    trace_id = trace_id or await _find_trace_id(client, target, pacer)
+    trace_id = trace_id or target.trace_id or await _find_trace_id(client, target, pacer)
     if not trace_id:
         return None
-    trace = (await pacer.get(client, f"/api/public/traces/{trace_id}")).json()
+    observations = await pacer.call(
+        lambda: client.async_api.observations.get_many(
+            trace_id=trace_id, fields=_OBSERVATION_FIELDS, limit=1000, request_options=_NO_SDK_RETRY
+        )
+    )
+    scores = await pacer.call(
+        lambda: client.async_api.scores_v3.get_many_v3(
+            trace_id=trace_id, name="faithfulness", limit=100, request_options=_NO_SDK_RETRY
+        )
+    )
+    trace = {
+        "observations": [_as_json(o) for o in observations.data],
+        "scores": [_as_json(s) for s in scores.data],
+    }
     return TraceSignals(
         trace_id=trace_id,
         faithfulness=extract_faithfulness(trace),
@@ -202,16 +287,17 @@ async def fetch_signals(
 
 
 async def _fetch_round(
-    client: httpx.AsyncClient,
+    client: Any,
     pending: dict[str, TraceTarget],
     found: dict[str, TraceSignals],
     pacer: ReadPacer,
 ) -> None:
+    api_error = _api_error()
     for golden_id, target in pending.items():
         known = found[golden_id].trace_id if golden_id in found else None
         try:
             signals = await fetch_signals(client, target, pacer, trace_id=known)
-        except httpx.HTTPError as exc:
+        except (api_error, httpx.HTTPError) as exc:
             logger.warning("Langfuse read failed for %s: %s", golden_id, exc)
             continue
         if signals is not None:
@@ -219,7 +305,7 @@ async def _fetch_round(
 
 
 async def collect_signals(
-    client: httpx.AsyncClient,
+    client: Any,
     targets: dict[str, TraceTarget],
     *,
     rounds: int = SIGNAL_ROUNDS,
@@ -247,46 +333,38 @@ async def collect_signals(
 
 
 # ─── Writes ────────────────────────────────────────────────────────────
-async def _post_scores(client: httpx.AsyncClient, item: RunItem, run_name: str) -> None:
+def _post_scores(client: Any, item: RunItem, run_name: str) -> None:
+    """Queue the eval's metrics as ``golden.*`` scores (sent on ``make_client`` exit)."""
     for name, value in item.scores.items():
         if value is None:
             continue
-        resp = await client.post(
-            "/api/public/scores",
-            json={
-                "traceId": item.trace_id,
-                "name": f"golden.{name}",
-                "value": float(value),
-                "dataType": "NUMERIC",
-                "comment": f"golden eval run {run_name}",
-            },
+        client.create_score(
+            trace_id=item.trace_id,
+            name=f"golden.{name}",
+            value=float(value),
+            data_type="NUMERIC",
+            comment=f"golden eval run {run_name}",
         )
-        resp.raise_for_status()
 
 
-async def publish_dataset_run(
-    client: httpx.AsyncClient, run_name: str, items: list[RunItem]
-) -> int:
+async def publish_dataset_run(client: Any, run_name: str, items: list[RunItem]) -> int:
     """Link each item's pipeline trace into dataset run ``run_name``; return items linked."""
+    api_error = _api_error()
     linked = 0
     for item in items:
         if not item.trace_id:
             logger.warning("Run upload skipped for %s: no pipeline trace", item.dataset_item_id)
             continue
         try:
-            await _post_scores(client, item, run_name)
-            resp = await client.post(
-                "/api/public/dataset-run-items",
-                json={
-                    "runName": run_name,
-                    "datasetItemId": item.dataset_item_id,
-                    "traceId": item.trace_id,
-                    "metadata": item.metadata,
-                },
+            _post_scores(client, item, run_name)
+            await client.async_api.dataset_run_items.create(
+                run_name=run_name,
+                dataset_item_id=item.dataset_item_id,
+                trace_id=item.trace_id,
+                metadata=item.metadata,
             )
-            resp.raise_for_status()
             linked += 1
-        except httpx.HTTPError as exc:
+        except (api_error, httpx.HTTPError) as exc:
             logger.warning("Run upload failed for %s: %s", item.dataset_item_id, exc)
     logger.info("Langfuse dataset run %s: %d/%d items linked", run_name, linked, len(items))
     return linked

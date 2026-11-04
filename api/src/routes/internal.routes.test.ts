@@ -238,6 +238,59 @@ describe('internal routes', () => {
         expect(mockContainer.billingEnforcement.runFinished).toHaveBeenCalledWith(videoSummaryId, 'cached');
       });
 
+      describe('runs[] (P0b)', () => {
+        const post = (payload: Record<string, unknown>) => {
+          app.mongo.db.collection = vi.fn().mockReturnValue({ updateMany: vi.fn().mockResolvedValue({ modifiedCount: 1 }) });
+          app.broadcast = vi.fn();
+          return app.inject({
+            method: 'POST',
+            url: '/internal/status',
+            headers: { 'content-type': 'application/json', 'x-internal-secret': INTERNAL_SECRET },
+            payload: { type: 'video.status', payload: { userId: 'u-runs', ...payload } },
+          });
+        };
+
+        it.each([
+          ['completed', false, 'completed'],
+          ['completed', true, 'cache_hit'],
+          ['failed', false, 'failed'],
+        ])('should close the run as %s (cacheHit=%s) -> %s when the status carries its runId', async (status, cacheHit, closed) => {
+          const videoSummaryId = new ObjectId().toHexString();
+
+          const response = await post({ videoSummaryId, status, cacheHit, runId: 'run-1' });
+
+          expect(response.statusCode).toBe(200);
+          expect(mockContainer.videoRepository.closeRun).toHaveBeenCalledWith(videoSummaryId, 'run-1', closed);
+        });
+
+        it('should broadcast the status without the runId when a run reports', async () => {
+          const videoSummaryId = new ObjectId().toHexString();
+
+          await post({ videoSummaryId, status: 'processing', runId: 'run-x' });
+
+          const [, sent] = (app.broadcast as ReturnType<typeof vi.fn>).mock.calls[0];
+          expect(sent.payload).not.toHaveProperty('runId');
+          expect(sent.payload.status).toBe('processing');
+        });
+
+        it('should close nothing when the status has no runId or is not terminal', async () => {
+          await post({ videoSummaryId: new ObjectId().toHexString(), status: 'completed' });
+          await post({ videoSummaryId: new ObjectId().toHexString(), status: 'processing', runId: 'run-2' });
+
+          expect(mockContainer.videoRepository.closeRun).not.toHaveBeenCalled();
+        });
+
+        it('should still run the billing hook when closing the run fails', async () => {
+          mockContainer.videoRepository.closeRun.mockRejectedValueOnce(new Error('mongo blip'));
+          const videoSummaryId = new ObjectId().toHexString();
+
+          const response = await post({ videoSummaryId, status: 'completed', runId: 'run-3' });
+
+          expect(response.statusCode).toBe(200);
+          expect(mockContainer.billingEnforcement.runFinished).toHaveBeenCalledWith(videoSummaryId, 'completed');
+        });
+      });
+
       it('should release the run\'s hold when a video FAILS', async () => {
         const videoSummaryId = new ObjectId().toHexString();
         const userId = 'failed-user-456';

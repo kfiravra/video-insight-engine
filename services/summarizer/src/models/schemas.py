@@ -65,6 +65,11 @@ class SummarizeRequest(BaseModel):
     url: str
     userId: str | None = None
     providers: ProviderConfig | None = None
+    # P0b: the dispatch's run id (re-stamped as the row's currentRunId) and context.
+    runId: str | None = None
+    pipelineVersion: str | None = None
+    bypassCache: bool = False
+    chatSessionId: str | None = None
 
 
 class SummarizeResponse(BaseModel):
@@ -74,6 +79,7 @@ class SummarizeResponse(BaseModel):
 
 class Chapter(BaseModel):
     """A chapter in the video summary (formerly Section)."""
+
     id: str
     timestamp: str
     start_seconds: int
@@ -123,12 +129,14 @@ class ProcessingResult(BaseModel):
 
 class PlaylistExtractRequest(BaseModel):
     """Request to extract playlist metadata."""
+
     playlist_id: str
     max_videos: int = 100
 
 
 class PlaylistVideoInfo(BaseModel):
     """Information about a single video in a playlist."""
+
     video_id: str
     title: str
     position: int
@@ -138,6 +146,7 @@ class PlaylistVideoInfo(BaseModel):
 
 class PlaylistExtractResponse(BaseModel):
     """Response from playlist extraction."""
+
     playlist_id: str
     title: str
     channel: str | None = None
@@ -153,6 +162,7 @@ class PlaylistExtractResponse(BaseModel):
 
 class VideoMetadataResponse(BaseModel):
     """What the API needs to quote a video before submitting it: no captions, no LLM."""
+
     youtubeId: str
     title: str
     channel: str

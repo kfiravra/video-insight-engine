@@ -36,10 +36,20 @@ from src.routes.pipeline_orchestration import run_pipeline_phases
 from src.services.cache.response_cache import response_cache
 from src.services.llm import LLMService
 from src.services.media.hires_prefetch import LocalHiresSource, LocalLowresSource
+from src.services.pipeline.run_registry import (
+    RunDispatch,
+    RunIdentity,
+    entries_of,
+    fresh_run,
+    resolve_run,
+    run_entry,
+    run_tags,
+)
 from src.services.observability import run_trace
 from src.services.override_state import clear_override
 from src.services.pipeline.context import PipelineContext
 from src.services.pipeline.pipeline_helpers import PipelineTimer, sse_event
+from src.services.run_context import bind_run_id
 from src.services.status_callback import send_video_status
 
 logger = logging.getLogger(__name__)
@@ -66,7 +76,7 @@ async def _complete_from_cache(
 ) -> None:
     """Save a Redis-served payload on the row, then report it completed.
 
-    The status carries ``cache_hit`` so vie-api gives the run's minutes hold
+    The status carries ``cache_hit`` so vie-api gives the run's token hold
     back as a cached serve instead of settling a run that never ran (I3).
     Sent only after the save, so the API's served-version promote sees the
     completed row.
@@ -116,22 +126,31 @@ def _run_trace_args(
     user_id: str | None,
     request_id: str | None,
     run_path: str,
+    run: RunIdentity,
+    bypass: bool,
 ) -> dict[str, Any]:
-    """The Langfuse trace of one run: name, session, tags and metadata.
+    """The Langfuse trace of one attempt: id, name, session, tags and metadata (D4).
 
-    One session per video row (``pipeline-<videoSummaryId>``) groups its runs
-    (first run, bypass, regenerate, retries). ``requestId`` is only added when
-    present, so ``null`` never pollutes dashboards; the user id goes through
-    the ``LANGFUSE_USER_ID_MODE`` policy and is never copied into metadata.
+    The trace id is seeded from the run id (``trace_id_for_run``), so vie-api and
+    the admin can link to it without asking Langfuse. One session per video row
+    (``pipeline-<videoSummaryId>``) groups its attempts (first run, bypass,
+    regenerate, retries). ``requestId`` is only added when present, so ``null``
+    never pollutes dashboards; the user id goes through the
+    ``LANGFUSE_USER_ID_MODE`` policy and is never copied into metadata.
     """
+    pipeline_version = settings.PIPELINE_VERSION
     tags = [
         f"youtubeId:{youtube_id}",
         f"videoSummaryId:{video_summary_id}",
         f"path:{run_path}",
+        *run_tags(run, pipeline_version=pipeline_version, bypass=bypass),
     ]
     metadata: dict[str, Any] = {
         "youtubeId": youtube_id,
         "videoSummaryId": video_summary_id,
+        "runId": run.run_id,
+        "attempt": run.attempt,
+        "pipelineVersion": pipeline_version,
         "language": entry.get("language"),
         "path": run_path,
     }
@@ -145,13 +164,113 @@ def _run_trace_args(
     if entry.get("coldMedia"):
         metadata["coldMedia"] = True
     return {
-        "name": f"pipeline:{video_summary_id}",
+        "trace_id": run.trace_id,
+        "name": f"pipeline:{youtube_id}",
         "session_id": f"pipeline-{video_summary_id}",
         "user_id": user_id,
         "tags": tags,
         "metadata": metadata,
-        "input": {"youtubeId": youtube_id, "videoSummaryId": video_summary_id},
+        "input": {"youtubeId": youtube_id, "videoSummaryId": video_summary_id, "runId": run.run_id},
     }
+
+
+async def _register_run(
+    repository: MongoDBVideoRepository,
+    video_summary_id: str,
+    entry: dict[str, Any],
+    run: RunIdentity,
+    *,
+    request_id: str | None,
+    user_id: str | None,
+    run_path: str,
+    bypass: bool,
+) -> RunIdentity:
+    """Mark the attempt's ``runs[]`` entry running (P-2); the identity it ended up with.
+
+    When the api's ``dispatched`` entry was taken by another attempt in between,
+    this one gets a fresh id instead (one runId = one trace). Best-effort: a
+    write failure is logged and the run goes on under ``run``.
+    """
+
+    def _doc(identity: RunIdentity) -> dict[str, Any]:
+        return run_entry(
+            identity,
+            request_id=request_id,
+            user_id=user_id,
+            path=run_path,
+            bypass=bypass,
+            pipeline_version=settings.PIPELINE_VERSION,
+        )
+
+    try:
+        taken = await asyncio.to_thread(
+            repository.start_run,
+            video_summary_id,
+            _doc(run),
+            take_over=run.dispatched_entry,
+            superseded=run.superseded,
+        )
+        if not taken:
+            run = fresh_run(entries_of(entry), run.attempt, run.chat_session_id)
+            await asyncio.to_thread(
+                repository.start_run, video_summary_id, _doc(run), take_over=False
+            )
+    except Exception as exc:  # noqa: BLE001 — observability bookkeeping only
+        logger.warning("[pipeline] run registration failed for %s: %s", video_summary_id, exc)
+    return run
+
+
+async def _redis_payload(youtube_id: str) -> dict[str, Any] | None:
+    """The completed Redis response for ``youtube_id``, or ``None`` (miss, invalid, Redis down)."""
+    try:
+        cached = await response_cache.get_response(youtube_id)
+    except (OSError, redis_exceptions.ConnectionError) as e:
+        logger.debug("Redis cache check failed (non-critical): %s", e)
+        return None
+    return cached if cached is not None and _valid_cached_payload(cached, youtube_id) else None
+
+
+def _bind_usage_context(
+    entry: dict[str, Any], youtube_id: str, video_summary_id: str
+) -> tuple[str | None, str | None]:
+    """Attribute this run's ``llm_usage`` rows (user, video, request); return ``(user, request)``.
+
+    Bound BEFORE the cache lookup so every row this run writes, the rare
+    cache-hit-path LLM call included, is attributable: these are the keys per-user
+    reconciliation and run grouping match on. ``requestId`` comes from the worker's
+    contextvars on the queue path and from the dispatching ``POST /summarize``
+    (stamped on the row) on the SSE path, so Sentry events, log lines and Langfuse
+    traces share the api's correlation id.
+    """
+    user_id, request_id = _resolve_run_attribution(entry, structlog.contextvars.get_contextvars())
+    llm_video_id_var.set(youtube_id)
+    llm_video_summary_id_var.set(video_summary_id)
+    if user_id:
+        llm_user_id_var.set(user_id)
+    if request_id:
+        llm_request_id_var.set(request_id)
+    return user_id, request_id
+
+
+async def _mark_processing(
+    repository: MongoDBVideoRepository, video_summary_id: str, youtube_id: str
+) -> None:
+    """Flip the row to PROCESSING, clear the previous run's provenance, tell vie-api.
+
+    Re-runs (regenerate, failed retry, stall re-dispatch) reuse the same _id, so a
+    transcriptMeta block left by an earlier failed run must not survive into this
+    one; the transcript phase re-records it. Best-effort: an observability-only
+    field must never abort a run. The status mirrors onto userVideos through the
+    API's /internal/status endpoint (best-effort; also fans out over WS).
+    """
+    await asyncio.to_thread(repository.update_status, video_summary_id, ProcessingStatus.PROCESSING)
+    try:
+        await asyncio.to_thread(repository.clear_transcript_meta, video_summary_id)
+        await asyncio.to_thread(repository.clear_degraded, video_summary_id)
+    except Exception as exc:
+        logger.warning("[pipeline] transcriptMeta clear failed for %s: %s", video_summary_id, exc)
+    await send_video_status(video_summary_id, None, "processing")
+    logger.info("[pipeline] START video_id=%s youtube_id=%s", video_summary_id, youtube_id)
 
 
 def _resolve_run_attribution(
@@ -192,6 +311,7 @@ async def stream_summarization(
     llm_service: LLMService,
     force_refresh: bool = False,
     run_path: str = "sse",
+    dispatch: RunDispatch | None = None,
 ) -> AsyncGenerator[str, None]:
     """One pipeline run: metadata -> text branch (transcript -> tier probe -> plan ∥
     memory) ∥ frames [∥ field groups] -> extraction -> quiz ∥ synthesis -> assembly ->
@@ -210,9 +330,13 @@ async def stream_summarization(
 
     ``run_path`` names the entry path on the trace: ``worker`` (queue),
     ``sse`` (the stream's own producer) or ``dev`` (dev-tools override).
+    ``dispatch`` is what the queue message says about the attempt (its run id);
+    the SSE and dev paths read the row's ``currentRunId`` (``resolve_run``).
     """
     timer = PipelineTimer()
     force_refresh = force_refresh or bool(entry.get("forceRefresh"))
+    # A context reused across runs must never report the previous run's id.
+    bind_run_id(None)
 
     try:
         youtube_id = entry.get("youtubeId") or entry.get("youtube_id")
@@ -220,42 +344,39 @@ async def stream_summarization(
             yield sse_event("error", {"message": "YouTube ID not found"})
             return
 
-        # ``requestId`` comes from the worker's contextvars on the queue path and
-        # from the dispatching ``POST /summarize`` (stamped on the row) on the
-        # SSE path, so Sentry events, log lines, and Langfuse traces share the
-        # api's correlation id.
-        user_id, request_id = _resolve_run_attribution(
-            entry, structlog.contextvars.get_contextvars()
-        )
+        user_id, request_id = _bind_usage_context(entry, youtube_id, video_summary_id)
 
-        # Set LLM cost-tracking context vars BEFORE the cache lookup so every
-        # ``llm_usage`` row this run writes — including the rare cache-hit-path
-        # LLM call — is attributable to its user, video, run, and request. These
-        # are the keys per-user reconciliation and run grouping match on.
-        llm_video_id_var.set(youtube_id)
-        llm_video_summary_id_var.set(video_summary_id)
-        if user_id:
-            llm_user_id_var.set(user_id)
-        if request_id:
-            llm_request_id_var.set(request_id)
+        # The attempt's run id, before the cache check: a cache hit's status
+        # callback closes the api's entry too (as cache_hit). Registered below,
+        # only when the pipeline runs.
+        run = resolve_run(entry, dispatch)
+        bind_run_id(run.run_id)
 
         # Redis fast path (same YouTube video = instant serve). It runs BEFORE
         # the trace opens: a cache hit is no pipeline run and opens no trace.
-        if settings.REDIS_ENABLED and not force_refresh:
-            try:
-                cached = await response_cache.get_response(youtube_id)
-                if cached is not None and _valid_cached_payload(cached, youtube_id):
-                    logger.info("[pipeline] Redis cache HIT for youtube_id=%s", youtube_id)
-                    if entry.get("status") != ProcessingStatus.COMPLETED.value:
-                        _spawn_cache_completion(repository, video_summary_id, cached)
-                    async for event in _stream_cached_structured(video_summary_id, cached):
-                        yield event
-                    return
-            except (OSError, redis_exceptions.ConnectionError) as e:
-                logger.debug("Redis cache check failed (non-critical): %s", e)
+        use_cache = settings.REDIS_ENABLED and not force_refresh
+        cached = await _redis_payload(youtube_id) if use_cache else None
+        if cached is not None:
+            logger.info("[pipeline] Redis cache HIT for youtube_id=%s", youtube_id)
+            if entry.get("status") != ProcessingStatus.COMPLETED.value:
+                _spawn_cache_completion(repository, video_summary_id, cached)
+            async for event in _stream_cached_structured(video_summary_id, cached):
+                yield event
+            return
 
         eval_run = bool(entry.get("evalRun"))
         cold_media = bool(entry.get("coldMedia"))
+        run = await _register_run(
+            repository,
+            video_summary_id,
+            entry,
+            run,
+            request_id=request_id,
+            user_id=user_id,
+            run_path=run_path,
+            bypass=force_refresh,
+        )
+        bind_run_id(run.run_id)
         trace_args = _run_trace_args(
             entry,
             youtube_id=youtube_id,
@@ -263,26 +384,11 @@ async def stream_summarization(
             user_id=user_id,
             request_id=request_id,
             run_path=run_path,
+            run=run,
+            bypass=force_refresh,
         )
         async with run_trace(**trace_args):
-            await asyncio.to_thread(
-                repository.update_status, video_summary_id, ProcessingStatus.PROCESSING
-            )
-            # Re-runs (regenerate, failed retry, stall re-dispatch) reuse the
-            # same _id, so a transcriptMeta block left by an earlier failed run
-            # must not survive into this one; the transcript phase re-records it.
-            # Best-effort: an observability-only field must never abort a run.
-            try:
-                await asyncio.to_thread(repository.clear_transcript_meta, video_summary_id)
-                await asyncio.to_thread(repository.clear_degraded, video_summary_id)
-            except Exception as exc:
-                logger.warning(
-                    "[pipeline] transcriptMeta clear failed for %s: %s", video_summary_id, exc
-                )
-            # Mirror the cache-doc status onto userVideos via the API's
-            # /internal/status endpoint (best-effort; also fans out over WS).
-            await send_video_status(video_summary_id, None, "processing")
-            logger.info("[pipeline] START video_id=%s youtube_id=%s", video_summary_id, youtube_id)
+            await _mark_processing(repository, video_summary_id, youtube_id)
 
             ctx = PipelineContext(
                 video_summary_id=video_summary_id,
