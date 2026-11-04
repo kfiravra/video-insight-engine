@@ -38,6 +38,10 @@ schema) was deleted. Per-user accounting reads the Python-schema
 | `user_id`                 | `llm_user_id_var`                                   | Owner of the run; the key per-user reconciliation matches on. `None` on legacy rows |
 | `video_summary_id`        | `llm_video_summary_id_var`                          | The Mongo `videoSummaryCache` id for this run |
 | `request_id`              | `llm_request_id_var`                                | Per-run grouping key — one POST = one `request_id`; a regeneration gets a fresh one. `None` on legacy rows |
+| `run_id`                  | `llm_run_id_var`                                    | The pipeline attempt (`runs[].runId`, D9); one per dispatch, retries included. `None` on assistant rows and rows written before P1 |
+| `trace_id`                | `llm_trace_id_var`                                  | The Langfuse trace the call belongs to: `trace_id_for_run(run_id)` on pipeline rows, the turn's trace on assistant rows (set by `run_trace`) |
+| `session_id`              | `llm_session_id_var`                                | The web's chat session id (`X-Session-Id`, D8) on assistant rows; on pipeline rows only when the run was started from chat (`runs[].chatSessionId`) |
+| `attempt` / `pipeline_version` / `bypass` | `llm_attempt_var` / `llm_pipeline_version_var` / `llm_bypass_var` | The attempt's number, the `PIPELINE_VERSION` it ran and whether it bypassed the response cache; pipeline rows only |
 | `service`                 | callback ctor arg                                   | `summarizer` / `assistant` / etc. |
 | `is_stream`               | `kwargs["stream"]`                                  | True when LiteLLM was streamed |
 | `unit`                    | emitter                                             | `tokens` (default) or `audio_seconds` for transcription rows |
@@ -54,8 +58,9 @@ The transcribers emit their own rows via `llm_common.record_manual_usage`, which
 writes through the **same active buffer** the callback owns
 (`register_active_buffer`, set in `MongoDBUsageCallback.__init__`) and fills
 run-attribution (`user_id` / `video_id` / `video_summary_id` / `request_id`) from
-the same context vars the pipeline already set — so transcription rows inherit
-the run's attribution for free. The shared emit helper
+the same context vars the pipeline already set (every `USAGE_ID_VARS` id, the
+D9 run/trace/session ids included) — so transcription rows inherit the run's
+attribution for free. The shared emit helper
 (`services/summarizer/src/services/transcription/usage.py`) also logs a
 `transcription:<provider>` generation under the pipeline's Langfuse trace.
 
@@ -106,6 +111,14 @@ id for the browser's SSE request is a fresh UUID. See
 `assistant:action:<action>` / `assistant:tool:<name>`), `video_id`, `user_id`, and
 `request_id` at each endpoint (from `X-User-Id` / `X-Request-ID` headers the API
 gateway forwards) and in the tool router.
+Since P1 (D9) the assistant puts the video's YouTube id in `video_id` (resolved from
+the video context; the request's `videoSummaryId` goes to `video_summary_id`), and the
+middleware binds `session_id` from `X-Session-Id`. The queue worker runs every job in
+`llm_common.context.usage_scope(...)`, which sets all the ids from the payload and
+restores them when the job ends: before P1 a job that bound no user kept the previous
+job's `user_id` on its rows. The runner then re-binds the attempt's `run_id`,
+`trace_id`, `attempt`, `pipeline_version`, `bypass` and `session_id` once it resolved
+the run (`_bind_run`), and sets `user_id` / `request_id` even when they are `None`.
 Rows written before this (no `user_id` / `request_id`) are treated as
 "unattributed (legacy)" by admin — fix-forward only, no historical backfill.
 
@@ -493,8 +506,9 @@ The vie-admin lifespan **also** drops any legacy 90-day TTL on `llm_usage`
 `timestamp` as a plain index, so either service booting first heals the ledger.
 
 **The user links are dropped at 90 days (billing-roles P1.6).** Rows stay, but
-vie-api's billing repair job unsets `user_id`, `request_id` and
-`prompt_preview` on every row whose `timestamp` is more than 90 days old
+vie-api's billing repair job unsets `user_id`, `request_id`,
+`prompt_preview` and the D9 ids `run_id`, `trace_id`, `session_id` (each joins
+to a `runs[]` entry or a Langfuse trace/session that names the user) on every row whose `timestamp` is more than 90 days old
 (batched, at most 1,000 rows per run, re-runs match nothing), which is what
 `docs/PRIVACY.md` promises — `request_id` would otherwise still join to the
 token ledger's `source.ref`, whose rows name the user. vie-assistant never

@@ -26,7 +26,21 @@ export const ASSISTANT_ACTIONS = [
 
 export type AssistantAction = (typeof ASSISTANT_ACTIONS)[number];
 
-export interface AssistantChatOptions {
+/**
+ * The gateway's ids, forwarded on every assistant call so the assistant's log
+ * lines, Langfuse traces and llm_usage rows join the gateway's.
+ */
+export interface CorrelationIds {
+  /** Forwarded as `X-Request-ID`; the assistant binds it on contextvars. */
+  requestId?: string;
+  /** The web's chat session id (D8), forwarded as `X-Session-Id`. */
+  sessionId?: string;
+  /** The api's per-request execution id, forwarded as `X-Execution-Id`: the
+   *  assistant reports the request's LLM cost under it (token ledger). */
+  executionId?: string;
+}
+
+export interface AssistantChatOptions extends CorrelationIds {
   videoId: string;
   userId: string;
   message: string;
@@ -34,26 +48,18 @@ export interface AssistantChatOptions {
   /** Single-use token echoed from a `pending_confirmation` SSE event — lets the
    *  assistant run a parked destructive/costly action. Validated server-side. */
   confirmToken?: string;
-  /** Forwarded as `X-Request-ID` header so the assistant binds it on contextvars. */
-  requestId?: string;
-  /** The api's per-request execution id, forwarded as `X-Execution-Id`: the assistant reports the request's LLM cost under it (token ledger). */
-  executionId?: string;
   /** Caller abort (e.g. the HTTP client disconnecting). Tears down both the
    *  connect and the returned SSE body stream — the internal 60s timeout only
    *  covers connect. */
   signal?: AbortSignal;
 }
 
-export interface AssistantActionOptions {
+export interface AssistantActionOptions extends CorrelationIds {
   /** Optional — library-scoped actions (organize_library, *_folder) have no video. */
   videoId?: string;
   userId: string;
   action: AssistantAction;
   params?: Record<string, string | number | boolean>;
-  /** Forwarded as `X-Request-ID` header so the assistant binds it on contextvars. */
-  requestId?: string;
-  /** The api's per-request execution id, forwarded as `X-Execution-Id`: the assistant reports the request's LLM cost under it (token ledger). */
-  executionId?: string;
 }
 
 export interface AssistantActionResponse {
@@ -64,7 +70,7 @@ export interface AssistantActionResponse {
   trace_id: string;
 }
 
-export interface AssistantLibraryChatOptions {
+export interface AssistantLibraryChatOptions extends CorrelationIds {
   /** YouTube ids the gateway derived server-side from the user's owned videos. */
   youtubeIds: string[];
   userId: string;
@@ -76,42 +82,19 @@ export interface AssistantLibraryChatOptions {
   /** Single-use token echoed from a `pending_confirmation` SSE event — lets the
    *  assistant run a parked destructive/costly action. Validated server-side. */
   confirmToken?: string;
-  /** Forwarded as `X-Request-ID` header so the assistant binds it on contextvars. */
-  requestId?: string;
-  /** The api's per-request execution id, forwarded as `X-Execution-Id`: the assistant reports the request's LLM cost under it (token ledger). */
-  executionId?: string;
   /** Caller abort (e.g. the HTTP client disconnecting). Tears down both the
    *  connect and the returned SSE body stream — the internal 60s timeout only
    *  covers connect. */
   signal?: AbortSignal;
 }
 
-export interface AssistantLibrarySearchOptions {
+export interface AssistantLibrarySearchOptions extends CorrelationIds {
   /** YouTube ids the gateway derived server-side from the user's owned videos. */
   youtubeIds: string[];
   userId: string;
   query: string;
   topK?: number;
   sources?: string[];
-  /** Forwarded as `X-Request-ID` header so the assistant binds it on contextvars. */
-  requestId?: string;
-}
-
-/**
- * The headers every assistant call carries: the internal secret, the user
- * (the assistant attributes its llm_usage rows to it), and — when the caller
- * has them — the request id the assistant binds on its contextvars and the
- * execution id it reports the request's cost under.
- */
-function assistantHeaders(options: { userId: string; requestId?: string; executionId?: string }): Record<string, string> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    'X-Internal-Secret': config.INTERNAL_SECRET,
-    'X-User-Id': options.userId,
-  };
-  if (options.requestId) headers['X-Request-ID'] = options.requestId;
-  if (options.executionId) headers['X-Execution-Id'] = options.executionId;
-  return headers;
 }
 
 /**
@@ -126,6 +109,23 @@ function toAssistantHistory(
   return (history ?? [])
     .filter(m => m.content.trim().length > 0)
     .map(m => ({ role: m.role, content: m.content }));
+}
+
+/**
+ * Headers of every gateway → assistant call. `X-User-Id` attributes the call's
+ * llm_usage rows to the user (otherwise user_id lands null and the admin can't
+ * bill it); the request and chat session ids correlate the assistant's logs,
+ * traces and ledger rows with the gateway's.
+ */
+function internalHeaders(ids: CorrelationIds & { userId: string }): Record<string, string> {
+  return {
+    'Content-Type': 'application/json',
+    'X-Internal-Secret': config.INTERNAL_SECRET,
+    'X-User-Id': ids.userId,
+    ...(ids.requestId ? { 'X-Request-ID': ids.requestId } : {}),
+    ...(ids.sessionId ? { 'X-Session-Id': ids.sessionId } : {}),
+    ...(ids.executionId ? { 'X-Execution-Id': ids.executionId } : {}),
+  };
 }
 
 export class AssistantClient {
@@ -176,7 +176,7 @@ export class AssistantClient {
     const timeout = setTimeout(() => controller.abort(), ASSISTANT_TIMEOUT_MS);
     this.forwardAbort(options.signal, controller);
 
-    const headers = assistantHeaders(options);
+    const headers = internalHeaders(options);
 
     try {
       const response = await fetch(url, {
@@ -229,7 +229,7 @@ export class AssistantClient {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), ACTION_TIMEOUT_MS);
 
-    const headers = assistantHeaders(options);
+    const headers = internalHeaders(options);
 
     const requestBody: Record<string, unknown> = {
       action: options.action,
@@ -290,7 +290,7 @@ export class AssistantClient {
     const timeout = setTimeout(() => controller.abort(), ASSISTANT_TIMEOUT_MS);
     this.forwardAbort(options.signal, controller);
 
-    const headers = assistantHeaders(options);
+    const headers = internalHeaders(options);
 
     try {
       const response = await fetch(url, {
@@ -344,7 +344,7 @@ export class AssistantClient {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), ACTION_TIMEOUT_MS);
 
-    const headers = assistantHeaders(options);
+    const headers = internalHeaders(options);
 
     const requestBody: Record<string, unknown> = {
       video_ids: options.youtubeIds,

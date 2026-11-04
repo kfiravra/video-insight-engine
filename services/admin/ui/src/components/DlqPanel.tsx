@@ -139,12 +139,12 @@ export function DlqPanel({ limit = 20 }: DlqPanelProps = {}) {
   return (
     <Panel title={header} actions={actions} tone="dim" padding="none" data-testid="dlq-panel">
       {replay.isError && (
-        <p className="px-4 pt-3 text-xs text-[var(--color-danger)]" role="alert">
+        <p className="px-4 pb-2 text-xs text-[var(--color-danger)]" role="alert">
           Replay failed: {replay.error instanceof Error ? replay.error.message : 'unknown error'}
         </p>
       )}
       {replay.isSuccess && (
-        <p className="px-4 pt-3 text-xs text-[var(--color-success)]" role="status">
+        <p className="px-4 pb-2 text-xs text-[var(--color-success)]" role="status">
           Replayed {replay.data.replayed} message{replay.data.replayed === 1 ? '' : 's'}.
         </p>
       )}

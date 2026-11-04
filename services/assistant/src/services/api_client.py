@@ -18,6 +18,7 @@ from typing import Any
 
 import httpx
 
+from llm_common.context import llm_request_id_var, llm_session_id_var
 from src.exceptions import AppError, ServiceUnavailableError, ValidationError
 from src.logging_config import get_logger
 
@@ -58,11 +59,23 @@ class ApiClient:
         return self._client
 
     def _headers(self, user_id: str) -> dict[str, str]:
-        """Build internal-auth headers scoped to *user_id*."""
-        return {
+        """Build internal-auth headers scoped to *user_id*.
+
+        The chat's request and session ids ride along (D8), so a video the
+        agent generates is logged under the same request and its pipeline run
+        carries ``chatSession:<id>``.
+        """
+        headers = {
             "X-Internal-Secret": self._internal_secret,
             "X-User-Id": user_id,
         }
+        request_id = llm_request_id_var.get()
+        if request_id:
+            headers["X-Request-ID"] = request_id
+        session_id = llm_session_id_var.get()
+        if session_id:
+            headers["X-Session-Id"] = session_id
+        return headers
 
     async def _request(
         self,

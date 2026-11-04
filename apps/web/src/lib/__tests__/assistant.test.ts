@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 import { ApiError, getAccessToken, refreshToken } from "@/api/client";
+import { LIBRARY_CHAT_SURFACE, useChatStore } from "@/stores/chat-store";
 import { runAssistantAction, sendAssistantMessage, sendLibraryMessage } from "../assistant";
+
+const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 // Mock the API client + auth store so runAssistantAction stays a pure unit test.
 vi.mock("@/api/client", async () => {
@@ -49,6 +52,8 @@ describe("runAssistantAction", () => {
     expect(init.method).toBe("POST");
     expect(init.headers.Authorization).toBe("Bearer token-abc");
     expect(init.headers["Content-Type"]).toBe("application/json");
+    expect(init.headers["X-Session-Id"]).toMatch(UUID_V4);
+    expect(init.headers["X-Session-Id"]).toBe(useChatStore.getState().sessionIds["vid-123"]);
     expect(JSON.parse(init.body)).toEqual({
       action: "create_folder",
       params: { name: "Recipes" },
@@ -211,5 +216,73 @@ describe.each([
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[1][1].headers.Authorization).toBe("Bearer token-fresh");
+  });
+});
+
+describe("X-Session-Id", () => {
+  const fetchMock = vi.fn();
+
+  beforeEach(() => {
+    vi.stubGlobal("fetch", fetchMock);
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValue({ ok: false, status: 502 });
+    useChatStore.setState({ sessionIds: {} });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function sentSessionId(call: number): string {
+    return fetchMock.mock.calls[call][1].headers["X-Session-Id"];
+  }
+
+  it("should send the same session id on every turn of a video chat", async () => {
+    await sendAssistantMessage("vid-1", "hi", [], vi.fn()).catch(() => undefined);
+    await sendAssistantMessage("vid-1", "again", [], vi.fn()).catch(() => undefined);
+
+    expect(sentSessionId(0)).toMatch(UUID_V4);
+    expect(sentSessionId(1)).toBe(sentSessionId(0));
+  });
+
+  it("should give the library chat and each video chat their own session", async () => {
+    await sendAssistantMessage("vid-1", "hi", [], vi.fn()).catch(() => undefined);
+    await sendAssistantMessage("vid-2", "hi", [], vi.fn()).catch(() => undefined);
+    await sendLibraryMessage("hi", [], vi.fn()).catch(() => undefined);
+
+    const ids = [sentSessionId(0), sentSessionId(1), sentSessionId(2)];
+    expect(new Set(ids).size).toBe(3);
+    expect(ids.every((id) => UUID_V4.test(id))).toBe(true);
+    expect(ids[2]).toBe(useChatStore.getState().sessionIds[LIBRARY_CHAT_SURFACE]);
+  });
+
+  it("should put a library-scoped action in the library session", async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve({}) });
+
+    await runAssistantAction("organize_library", {});
+
+    expect(sentSessionId(0)).toMatch(UUID_V4);
+    expect(sentSessionId(0)).toBe(useChatStore.getState().sessionIds[LIBRARY_CHAT_SURFACE]);
+  });
+
+  it("should resend the same session id on the retry after a token refresh", async () => {
+    vi.mocked(getAccessToken).mockReturnValueOnce("token-expired").mockReturnValueOnce("token-fresh");
+    vi.mocked(refreshToken).mockResolvedValueOnce(true);
+    fetchMock
+      .mockResolvedValueOnce({ ok: false, status: 401 })
+      .mockResolvedValueOnce({ ok: false, status: 502 });
+
+    await sendLibraryMessage("hi", [], vi.fn()).catch(() => undefined);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(sentSessionId(1)).toBe(sentSessionId(0));
+  });
+
+  it("should start a fresh session after the transcript is cleared", async () => {
+    await sendLibraryMessage("hi", [], vi.fn()).catch(() => undefined);
+    useChatStore.getState().clearMessages();
+    await sendLibraryMessage("hi", [], vi.fn()).catch(() => undefined);
+
+    expect(sentSessionId(1)).not.toBe(sentSessionId(0));
   });
 });

@@ -19,13 +19,7 @@ from typing import Any, AsyncGenerator
 
 import redis.exceptions as redis_exceptions
 import structlog
-from llm_common.context import (  # noqa: F401 — llm_feature_var used in phases
-    llm_feature_var,
-    llm_request_id_var,
-    llm_user_id_var,
-    llm_video_id_var,
-    llm_video_summary_id_var,
-)
+from llm_common.context import bind_usage_ids
 
 from src.config import settings
 from src.models.schemas import ProcessingStatus
@@ -33,6 +27,7 @@ from src.repositories.mongodb_repository import MongoDBVideoRepository
 from src.routes.cached_response import stream_cached_structured as _stream_cached_structured
 from src.routes.pipeline_failures import classify_run_failure
 from src.routes.pipeline_orchestration import run_pipeline_phases
+from src.routes.run_events import log_run_finished, log_run_started
 from src.services.cache.response_cache import response_cache
 from src.services.llm import LLMService
 from src.services.media.hires_prefetch import LocalHiresSource, LocalLowresSource
@@ -243,13 +238,37 @@ def _bind_usage_context(
     traces share the api's correlation id.
     """
     user_id, request_id = _resolve_run_attribution(entry, structlog.contextvars.get_contextvars())
-    llm_video_id_var.set(youtube_id)
-    llm_video_summary_id_var.set(video_summary_id)
-    if user_id:
-        llm_user_id_var.set(user_id)
-    if request_id:
-        llm_request_id_var.set(request_id)
+    # Set even when None: a context reused across runs must not keep the last owner.
+    bind_usage_ids(
+        video_id=youtube_id,
+        video_summary_id=video_summary_id,
+        user_id=user_id,
+        request_id=request_id,
+    )
     return user_id, request_id
+
+
+def _bind_run(run: RunIdentity | None, *, bypass: bool = False) -> None:
+    """Bind the attempt's ids for its status callbacks, ledger rows and log lines (D9, D11).
+
+    ``None`` clears the previous attempt's. Bound without reset tokens: the runner
+    is an async generator whose ``aclose()`` may run in another context; the worker
+    restores the job's ids itself (``usage_scope``).
+    """
+    bind_run_id(run.run_id if run else None)
+    bind_usage_ids(
+        run_id=run.run_id if run else None,
+        trace_id=run.trace_id if run else None,
+        attempt=run.attempt if run else None,
+        session_id=run.chat_session_id if run else None,
+        pipeline_version=settings.PIPELINE_VERSION if run else None,
+        bypass=bypass if run else None,
+    )
+    structlog.contextvars.unbind_contextvars("run_id", "session_id")
+    if run:
+        structlog.contextvars.bind_contextvars(run_id=run.run_id)
+        if run.chat_session_id:
+            structlog.contextvars.bind_contextvars(session_id=run.chat_session_id)
 
 
 async def _mark_processing(
@@ -335,11 +354,16 @@ async def stream_summarization(
     """
     timer = PipelineTimer()
     force_refresh = force_refresh or bool(entry.get("forceRefresh"))
-    # A context reused across runs must never report the previous run's id.
-    bind_run_id(None)
+    # A context reused across runs must never report the previous run's ids.
+    _bind_run(None)
+    youtube_id: str | None = entry.get("youtubeId") or entry.get("youtube_id")
+    # The run event's outcome (None until a cache hit or a registered attempt) and
+    # the attempt it names: kept here, since the generator may be closed elsewhere.
+    outcome: str | None = None
+    error_code: str | None = None
+    event_run_id: str | None = None
 
     try:
-        youtube_id = entry.get("youtubeId") or entry.get("youtube_id")
         if not youtube_id:
             yield sse_event("error", {"message": "YouTube ID not found"})
             return
@@ -350,7 +374,8 @@ async def stream_summarization(
         # callback closes the api's entry too (as cache_hit). Registered below,
         # only when the pipeline runs.
         run = resolve_run(entry, dispatch)
-        bind_run_id(run.run_id)
+        _bind_run(run, bypass=force_refresh)
+        event_run_id = run.run_id
 
         # Redis fast path (same YouTube video = instant serve). It runs BEFORE
         # the trace opens: a cache hit is no pipeline run and opens no trace.
@@ -360,6 +385,7 @@ async def stream_summarization(
             logger.info("[pipeline] Redis cache HIT for youtube_id=%s", youtube_id)
             if entry.get("status") != ProcessingStatus.COMPLETED.value:
                 _spawn_cache_completion(repository, video_summary_id, cached)
+            outcome = "cache_hit"
             async for event in _stream_cached_structured(video_summary_id, cached):
                 yield event
             return
@@ -376,7 +402,16 @@ async def stream_summarization(
             run_path=run_path,
             bypass=force_refresh,
         )
-        bind_run_id(run.run_id)
+        _bind_run(run, bypass=force_refresh)
+        event_run_id = run.run_id
+        log_run_started(
+            run,
+            video_summary_id=video_summary_id,
+            youtube_id=youtube_id,
+            run_path=run_path,
+            bypass=force_refresh,
+        )
+        outcome = "interrupted"  # until the phases finish or raise
         trace_args = _run_trace_args(
             entry,
             youtube_id=youtube_id,
@@ -405,9 +440,12 @@ async def stream_summarization(
 
             async for event in run_pipeline_phases(ctx, repository, video_summary_id, timer):
                 yield event
+        outcome = "completed"
 
     except Exception as e:
         failure = classify_run_failure(e, video_summary_id, timer.elapsed())
+        if outcome is not None:
+            outcome, error_code = "failed", failure.code.value
         await asyncio.to_thread(
             repository.update_status,
             video_summary_id,
@@ -420,3 +458,13 @@ async def stream_summarization(
         yield sse_event("error", {"message": failure.user_message, "code": failure.code.value})
     finally:
         await asyncio.to_thread(clear_override, video_summary_id)
+        if outcome is not None:
+            log_run_finished(
+                outcome,
+                run_id=event_run_id,
+                video_summary_id=video_summary_id,
+                youtube_id=youtube_id,
+                duration_s=timer.elapsed(),
+                run_path=run_path,
+                error_code=error_code,
+            )

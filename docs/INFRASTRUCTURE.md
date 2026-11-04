@@ -18,6 +18,7 @@ Docker setup, networking, and environment configuration.
 | vie-qdrant     | qdrant/qdrant:latest    | 6333/6334  | Vector DB (RAG)    |
 | vie-rabbitmq   | rabbitmq:3.13-mgmt      | 5672/15672 | Job queue (AMQP + Management UI) |
 | vie-summarizer-worker | (shares vie-summarizer image) | —  | RabbitMQ consumer for video pipeline jobs |
+| vie-alloy      | grafana/alloy:v1.21.3   | — (12345 on vie-network) | Profile `monitoring`: container logs + host / container / RabbitMQ metrics → Grafana Cloud ([Monitoring](#monitoring-grafana-alloy)) |
 
 ---
 
@@ -677,6 +678,16 @@ db.userVideos.createIndex({ userId: 1, folderId: 1 })
 ```
 
 ---
+
+## Monitoring (Grafana Alloy)
+
+`vie-alloy` (profile `monitoring`, both compose files) is the only monitoring container on the box: nothing is self-hosted (the box already declares more memory limits than it has). It ships to **Grafana Cloud Free** (10k active series, 50 GB logs, 14-day retention, alerting included):
+
+- **Logs:** every `vie-*` container's stdout through the docker socket (`discovery.docker` + `loki.source.docker`), labels `service` (the container name) and `level` (pino's numbers and structlog's names mapped to `trace debug info warn error fatal`), plus the external label `environment` (`development` / `production`, so dev and prod can share one stack). Request, pipeline and chat rates and durations come from LogQL over the structured events (`pipeline_run_started` / `pipeline_run_finished`, `chat_turn_finished`), not from Prometheus client libraries.
+- **Metrics:** the embedded node exporter (CPU, load, memory, filesystems; no network: `/proc/net` follows Alloy's own network namespace, so the box's traffic is the sum of the containers'), the embedded cAdvisor (per-container CPU, working set, limit, disk, network, start time → restarts) and RabbitMQ's built-in exporter on `vie-rabbitmq:15692/metrics/detailed` (per-queue depth and consumers). A keep-list in `ops/alloy/config.alloy` drops everything the dashboards and alerts do not read; the target is ≤ 3k active series (check the Cloud usage page 24 h after enabling it).
+- **Config:** `ops/alloy/config.alloy`, mounted as the directory `./ops/alloy` (an edit needs only `docker compose restart vie-alloy`, no `--force-recreate`). Credentials come from `GRAFANA_CLOUD_{LOKI,PROM}_{URL,USER}` and `GRAFANA_CLOUD_WRITE_TOKEN` (one access-policy token, `logs:write` + `metrics:write`). Dashboards, alert rules and the Telegram contact point live in `ops/grafana/` and are pushed with `ops/grafana/push.sh` (a service-account token, `GRAFANA_CLOUD_API_TOKEN`).
+- **Privileges (accepted, plan R6):** `privileged: true`, `pid: host` (the node exporter reads the host's `/proc`; cAdvisor reads each container's network counters through its processes), `cgroup: host` (cAdvisor needs the host cgroup tree on cgroup v2), read-only mounts of `/`, `/sys`, `/var/lib/docker`, `/dev/disk` and the docker socket, `mem_limit: 256m`, no published port, image pinned. The backup sidecar already mounts the docker socket; this is the second container that does.
+- **Dev:** opt-in, `docker compose --profile monitoring up -d vie-alloy`. On Docker Desktop (this repo's WSL dev box) the daemon runs in its own VM, so cAdvisor sees only the VM's root cgroup: dev has no per-container series and no `/` filesystem (so Box's root-disk panels stay empty); host, RabbitMQ and log data work. Dev services log in console format, so their lines carry no `level` label and the Pipeline/Chat panels (LogQL over the JSON events) stay empty unless a service runs with `LOG_FORMAT=json`. A first start backfills the containers' existing log files: Loki rejects lines older than 7 days ("timestamp too old" in `vie-alloy`'s log, harmless). Readiness: `/-/ready` on `vie-alloy:12345` (the image has no curl/wget, so compose has no healthcheck).
 
 ## Backup & Restore
 

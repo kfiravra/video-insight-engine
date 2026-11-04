@@ -33,6 +33,7 @@ Mongo + Redis + Qdrant + RabbitMQ via docker compose. Full context dump: [PROJEC
 - `QdrantClient` calls are sync: mock with `MagicMock`; use `query_points()` (`search()` is gone).
 - Redis response keys are `vie:response:v<N>:<ytid>`; frame-quality changes need a `SCENE_S3_PREFIX` bump.
 - `YOUTUBE_PROXY_URL` is the only proxy setting. Check the admin for live runs before restarting containers (the hook asks).
+- `vie-alloy` (Grafana Cloud logs + metrics) is behind the `monitoring` profile; prod sets `COMPOSE_PROFILES=backup,monitoring`. On Docker Desktop it has no per-container metrics.
 
 ## Git
 
@@ -49,6 +50,7 @@ Mongo + Redis + Qdrant + RabbitMQ via docker compose. Full context dump: [PROJEC
 ## Working conventions
 
 - Task state lives in `dev/active/<task>/plan.md` + `notes.md`; it is local and never committed (`/task-plan`, `/resume`, `/handoff`).
+- After every completed plan step, tick its checkbox in `plan.md` and update `notes.md` State/Next; at every phase end add a Log line and the gate path. Never batch these to the end of a phase.
 - Phase end: `/phase-review` by area, then one review-fix commit.
 - Spend is stated before any run that costs money or minutes: pipeline runs (video, model, cached or not), agent fan-outs (count, model), e2e against live services.
   One line, then wait for the word; never start it in the same breath.

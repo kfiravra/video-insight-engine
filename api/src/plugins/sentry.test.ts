@@ -287,6 +287,24 @@ describe('sentryFastifyPlugin', () => {
     expect(scope.tags.route).toBe('/boom');
   });
 
+  it('should tag the chat session when the request carries one', async () => {
+    app = await buildAppWithSentry();
+    await app.inject({
+      method: 'GET',
+      url: '/boom',
+      headers: { 'x-request-id': 'plugin-test-abc12345', 'x-session-id': 'chat-session-abcdef12' },
+    });
+
+    expect(builtScopes[0].tags.sessionId).toBe('chat-session-abcdef12');
+  });
+
+  it('should leave the session tag out without a session header', async () => {
+    app = await buildAppWithSentry();
+    await app.inject({ method: 'GET', url: '/boom' });
+
+    expect(builtScopes[0].tags).not.toHaveProperty('sessionId');
+  });
+
   it('should not capture handled 4xx responses', async () => {
     app = await buildAppWithSentry();
     const res = await app.inject({ method: 'GET', url: '/auth-fail' });

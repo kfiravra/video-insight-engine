@@ -8,7 +8,8 @@ async function corsSetup(fastify: FastifyInstance) {
     origin: config.ALLOWED_ORIGINS,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    // X-Session-Id: the chat surface's session id (D8), sent on every assistant request.
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Session-Id'],
   });
 }
 

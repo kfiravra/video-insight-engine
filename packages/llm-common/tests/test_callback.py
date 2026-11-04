@@ -14,6 +14,7 @@ from llm_common.context import (
     llm_user_id_var,
     llm_video_id_var,
     llm_video_summary_id_var,
+    usage_scope,
 )
 from llm_common.models import UsageRecord
 
@@ -355,6 +356,31 @@ class TestAttributionContextVars:
         assert record["video_summary_id"] == "vsum_99"
         assert record["request_id"] == "req_xyz"
 
+    def test_record_carries_the_run_and_session_ids(self):
+        mock_db = MagicMock()
+        cb = MongoDBUsageCallback(mock_db, service="summarizer", mode="sync")
+        ids = {
+            "run_id": "run-77",
+            "trace_id": "b" * 32,
+            "session_id": "chat-sess-1",
+            "attempt": 3,
+            "pipeline_version": "v10",
+            "bypass": True,
+        }
+
+        with usage_scope(**ids), patch("llm_common.callback.litellm") as mock_litellm:
+            mock_litellm.completion_cost.return_value = 0.05
+            mock_litellm.version = "1.80.0"
+            cb.log_success_event(
+                kwargs={"model": "anthropic/claude-sonnet-4-6", "messages": [{"content": "x"}]},
+                response_obj=MockResponse(),
+                start_time=datetime.now(UTC),
+                end_time=datetime.now(UTC),
+            )
+
+        record = self._capture_record(cb)
+        assert {name: record[name] for name in ids} == ids
+
     def test_record_attribution_defaults_to_none_when_unset(self):
         """Unset ctxvars must not throw and must serialize as None — old rows
         and the SSE-direct path that binds no user/request stay valid."""
@@ -423,6 +449,25 @@ class TestManualUsage:
         assert record["user_id"] == "user_7"
         assert record["video_summary_id"] == "vsum_3"
         assert record["request_id"] == "req_55"
+
+    def test_manual_emit_inherits_the_run_ids(self):
+        mock_db = MagicMock()
+        cb = MongoDBUsageCallback(mock_db, service="summarizer", mode="sync")
+
+        with usage_scope(run_id="run-9", trace_id="c" * 32, attempt=1):
+            record_manual_usage(UsageRecord(model="whisper-1", provider="openai", run_id=None))
+
+        record = self._capture_record(cb)
+        assert (record["run_id"], record["trace_id"], record["attempt"]) == ("run-9", "c" * 32, 1)
+
+    def test_manual_emit_keeps_an_explicit_run_id(self):
+        mock_db = MagicMock()
+        cb = MongoDBUsageCallback(mock_db, service="summarizer", mode="sync")
+
+        with usage_scope(run_id="ctx-run"):
+            record_manual_usage(UsageRecord(model="whisper-1", provider="openai", run_id="own-run"))
+
+        assert self._capture_record(cb)["run_id"] == "own-run"
 
     def test_unset_feature_filled_from_ctxvar(self):
         mock_db = MagicMock()

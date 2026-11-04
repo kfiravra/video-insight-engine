@@ -541,6 +541,17 @@ docker builder prune -f --filter until=168h   # when the build cache grows
 df -h /
 ```
 
+### Monitoring: Grafana Cloud
+
+`COMPOSE_PROFILES=backup,monitoring` in `.env` also starts `vie-alloy`, which ships container logs and box, container and RabbitMQ metrics to a Grafana Cloud Free stack ([INFRASTRUCTURE.md](./INFRASTRUCTURE.md#monitoring-grafana-alloy)). Before the first deploy with it, add the rows from `.env.production.example`'s Monitoring block to `.env`: `GRAFANA_CLOUD_LOKI_URL`, `GRAFANA_CLOUD_LOKI_USER`, `GRAFANA_CLOUD_PROM_URL`, `GRAFANA_CLOUD_PROM_USER`, `GRAFANA_CLOUD_WRITE_TOKEN` (an access-policy token with `logs:write` and `metrics:write`), and for the push script `GRAFANA_CLOUD_URL` and `GRAFANA_CLOUD_API_TOKEN` (a service-account token, Editor). Then push the dashboards, alert rules and the Telegram contact point once (re-run after any change under `ops/grafana/`; it updates by uid):
+
+```bash
+ops/grafana/push.sh --dry-run   # prints what it would send
+ops/grafana/push.sh
+```
+
+Alloy adds 256 MB to the memory limits. With empty Grafana rows it still runs and only logs failed sends.
+
 ## g. Stop between interviews
 
 Stop the instance when the demo is idle and start it before an interview. The Elastic IP stays associated, so DNS keeps working. The EBS volume and the idle Elastic IP are still billed while the instance is stopped.

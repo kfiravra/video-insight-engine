@@ -20,10 +20,14 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
+from llm_common.context import llm_session_id_var
+
 logger = structlog.get_logger(__name__)
 
 # Header name for request ID (can be provided by client or generated)
 REQUEST_ID_HEADER = "X-Request-ID"
+# The web's chat session id, forwarded by vie-api (D8); optional.
+SESSION_ID_HEADER = "X-Session-Id"
 
 # Mirror the API gateway's validation: only ASCII safe chars, 8–128 long.
 # Strict enough to reject log-injection attempts (newlines, control chars,
@@ -51,12 +55,18 @@ class HealthCheckFilter(logging.Filter):
         return '"GET /health' not in msg
 
 
+def valid_correlation_id(value: str | None) -> str | None:
+    """``value`` when it is a safe correlation id (the gateway's pattern), else ``None``."""
+    return value if value and _REQUEST_ID_PATTERN.match(value) else None
+
+
 class RequestContextMiddleware(BaseHTTPMiddleware):
     """Middleware that adds request ID and logging context to each request.
 
     Features:
     - Generates unique request ID if not provided
-    - Binds request context for structured logging
+    - Binds request context for structured logging, and the chat session id
+      (``X-Session-Id``) on log lines and ``llm_usage`` rows when sent
     - Logs request start/end with timing (skips health checks)
     - Adds request ID to response headers
     """
@@ -73,11 +83,10 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         # matches the safe pattern — otherwise fall through to a fresh UUID.
         # This prevents log-injection / Sentry-tag pollution from forged
         # headers when something bypasses API-side validation.
-        incoming = request.headers.get(REQUEST_ID_HEADER)
-        if incoming and _REQUEST_ID_PATTERN.match(incoming):
-            request_id = incoming
-        else:
-            request_id = str(uuid.uuid4())
+        request_id = valid_correlation_id(request.headers.get(REQUEST_ID_HEADER)) or str(
+            uuid.uuid4()
+        )
+        session_id = valid_correlation_id(request.headers.get(SESSION_ID_HEADER))
 
         # Bind context for all logs in this request
         structlog.contextvars.clear_contextvars()
@@ -86,6 +95,11 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
             method=request.method,
             path=request.url.path,
         )
+        if session_id:
+            structlog.contextvars.bind_contextvars(session_id=session_id)
+        # The app runs in a task that copies this context, so the reset below
+        # never takes the id away from a response that is still streaming.
+        session_token = llm_session_id_var.set(session_id)
 
         # Log request start
         start_time = time.perf_counter()
@@ -128,6 +142,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
 
         finally:
             # Clean up context
+            llm_session_id_var.reset(session_token)
             structlog.contextvars.clear_contextvars()
 
 

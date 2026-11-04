@@ -1,7 +1,13 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { Writable } from 'stream';
-import { REQUEST_ID_HEADER, genRequestId, requestIdPlugin } from './request-id.js';
+import {
+  REQUEST_ID_HEADER,
+  SESSION_ID_HEADER,
+  genRequestId,
+  readSessionId,
+  requestIdPlugin,
+} from './request-id.js';
 
 interface CapturedLog {
   level: number;
@@ -94,6 +100,25 @@ describe('genRequestId', () => {
   });
 });
 
+describe('readSessionId', () => {
+  it('should return a valid session header', () => {
+    const sessionId = '3f2b8c1e-7a4d-4e5f-9b6a-1c2d3e4f5a6b';
+    expect(readSessionId({ [SESSION_ID_HEADER]: sessionId })).toBe(sessionId);
+  });
+
+  it('should be undefined without the header', () => {
+    expect(readSessionId({})).toBeUndefined();
+  });
+
+  it('should drop a log-injection attempt instead of passing it on', () => {
+    expect(readSessionId({ [SESSION_ID_HEADER]: 'abc\n[INFO] forged' })).toBeUndefined();
+  });
+
+  it('should drop a repeated header', () => {
+    expect(readSessionId({ [SESSION_ID_HEADER]: ['a-session-id', 'b-session-id'] as never })).toBeUndefined();
+  });
+});
+
 describe('requestIdPlugin', () => {
   let app: FastifyInstance;
 
@@ -148,5 +173,36 @@ describe('requestIdPlugin', () => {
     // Each line goes through the per-request child logger and must include the id.
     const requestScopedLogs = logs.filter((l) => l.requestId === incoming);
     expect(requestScopedLogs.length).toBeGreaterThan(0);
+  });
+
+  it('should bind sessionId next to requestId when the session header is valid', async () => {
+    const { logs, stream } = buildLogCapture();
+    app = await buildTestApp({ logStream: stream });
+
+    const sessionId = 'chat-session-abcdef12';
+    await app.inject({
+      method: 'GET',
+      url: '/echo',
+      headers: { [REQUEST_ID_HEADER]: 'session-binding-test', [SESSION_ID_HEADER]: sessionId },
+    });
+
+    const requestScopedLogs = logs.filter((l) => l.requestId === 'session-binding-test');
+    expect(requestScopedLogs.length).toBeGreaterThan(0);
+    expect(requestScopedLogs.every((l) => l.sessionId === sessionId)).toBe(true);
+  });
+
+  it('should bind no sessionId for an invalid session header', async () => {
+    const { logs, stream } = buildLogCapture();
+    app = await buildTestApp({ logStream: stream });
+
+    await app.inject({
+      method: 'GET',
+      url: '/echo',
+      headers: { [REQUEST_ID_HEADER]: 'bad-session-test', [SESSION_ID_HEADER]: 'x;y' },
+    });
+
+    const requestScopedLogs = logs.filter((l) => l.requestId === 'bad-session-test');
+    expect(requestScopedLogs.length).toBeGreaterThan(0);
+    expect(requestScopedLogs.some((l) => 'sessionId' in l)).toBe(false);
   });
 });

@@ -32,7 +32,7 @@ export interface SummarizeRequest {
   runId?: string;
   pipelineVersion?: string;
   bypassCache?: boolean;
-  /** P1 (D8): the chat session that asked for the run; no producer yet. */
+  /** The chat session that asked for the run (D8); the summarizer tags `chatSession:<id>`. */
   chatSessionId?: string;
 }
 

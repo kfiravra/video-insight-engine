@@ -31,22 +31,28 @@ def trace_url(trace_id: str | None) -> str | None:
 
 
 def session_url(session_id: str | None) -> str | None:
-    """A session's Langfuse page (P2: a video row's attempts), or ``None``."""
+    """A Langfuse session's page (``pipeline-<vsid>`` or ``chat-<sessionId>``), or ``None``."""
     base = _project_url()
     return f"{base}/sessions/{session_id}" if base and session_id else None
 
 
-def latest_trace_ids_by_request(runs: Iterable[Any] | None) -> dict[str, str]:
-    """``requestId`` → ``traceId`` of the newest ``runs[]`` entry for it.
+def run_entry(
+    runs: Iterable[Any] | None, *, run_id: str | None, request_id: str | None
+) -> dict[str, Any] | None:
+    """The ``runs[]`` entry of one attempt (P-2): the entry with ``run_id``.
 
-    Retries of one request share its id; the newest attempt is the one to open.
-    Entries without both ids (pre-P0b rows, GDPR-stripped ones) are skipped.
+    A ledger row written before P1 has no run id; it falls back to the newest
+    entry with its ``request_id`` (retries of one request share it, the newest
+    attempt is the one to open). ``None`` when no entry matches (pre-P0b rows,
+    entries capped out of ``runs``).
     """
-    out: dict[str, str] = {}
+    found: dict[str, Any] | None = None
     for run in runs or []:
         if not isinstance(run, dict):
             continue
-        request_id, trace_id = run.get("requestId"), run.get("traceId")
-        if isinstance(request_id, str) and isinstance(trace_id, str) and request_id and trace_id:
-            out[request_id] = trace_id  # later entries are newer
-    return out
+        if run_id:
+            if run.get("runId") == run_id:
+                found = run
+        elif request_id and run.get("requestId") == request_id:
+            found = run  # later entries are newer
+    return found

@@ -25,14 +25,7 @@ from litellm.integrations.custom_logger import CustomLogger
 
 from llm_common.alerts import deliver_alert
 from llm_common.buffer import AsyncBuffer, SyncBuffer
-from llm_common.context import (
-    llm_feature_var,
-    llm_refused_model_var,
-    llm_request_id_var,
-    llm_user_id_var,
-    llm_video_id_var,
-    llm_video_summary_id_var,
-)
+from llm_common.context import llm_feature_var, llm_refused_model_var, usage_ids
 from llm_common.models import UsageRecord, compute_cache_savings_usd, extract_provider
 from llm_common.refusal import refusal_of
 
@@ -121,12 +114,13 @@ def record_manual_usage(record: UsageRecord) -> None:
     """Write a usage record built outside LiteLLM into the active buffer.
 
     For costs LiteLLM never sees — Whisper/Gemini transcription call provider
-    SDKs directly. Run-attribution fields (request/video/user/video_summary id)
-    and an unset feature are filled from the same context vars
+    SDKs directly. Unset attribution fields (``USAGE_ID_VARS``) and an unset
+    feature are filled from the same context vars
     :meth:`MongoDBUsageCallback._build_record` reads, so a manual emit inherits
-    the run's attribution automatically. No-op (with a warning) when no buffer
-    is registered — e.g. a unit test with no callback. Never raises into the
-    caller; tracking must never break the work it tracks.
+    the run's attribution (the D9 run, trace and session ids included)
+    automatically. No-op (with a warning) when no buffer is registered — e.g. a
+    unit test with no callback. Never raises into the caller; tracking must
+    never break the work it tracks.
     """
     buffer = _active_buffer
     if buffer is None:
@@ -139,14 +133,9 @@ def record_manual_usage(record: UsageRecord) -> None:
     try:
         if record.feature == "unknown":
             record.feature = llm_feature_var.get()
-        if record.request_id is None:
-            record.request_id = llm_request_id_var.get()
-        if record.video_id is None:
-            record.video_id = llm_video_id_var.get()
-        if record.user_id is None:
-            record.user_id = llm_user_id_var.get()
-        if record.video_summary_id is None:
-            record.video_summary_id = llm_video_summary_id_var.get()
+        for field, value in usage_ids().items():
+            if getattr(record, field) is None:
+                setattr(record, field, value)
         result = buffer.add(record.model_dump())
         # AsyncBuffer.add returns a coroutine. Transcription only runs under the
         # sync buffer today, but schedule it on a running loop if present so an
@@ -282,10 +271,7 @@ class MongoDBUsageCallback(CustomLogger):
                 timestamp=datetime.now(UTC),
                 success=True,
                 duration_ms=duration_ms,
-                request_id=llm_request_id_var.get(),
-                video_id=llm_video_id_var.get(),
-                user_id=llm_user_id_var.get(),
-                video_summary_id=llm_video_summary_id_var.get(),
+                **usage_ids(),
                 is_stream=is_stream,
                 service=self._service,
                 prompt_preview=prompt_text if self._store_prompt_preview else "",
@@ -307,10 +293,7 @@ class MongoDBUsageCallback(CustomLogger):
                 provider=extract_provider(kwargs.get("model", "unknown")),
                 service=self._service,
                 feature=llm_feature_var.get(),
-                request_id=llm_request_id_var.get(),
-                video_id=llm_video_id_var.get(),
-                user_id=llm_user_id_var.get(),
-                video_summary_id=llm_video_summary_id_var.get(),
+                **usage_ids(),
             ).model_dump()
 
     def _build_alert(self, record: dict) -> dict:

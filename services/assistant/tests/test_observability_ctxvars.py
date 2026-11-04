@@ -1,8 +1,8 @@
 """Tests for P1 assistant observability — ctxvar propagation and Langfuse spans.
 
 Verifies that:
-- Each endpoint sets the correct llm_feature_var / llm_video_id_var /
-  llm_user_id_var / llm_request_id_var at request time.
+- Each endpoint sets the correct llm_feature_var / llm_video_summary_id_var /
+  llm_user_id_var / llm_request_id_var / llm_session_id_var at request time.
 - Concurrent requests do not leak ctxvar state into each other.
 - The action dispatcher sets llm_feature_var before executing a tool.
 - The /action endpoint opens a chat_trace + span (best-effort).
@@ -16,8 +16,9 @@ from unittest.mock import AsyncMock
 from llm_common.context import (
     llm_feature_var,
     llm_request_id_var,
+    llm_session_id_var,
     llm_user_id_var,
-    llm_video_id_var,
+    llm_video_summary_id_var,
 )
 from src.services.tool_router import ActionDispatcher, ToolRouter
 
@@ -42,9 +43,11 @@ def _make_app_client_with_capture(captured: dict):
 
     async def _spy_chat(*, video_id, message, history, user_id, session_id, **_):
         captured["feature"] = llm_feature_var.get()
-        captured["video_id"] = llm_video_id_var.get()
+        captured["video_summary_id"] = llm_video_summary_id_var.get()
         captured["user_id"] = llm_user_id_var.get()
         captured["request_id"] = llm_request_id_var.get()
+        captured["session_id"] = llm_session_id_var.get()
+        captured["service_request_id"] = _.get("request_id")
         yield 'data: {"type": "done", "content": ""}\n\n'
 
     async def _spy_library_chat(*, video_ids, message, history, user_id, session_id, **_):
@@ -91,7 +94,7 @@ class TestChatEndpointCtxvars:
 
         assert captured.get("feature") == "assistant:rag_chat"
 
-    async def test_should_propagate_video_id_ctxvar_for_chat(self):
+    async def test_should_propagate_the_summary_id_ctxvar_for_chat(self):
         captured: dict = {}
         client, _ = _make_app_client_with_capture(captured)
 
@@ -101,7 +104,34 @@ class TestChatEndpointCtxvars:
                 json={"video_id": "vid-xyz", "message": "hello"},
             )
 
-        assert captured.get("video_id") == "vid-xyz"
+        assert captured.get("video_summary_id") == "vid-xyz"
+
+    async def test_should_hand_the_session_to_the_ledger_and_the_request_id_to_the_service(self):
+        captured: dict = {}
+        client, _ = _make_app_client_with_capture(captured)
+
+        async with client:
+            await client.post(
+                "/chat",
+                json={"video_id": "vid-abc", "message": "hello"},
+                headers={"X-Session-Id": "chat-session-1", "X-Request-ID": "req-12345678"},
+            )
+
+        assert captured.get("session_id") == "chat-session-1"
+        assert captured.get("service_request_id") == "req-12345678"
+
+    async def test_should_drop_a_forged_request_id_before_it_reaches_the_trace(self):
+        captured: dict = {}
+        client, _ = _make_app_client_with_capture(captured)
+
+        async with client:
+            await client.post(
+                "/chat",
+                json={"video_id": "vid-abc", "message": "hello"},
+                headers={"X-Request-ID": "short"},
+            )
+
+        assert captured.get("service_request_id") is None
 
     async def test_should_propagate_user_id_ctxvar_for_chat(self):
         captured: dict = {}
@@ -212,7 +242,7 @@ class TestActionEndpointCtxvars:
 
         async def _spy_dispatch(*args, **kwargs):
             captured["feature"] = llm_feature_var.get()
-            captured["video_id"] = llm_video_id_var.get()
+            captured["video_summary_id"] = llm_video_summary_id_var.get()
             captured["user_id"] = llm_user_id_var.get()
             captured["request_id"] = llm_request_id_var.get()
             return {"done": True}
@@ -244,7 +274,7 @@ class TestActionEndpointCtxvars:
             app.state.assistant_service = None
 
         assert captured.get("feature") == "assistant:action:quiz_me"
-        assert captured.get("video_id") == "vid-action-test"
+        assert captured.get("video_summary_id") == "vid-action-test"
         assert captured.get("user_id") == "act-user-5"
         assert captured.get("request_id") == "req-action99"
 

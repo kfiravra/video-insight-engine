@@ -286,3 +286,49 @@ class TestExecuteToolErrors:
 
         assert "error" in res
         assert "move_video failed" in res["error"]
+
+
+class TestExecuteToolSpans:
+    """D8: every tool run is a ``tool:<name>`` span inside the turn's trace."""
+
+    async def test_should_nest_a_tool_span_under_the_turn(
+        self, mock_api_client, mock_llm, langfuse_capture
+    ) -> None:
+        from src.services.observability import chat_trace
+
+        async with chat_trace(video_summary_id=None, session_id="chat-sess-1"):
+            await execute_tool(
+                "create_folder",
+                {"name": "Recipes"},
+                user_id="u1",
+                api_client=mock_api_client,
+                llm=mock_llm,
+            )
+
+        tool = langfuse_capture.named("tool:create_folder")
+        assert (tool.parent, tool.type) == ("chat:library", "tool")
+        assert tool.level != "WARNING"
+
+    async def test_should_mark_the_span_warning_when_the_tool_fails(
+        self, mock_api_client, mock_llm, langfuse_capture
+    ) -> None:
+        from src.services.observability import chat_trace
+
+        async with chat_trace(video_summary_id=None):
+            res = await execute_tool(
+                "frobnicate", {}, user_id="u1", api_client=mock_api_client, llm=mock_llm
+            )
+
+        tool = langfuse_capture.named("tool:frobnicate")
+        assert tool.level == "WARNING"
+        assert tool.attributes["langfuse.observation.status_message"] == res["error"]
+
+    async def test_should_run_the_tool_without_a_trace(self, mock_api_client, mock_llm) -> None:
+        res = await execute_tool(
+            "create_folder",
+            {"name": "Recipes"},
+            user_id="u1",
+            api_client=mock_api_client,
+            llm=mock_llm,
+        )
+        assert "error" not in res

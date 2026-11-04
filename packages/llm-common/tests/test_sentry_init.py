@@ -232,6 +232,24 @@ def test_scrub_promotes_request_id_contextvar_to_tag():
         _clear_contextvars()
 
 
+def test_scrub_promotes_run_and_session_ids_to_tags():
+    _clear_contextvars()
+    structlog.contextvars.bind_contextvars(run_id="run-777", session_id="chat-sess-1")
+    try:
+        out = sentry_init.scrub_event_payload({"message": "kaboom"}, None)
+        assert out is not None
+        assert (out["tags"]["runId"], out["tags"]["sessionId"]) == ("run-777", "chat-sess-1")
+    finally:
+        _clear_contextvars()
+
+
+def test_scrub_adds_no_run_or_session_tag_when_none_is_bound():
+    _clear_contextvars()
+    out = sentry_init.scrub_event_payload({"message": "kaboom"}, None)
+    assert out is not None
+    assert "runId" not in out.get("tags", {}) and "sessionId" not in out.get("tags", {})
+
+
 def test_capture_exception_noop_when_sdk_missing(monkeypatch):
     _clear_contextvars()
     monkeypatch.setattr(sentry_init, "_SDK_AVAILABLE", False)

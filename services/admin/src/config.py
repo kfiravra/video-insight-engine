@@ -76,8 +76,9 @@ class Settings(BaseSettings):
     SENTRY_RELEASE: str | None = None  # Usually the deploy SHA.
     SENTRY_TRACES_SAMPLE_RATE: float = 0.0
 
-    # Logging
+    # Logging: json (prod) or console; LOG_LEVEL is a stdlib level name.
     LOG_LEVEL: str = "INFO"
+    LOG_FORMAT: str = "console"
 
 
 settings = Settings()

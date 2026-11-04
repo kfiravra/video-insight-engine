@@ -1,5 +1,6 @@
 import { ApiError, getAccessToken, refreshToken } from "@/api/client";
 import { useAuthStore } from "@/stores/auth-store";
+import { LIBRARY_CHAT_SURFACE, useChatStore } from "@/stores/chat-store";
 
 export interface AssistantChatMessage {
   role: "user" | "assistant";
@@ -30,6 +31,19 @@ export interface AssistantChatEvent {
 }
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000/api";
+
+/**
+ * Headers of every assistant request. `X-Session-Id` is the chat surface's
+ * session id (one per video chat, one for the library chat), so the gateway
+ * and the assistant group every turn of that conversation into one session.
+ */
+function assistantHeaders(token: string | null, surface: string): Record<string, string> {
+  return {
+    "Content-Type": "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    "X-Session-Id": useChatStore.getState().ensureSessionId(surface),
+  };
+}
 
 /**
  * Send a chat message to the assistant service and receive SSE events.
@@ -154,10 +168,7 @@ function fetchAssistantStream(
 ): Promise<Response> {
   return fetch(`${API_URL}/videos/${videoSummaryId}/chat`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
+    headers: assistantHeaders(token, videoSummaryId),
     credentials: "include",
     body: JSON.stringify({
       message,
@@ -183,10 +194,7 @@ function fetchLibraryStream(
 ): Promise<Response> {
   return fetch(`${API_URL}/assistant/library/chat`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
+    headers: assistantHeaders(token, LIBRARY_CHAT_SURFACE),
     credentials: "include",
     body: JSON.stringify({
       message,
@@ -226,10 +234,7 @@ export async function runAssistantAction(
   const buildRequest = (token: string | null): Promise<Response> =>
     fetch(`${API_URL}/assistant/action`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
+      headers: assistantHeaders(token, videoSummaryId ?? LIBRARY_CHAT_SURFACE),
       credentials: "include",
       body: JSON.stringify({ action, params, video_id: videoSummaryId }),
     });

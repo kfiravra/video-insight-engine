@@ -22,6 +22,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 import structlog
+from llm_common.context import usage_scope
 from llm_common.sentry_init import (
     capture_exception_with_context,
     pipeline_stage_transaction,
@@ -61,6 +62,20 @@ def retry_backoff_seconds(base_seconds: float, attempt: int) -> float:
     if base_seconds <= 0:
         return 0.0
     return min(base_seconds * (2 ** max(attempt - 1, 0)), MAX_RETRY_BACKOFF_SECONDS)
+
+
+def _job_usage_ids(payload: VideoJobPayload) -> dict[str, Any]:
+    """The ledger ids a job starts with; ``usage_scope`` sets every other id to None.
+
+    The attempt's own ids (run, trace, attempt, version, bypass, chat session) are
+    bound by the runner once it resolved the attempt (``pipeline_runner._bind_run``).
+    """
+    return {
+        "request_id": payload.request_id,
+        "video_id": payload.youtube_id,
+        "video_summary_id": payload.video_summary_id,
+        "user_id": payload.user_id,
+    }
 
 
 class WorkerRunner:
@@ -111,6 +126,12 @@ class WorkerRunner:
             user_id=payload.user_id,
             attempt=payload.attempt,
         )
+        # D11: the run and chat session too (the runner re-binds ``run_id`` when
+        # this attempt gets a fresh id instead of the message's).
+        if payload.run_id:
+            structlog.contextvars.bind_contextvars(run_id=payload.run_id)
+        if payload.chat_session_id:
+            structlog.contextvars.bind_contextvars(session_id=payload.chat_session_id)
 
         try:
             # One transaction per job — sampled per SENTRY_TRACES_SAMPLE_RATE.
@@ -123,11 +144,16 @@ class WorkerRunner:
             # When Sentry is disabled the context manager is a no-op.
             pipeline_exc: Exception | None = None
             try:
-                with pipeline_stage_transaction(
-                    "worker.process_message",
-                    videoSummaryId=payload.video_summary_id,
-                    youtubeId=payload.youtube_id,
-                    plan=payload.plan,
+                # The job's ledger ids (D9), restored when it ends: the runner
+                # re-binds them mid-run, and a worker process lives for many jobs.
+                with (
+                    usage_scope(**_job_usage_ids(payload)),
+                    pipeline_stage_transaction(
+                        "worker.process_message",
+                        videoSummaryId=payload.video_summary_id,
+                        youtubeId=payload.youtube_id,
+                        plan=payload.plan,
+                    ),
                 ):
                     await self._run_pipeline(payload)
             except Exception as exc:
@@ -172,6 +198,7 @@ class WorkerRunner:
                 requestId=payload.request_id,
                 attempt=str(payload.attempt),
                 outcome="dlq",
+                runId=payload.run_id,
             )
             await message.reject(requeue=False)
             return JobOutcome.PERMANENT_FAILURE

@@ -37,18 +37,32 @@ def test_urls_should_be_none_when_the_project_id_is_unset(monkeypatch: pytest.Mo
     assert (langfuse.trace_url("t"), langfuse.session_url("s")) == (None, None)
 
 
-def test_latest_trace_ids_should_map_each_request_to_its_newest_attempt_when_retried():
+def test_run_entry_should_pick_the_attempt_with_the_run_id_when_the_row_has_one():
+    runs = [
+        {"runId": "a", "requestId": "req-1", "traceId": "t-a"},
+        {"runId": "b", "requestId": "req-1", "traceId": "t-b"},
+    ]
+    assert langfuse.run_entry(runs, run_id="a", request_id="req-1") == runs[0]
+
+
+def test_run_entry_should_pick_the_newest_attempt_of_the_request_when_a_legacy_row_has_no_run_id():
     runs = [
         {"runId": "a", "requestId": "req-1", "traceId": "t-a"},
         {"runId": "b", "requestId": "req-2", "traceId": "t-b"},
         {"runId": "c", "requestId": "req-1", "traceId": "t-c"},
     ]
-    assert langfuse.latest_trace_ids_by_request(runs) == {"req-1": "t-c", "req-2": "t-b"}
+    assert langfuse.run_entry(runs, run_id=None, request_id="req-1") == runs[2]
 
 
 @pytest.mark.parametrize(
     "runs",
-    [None, [], [{"runId": "a", "traceId": "t"}], [{"requestId": "r"}], ["junk"]],
+    [None, [], ["junk"], [{"runId": "other", "requestId": "req-1"}]],
 )
-def test_latest_trace_ids_should_skip_entries_when_an_id_is_missing(runs: object):
-    assert langfuse.latest_trace_ids_by_request(runs) == {}  # type: ignore[arg-type]
+def test_run_entry_should_be_none_when_no_entry_matches(runs: object):
+    assert langfuse.run_entry(runs, run_id="a", request_id=None) is None  # type: ignore[arg-type]
+
+
+def test_run_entry_should_be_none_when_neither_id_is_known():
+    assert (
+        langfuse.run_entry([{"runId": "a", "requestId": "r"}], run_id=None, request_id=None) is None
+    )

@@ -715,6 +715,24 @@ describe('VideoService', () => {
         expect(first).not.toBe(second);
       });
 
+      it('should stamp and publish the chat session that asked for the video', async () => {
+        config.USE_QUEUE_PIPELINE = true;
+        freshInsert('summary-run-chat');
+
+        await videoService.createVideo('user-r', url, { queuePlan: 'free', chatSessionId: 'chat-sess-1' });
+
+        expect(mockVideoRepository.stampDispatchContext.mock.calls[0][4].chatSessionId).toBe('chat-sess-1');
+        expect(mockQueuePublisher.publishVideoJob.mock.calls[0][0].chatSessionId).toBe('chat-sess-1');
+      });
+
+      it('should send the chat session over HTTP too', async () => {
+        freshInsert('summary-run-chat-http');
+
+        await videoService.createVideo('user-r', url, { queuePlan: 'free', chatSessionId: 'chat-sess-2' });
+
+        expect(mockSummarizerClient.triggerSummarization.mock.calls[0][0].chatSessionId).toBe('chat-sess-2');
+      });
+
       it('should write and return no run when the guard is held', async () => {
         mockDispatchGuard.acquire.mockResolvedValueOnce({ acquired: false, token: null });
         freshInsert('summary-run-held');

@@ -36,23 +36,29 @@ test.describe('Usage Page', () => {
   });
 
   test('recent calls table shows mock data', async ({ adminPage }) => {
+    // Other usage tables (duplicates) name the same models; read the Recent Calls panel only.
+    const recent = adminPage
+      .locator('[data-slot="panel"]')
+      .filter({ has: adminPage.locator('[data-slot="panel-title"]', { hasText: 'Recent Calls' }) })
+      .locator('table tbody');
+
     // Model name from mock data
-    await expect(adminPage.locator('table tbody').getByText('claude-sonnet-4-6')).toBeVisible();
+    await expect(recent.getByText('claude-sonnet-4-6')).toBeVisible();
 
     // Cost values
-    await expect(adminPage.locator('table tbody').getByText('$0.0234')).toBeVisible();
+    await expect(recent.getByText('$0.0234')).toBeVisible();
 
-    // Tokens (tokens_in + tokens_out = 1500 + 800 = 2300)
-    await expect(adminPage.locator('table tbody').getByText('2300')).toBeVisible();
+    // Tokens (tokens_in + tokens_out = 1500 + 800 = 2300, locale-formatted)
+    await expect(recent.getByText('2,300')).toBeVisible();
 
     // Duration
-    await expect(adminPage.locator('table tbody').getByText('2100ms')).toBeVisible();
+    await expect(recent.getByText('2100ms')).toBeVisible();
   });
 
   test('tables are in overflow containers', async ({ adminPage }) => {
     // Wait for the Recent Calls table to render with data
     await expect(adminPage.getByText('Recent Calls')).toBeVisible();
-    await expect(adminPage.locator('table')).toBeVisible();
+    await expect(adminPage.locator('table').first()).toBeVisible();
 
     const tables = adminPage.locator('table');
     const count = await tables.count();

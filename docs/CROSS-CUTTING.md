@@ -289,8 +289,18 @@ One attempt of the pipeline = one `runId` = one Langfuse trace. Who owns which i
 | `runId` | vie-api `dispatchPipeline` (one per dispatch); the summarizer mints a fresh one, with `retryOf`, for an attempt the api did not dispatch or whose id already ran | queue payload `runId`, `POST /summarize` body `runId`, status callback `runId` | `videoSummaryCache.currentRunId`, `runs[].runId` | summarizer (trace id), api (closes `runs[]`), `POST /api/videos` + `GET /api/videos/:id` responses, eval |
 | `traceId` | derived, never sent alone: `sha256(runId)` hex, first 32 chars (`traceIdForRun` in TS, `trace_id_for_run` in Python, same as `Langfuse.create_trace_id(seed=)`; one test vector pinned on both sides) | responses next to `runId` | `runs[].traceId` | admin deep links, eval |
 | `requestId` | vie-api request id | `X-Request-ID`, queue `requestId` | row `requestId`, `runs[].requestId`, `llm_usage.request_id` | billing repair (late settle, assistant backfill), logs, Sentry |
+| `sessionId` (P1) | the web, one uuid per chat surface (video chat / library chat), in the `vie-chat` store | `X-Session-Id` on every chat and action request → vie-api → vie-assistant; assistant → `/internal/assistant/generate` → `chatSessionId` in the queue payload and `POST /summarize` body | `runs[].chatSessionId`, `llm_usage.session_id` | Langfuse sessions `chat-<id>`, pipeline tag `chatSession:<id>`, logs, Sentry tag (api) |
 | `billingRunId` | vie-api submission (token ledger) | read off the row by the summarizer, sent back in `POST /internal/run-cost` | row `billingRunId` | billing only; unchanged by P0b |
 | session `pipeline-<videoSummaryId>` | derived by the summarizer | Langfuse only | | groups every attempt of a row |
+
+### Correlation headers
+
+| Header | Sent by | Validated | Forwarded to |
+|---|---|---|---|
+| `X-Request-ID` | any client (optional); vie-api answers with it on every response | `^[A-Za-z0-9_-]{8,128}$` (api `genRequestId`, Python `RequestContextMiddleware`); a bad or missing value → a fresh UUID | summarizer (`POST /summarize` header, queue `requestId`), assistant (all four calls), assistant → vie-api internal calls |
+| `X-Session-Id` | the web on every assistant request (`lib/assistant.ts` `assistantHeaders()`) | the same pattern; a bad value is dropped, the request still runs | assistant (`/chat`, `/library/chat`, `/library/search`, `/action`); assistant → vie-api internal calls (so `generate_video` runs carry it) |
+
+vie-api's CORS `allowedHeaders` lists `X-Session-Id`, which the browser sends; the web never sends `X-Request-ID` (vie-api mints it and returns it on the response).
 
 ## Error Handling Across Services
 

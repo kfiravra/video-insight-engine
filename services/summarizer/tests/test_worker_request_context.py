@@ -72,6 +72,31 @@ class TestRequestContextBinding:
         assert captured.get("video_summary_id") == "abc123def456789012345678"
         assert captured.get("youtube_id") == "dQw4w9WgXcQ"
 
+    async def test_should_bind_run_and_session_ids_on_log_lines(self):
+        captured: dict[str, object] = {}
+
+        async def capturing_pipeline(_payload: VideoJobPayload) -> None:
+            captured.update(structlog.contextvars.get_contextvars())
+
+        runner = WorkerRunner(run_pipeline=capturing_pipeline, republish=AsyncMock(), max_retries=3)
+        body = {**VALID_PAYLOAD, "runId": "run-log-1", "chatSessionId": "chat-log-1"}
+
+        await runner.process_message(_make_message(json.dumps(body).encode("utf-8")))
+
+        assert (captured.get("run_id"), captured.get("session_id")) == ("run-log-1", "chat-log-1")
+
+    async def test_should_bind_no_session_for_a_run_not_started_from_chat(self):
+        captured: dict[str, object] = {}
+
+        async def capturing_pipeline(_payload: VideoJobPayload) -> None:
+            captured.update(structlog.contextvars.get_contextvars())
+
+        runner = WorkerRunner(run_pipeline=capturing_pipeline, republish=AsyncMock(), max_retries=3)
+
+        await runner.process_message(_make_message(json.dumps(VALID_PAYLOAD).encode("utf-8")))
+
+        assert "session_id" not in captured
+
     async def test_should_clear_contextvars_after_message(self):
         runner = WorkerRunner(
             run_pipeline=AsyncMock(),
@@ -100,3 +125,59 @@ class TestRequestContextBinding:
         await runner.process_message(message)
 
         assert structlog.contextvars.get_contextvars() == {}
+
+
+class TestUsageIdScope:
+    """D9: a job's ledger ids are its own and do not outlive it (the worker inheritance bug)."""
+
+    async def test_should_bind_the_job_ids_for_the_ledger_during_the_pipeline(self):
+        from llm_common.context import bind_usage_ids, usage_ids
+
+        captured: dict[str, object] = {}
+
+        async def capturing_pipeline(_payload: VideoJobPayload) -> None:
+            captured.update(usage_ids())
+
+        runner = WorkerRunner(run_pipeline=capturing_pipeline, republish=AsyncMock(), max_retries=3)
+        tokens = bind_usage_ids(run_id="previous-job-run")
+        try:
+            await runner.process_message(_make_message(json.dumps(VALID_PAYLOAD).encode("utf-8")))
+        finally:
+            from llm_common.context import llm_run_id_var
+
+            llm_run_id_var.reset(tokens[0])
+
+        assert captured["request_id"] == "ctx-binding-test"
+        assert captured["video_id"] == "dQw4w9WgXcQ"
+        assert captured["video_summary_id"] == "abc123def456789012345678"
+        assert captured["user_id"] == "user-42"
+        # The attempt's ids are the runner's to bind; the job starts with none.
+        assert captured["run_id"] is None
+
+    async def test_should_restore_the_ledger_ids_after_the_job(self):
+        from llm_common.context import bind_usage_ids, usage_ids
+
+        async def pipeline_that_rebinds(_payload: VideoJobPayload) -> None:
+            # The runner re-binds mid-run without reset tokens.
+            bind_usage_ids(user_id="row-owner", run_id="fresh-run")
+
+        runner = WorkerRunner(
+            run_pipeline=pipeline_that_rebinds, republish=AsyncMock(), max_retries=3
+        )
+
+        await runner.process_message(_make_message(json.dumps(VALID_PAYLOAD).encode("utf-8")))
+
+        assert set(usage_ids().values()) == {None}
+
+    async def test_should_restore_the_ledger_ids_after_a_failed_job(self):
+        from llm_common.context import bind_usage_ids, usage_ids
+
+        async def failing_pipeline(_payload: VideoJobPayload) -> None:
+            bind_usage_ids(run_id="fresh-run")
+            raise RuntimeError("kaboom")
+
+        runner = WorkerRunner(run_pipeline=failing_pipeline, republish=AsyncMock(), max_retries=3)
+
+        await runner.process_message(_make_message(json.dumps(VALID_PAYLOAD).encode("utf-8")))
+
+        assert set(usage_ids().values()) == {None}

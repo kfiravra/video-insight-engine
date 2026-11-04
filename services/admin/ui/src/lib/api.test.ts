@@ -126,6 +126,42 @@ describe('api client', () => {
         expect.anything(),
       );
     });
+
+    it('should narrow /usage/by-run to one video when a video id is given', async () => {
+      const { api, setApiKey } = await import('./api');
+      setApiKey('key');
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve([]),
+      });
+      vi.stubGlobal('fetch', mockFetch);
+
+      await api.usage.byRun(90, 50, 0, 'FTha4zARGN4');
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/usage/by-run?days=90&limit=50&offset=0&video_id=FTha4zARGN4',
+        expect.anything(),
+      );
+    });
+  });
+
+  describe('api.usage.bySession', () => {
+    it('should call /usage/by-session with days, limit, offset params', async () => {
+      const { api, setApiKey } = await import('./api');
+      setApiKey('key');
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve([]),
+      });
+      vi.stubGlobal('fetch', mockFetch);
+
+      await api.usage.bySession(7, 20, 40);
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/usage/by-session?days=7&limit=20&offset=40',
+        expect.anything(),
+      );
+    });
   });
 
   describe('api.users.activity', () => {

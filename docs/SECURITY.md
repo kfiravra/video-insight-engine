@@ -367,7 +367,8 @@ await fastify.register(cors, {
   ],
   credentials: true, // For cookies
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
-  allowedHeaders: ["Content-Type", "Authorization"],
+  // X-Session-Id: the chat surface's session id (observability D8), on assistant requests.
+  allowedHeaders: ["Content-Type", "Authorization", "X-Session-Id"],
 });
 ```
 

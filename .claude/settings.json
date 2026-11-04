@@ -17,26 +17,9 @@
       "Bash(gh pr create *)",
       "Bash(gh pr merge *)",
       "Bash(env -u GITHUB_TOKEN gh pr *)",
-      "Bash(git stash *)",
       "Bash(git reset --hard *)",
       "Bash(git clean *)",
-      "Bash(git checkout -- *)",
-      "Bash(docker compose restart *)",
-      "Bash(docker compose down *)",
-      "Bash(docker compose stop *)",
-      "Bash(docker compose rm *)",
-      "Bash(docker compose kill *)",
-      "Bash(docker compose up *--force-recreate*)",
-      "Bash(docker compose up *--build*)",
-      "Bash(docker-compose restart *)",
-      "Bash(docker-compose down *)",
-      "Bash(docker-compose stop *)",
-      "Bash(docker-compose up *--force-recreate*)",
-      "Bash(docker-compose up *--build*)",
-      "Bash(docker restart *)",
-      "Bash(docker stop *)",
-      "Bash(docker rm *)",
-      "Bash(docker kill *)"
+      "Bash(git checkout -- *)"
     ]
   },
   "hooks": {
