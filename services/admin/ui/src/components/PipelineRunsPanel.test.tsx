@@ -380,6 +380,62 @@ describe('PipelineRunsPanel', () => {
     expect(screen.queryByText('plan')).toBeNull();
   });
 
+  it('should show the full run, request and retried run ids in the expanded row', async () => {
+    mockByRun.mockResolvedValue([RETRY_RUN]);
+    const { container } = await renderPanel();
+    await screen.findByText('3f2a9b…e7d0');
+
+    fireEvent.click(screen.getByRole('button', { name: /expand/i }));
+
+    const details = container.querySelector('[data-slot="run-details"]');
+    expect(details).not.toBeNull();
+    expect(details?.textContent).toContain(`Run${RETRY_RUN.run_id}`);
+    expect(details?.textContent).toContain(`Request${RETRY_RUN.request_id}`);
+    expect(details?.textContent).toContain(`Retry of${RETRY_RUN.retry_of}`);
+  });
+
+  it('should spell out why a run is degraded in the expanded row', async () => {
+    mockByRun.mockResolvedValue([{ ...RUN_1, degraded: true, degraded_reasons: ['media_download_failed'] }]);
+    const { container } = await renderPanel();
+    await screen.findByText(/degraded · media/i);
+
+    fireEvent.click(screen.getByRole('button', { name: /expand/i }));
+
+    const details = container.querySelector('[data-slot="run-details"]');
+    expect(details?.textContent).toContain('media: a video download failed');
+  });
+
+  it('should explain a degraded row without reasons as a partial extraction', async () => {
+    mockByRun.mockResolvedValue([{ ...RUN_1, degraded: true, degraded_reasons: null }]);
+    const { container } = await renderPanel();
+    await screen.findByText('degraded');
+
+    fireEvent.click(screen.getByRole('button', { name: /expand/i }));
+
+    const details = container.querySelector('[data-slot="run-details"]');
+    expect(details?.textContent).toContain('partial: an extraction field group failed');
+  });
+
+  it('should show no details block for the unattributed bucket', async () => {
+    mockByRun.mockResolvedValue([UNATTRIBUTED_RUN]);
+    const { container } = await renderPanel();
+    await screen.findByText('unattributed (legacy)');
+
+    fireEvent.click(screen.getByRole('button', { name: /expand/i }));
+
+    expect(container.querySelector('[data-slot="run-details"]')).toBeNull();
+  });
+
+  it('should show the run age under its id below lg, where the Started column hides', async () => {
+    mockByRun.mockResolvedValue([RUN_1]);
+    const { container } = await renderPanel();
+    await screen.findByText('run-aaa111');
+
+    const age = container.querySelector(`time[datetime="${RUN_1.first_call}"]`);
+    expect(age?.textContent).toMatch(/ago$/);
+    expect(age?.className).toContain('lg:hidden');
+  });
+
   it('should expand one attempt only when two attempts share a request id', async () => {
     mockByRun.mockResolvedValue([RETRY_RUN, RUN_1]);
     await renderPanel();

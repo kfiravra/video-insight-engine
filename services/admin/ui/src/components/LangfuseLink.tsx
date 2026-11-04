@@ -9,12 +9,14 @@ interface LangfuseLinkProps {
 
 export function LangfuseLink({ href, label, description }: LangfuseLinkProps) {
   if (!href) return null;
+  // min-h-6: a 24px hit area (WCAG 2.5.8) around the 10px label, so the Trace and Session
+  // links stacked on phones are separate targets.
   return (
     <a
       href={href}
       target="_blank"
       rel="noreferrer noopener"
-      className="text-[10px] text-[var(--color-primary)] hover:underline whitespace-nowrap"
+      className="inline-flex min-h-6 items-center gap-0.5 text-[10px] text-[var(--color-primary)] hover:underline whitespace-nowrap"
       aria-label={description}
     >
       {label} <span aria-hidden="true">↗</span>

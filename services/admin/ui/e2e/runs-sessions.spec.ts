@@ -57,8 +57,26 @@ test.describe('Usage Page — pipeline runs', () => {
     await expect(requestKeyed.getByRole('link', { name: /in Langfuse/ })).toHaveCount(0);
     await expect(unattributed.getByRole('link', { name: /in Langfuse/ })).toHaveCount(0);
 
+    // Below lg the Started column hides and the run's age sits under the id instead.
+    const age = retry.locator('time');
+    if (testInfo.project.name === 'desktop') await expect(age).toBeHidden();
+    else await expect(age).toHaveText(/ago$/);
+
+    // Every Langfuse link is a 24px target, also where phones stack Trace over Session.
+    const traceBox = await retry.getByRole('link', { name: /^Open trace of run/ }).boundingBox();
+    const sessionBox = await retry.getByRole('link', { name: /^Open session of run/ }).boundingBox();
+    expect(traceBox?.height ?? 0).toBeGreaterThanOrEqual(24);
+    expect(sessionBox?.height ?? 0).toBeGreaterThanOrEqual(24);
+
+    // The expansion spells out what the row only shortens or explains on hover.
+    const degraded = rows.filter({ hasText: 'degraded · media' });
+    await degraded.getByRole('button', { name: 'Expand' }).click();
+    await expect(runs.getByText(/^: a video download failed/)).toBeVisible();
+
     await retry.getByRole('button', { name: 'Expand' }).click();
     await expect(runs.getByText('claude-sonnet-4-6')).toBeVisible();
+    await expect(runs.getByText(RETRY_RUN.run_id ?? '', { exact: true })).toBeVisible();
+    await expect(runs.getByText(RETRY_RUN.retry_of ?? '', { exact: true }).first()).toBeVisible();
 
     await shoot(adminPage, 'p2-runs', testInfo, runs);
   });

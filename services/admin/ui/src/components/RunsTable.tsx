@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { formatCost, formatDateTime, formatUsageVolume, shortId } from '../lib/format';
+import { formatCost, formatDateTime, formatUsageVolume, shortId, timeAgo } from '../lib/format';
 import { LangfuseLink } from './LangfuseLink';
 import { TonePill } from './TonePill';
 import type { RunCallSummary, RunStatus, RunSummary } from '../lib/api';
@@ -50,6 +50,13 @@ function RegenBadge({ ordinal }: RegenBadgeProps) {
   );
 }
 
+/** A degraded run's reasons as label + explanation; rows from before the summarizer wrote
+ *  reasons had one possible cause, a partial extraction. */
+function degradedReasons(reasons?: string[] | null): { label: string; detail: string }[] {
+  const known = (reasons ?? []).map((r) => DEGRADED_REASON_TEXT[r] ?? { label: r, detail: r });
+  return known.length ? known : [DEGRADED_REASON_TEXT.partial_extraction];
+}
+
 interface DegradedBadgeProps {
   reasons?: string[] | null;
 }
@@ -57,11 +64,8 @@ interface DegradedBadgeProps {
 /** Degraded-run marker: a partial extraction (the flag the web app's
  *  DegradedNotice shows) and/or a failed frame download (admin only). */
 function DegradedBadge({ reasons }: DegradedBadgeProps) {
-  const known = (reasons ?? []).map((r) => DEGRADED_REASON_TEXT[r] ?? { label: r, detail: r });
-  const labels = known.map((r) => r.label).join(' · ');
-  // Rows from before the summarizer wrote reasons: partial extraction was the only cause.
-  const shown = known.length ? known : [DEGRADED_REASON_TEXT.partial_extraction];
-  const title = `Degraded run: ${shown.map((r) => r.detail).join('; ')}`;
+  const labels = (reasons ?? []).map((r) => (DEGRADED_REASON_TEXT[r] ?? { label: r }).label).join(' · ');
+  const title = `Degraded run: ${degradedReasons(reasons).map((r) => r.detail).join('; ')}`;
   return (
     <TonePill tone="danger" title={title}>
       {labels ? `degraded · ${labels}` : 'degraded'}
@@ -102,6 +106,51 @@ function RunId({ run }: RunIdProps) {
 function runLabel(run: RunSummary): string {
   const id = run.run_id ?? run.request_id;
   return id ? shortId(id) : 'unattributed';
+}
+
+interface RunDetailsProps {
+  run: RunSummary;
+}
+
+/** The expanded row's text for what the collapsed row only shortens or explains on hover
+ *  (unreachable on touch and keyboard): the full ids and why a run is degraded. */
+function RunDetails({ run }: RunDetailsProps) {
+  const ids = [
+    { label: 'Run', id: run.run_id },
+    { label: 'Request', id: run.request_id },
+    { label: 'Retry of', id: run.retry_of },
+  ].filter((row): row is { label: string; id: string } => row.id !== null);
+  const reasons = run.degraded === true ? degradedReasons(run.degraded_reasons) : [];
+  if (ids.length === 0 && reasons.length === 0) return null;
+
+  return (
+    <dl
+      data-slot="run-details"
+      className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 pt-2 pb-3 text-[11px]"
+    >
+      {ids.map(({ label, id }) => (
+        <Fragment key={label}>
+          <dt className="text-[var(--color-text-muted)]">{label}</dt>
+          <dd className="font-mono text-[var(--color-text)] break-all select-all">{id}</dd>
+        </Fragment>
+      ))}
+      {reasons.length > 0 && (
+        <>
+          <dt className="text-[var(--color-text-muted)]">Degraded</dt>
+          <dd>
+            <ul className="space-y-0.5">
+              {reasons.map((reason) => (
+                <li key={reason.label}>
+                  <span className="font-medium text-[var(--color-danger-ink)]">{reason.label}</span>
+                  <span className="text-[var(--color-text)]">: {reason.detail}</span>
+                </li>
+              ))}
+            </ul>
+          </dd>
+        </>
+      )}
+    </dl>
+  );
 }
 
 function formatBypass(bypass: boolean | null): string {
@@ -215,6 +264,14 @@ function RunRow({ run, isOpen, onToggle, showVideo }: RunRowProps) {
             {run.regen_ordinal != null && run.regen_ordinal > 1 && <RegenBadge ordinal={run.regen_ordinal} />}
             {run.degraded === true && <DegradedBadge reasons={run.degraded_reasons} />}
           </div>
+          {/* The Started column shows from lg; below it the run's age sits under the id. */}
+          <time
+            dateTime={run.first_call}
+            title={formatDateTime(run.first_call)}
+            className="mt-0.5 block text-[10px] text-[var(--color-text-muted)] whitespace-nowrap lg:hidden"
+          >
+            {timeAgo(run.first_call)}
+          </time>
           {run.retry_of && (
             <div className="mt-0.5 text-[10px] text-[var(--color-text-muted)]" title={`Retry of run ${run.retry_of}`}>
               retry of <span className="font-mono whitespace-nowrap">{shortId(run.retry_of)}</span>
@@ -276,6 +333,7 @@ function RunRow({ run, isOpen, onToggle, showVideo }: RunRowProps) {
           <td colSpan={columnCount} className="bg-[var(--color-surface)] border-b border-[var(--color-border)] px-4 pt-1 pb-3">
             {/* Zero basis, full width: the calls table scrolls in its own frame instead of widening the runs table. */}
             <div className="w-0 min-w-full">
+              <RunDetails run={run} />
               <RunCallsTable calls={run.calls} />
             </div>
           </td>
