@@ -10,6 +10,7 @@ import { ErrorState } from '../components/ErrorState';
 import { StatCard } from '../components/StatCard';
 import { SortableHeader } from '../components/SortableHeader';
 import { useUrlSort } from '../hooks/use-sort';
+import { RunCallsTable } from '../components/RunsTable';
 
 function ChevronIcon({ open }: { open: boolean }) {
   return (
@@ -90,7 +91,11 @@ function VideoCallsPanel({ videoId }: { videoId: string }) {
     );
   }
 
-  const { calls, by_feature } = data;
+  const { runs, by_feature } = data;
+  // The drawer lists the pipeline's calls of every run, newest first; the pills cover every service.
+  const calls = runs
+    .flatMap((run) => run.calls)
+    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
   if (calls.length === 0) {
     return (
@@ -118,50 +123,7 @@ function VideoCallsPanel({ videoId }: { videoId: string }) {
         </div>
       )}
 
-      {/* Calls table */}
-      <div className="rounded-lg border border-[var(--color-border)] overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-[11px]">
-            <thead>
-              <tr className="bg-[var(--color-surface-dim)] border-b border-[var(--color-border)]">
-                <th className="text-left py-1.5 px-3 font-medium text-[var(--color-text-faint)]">Model</th>
-                <th className="text-left py-1.5 px-3 font-medium text-[var(--color-text-faint)]">Feature</th>
-                <th className="text-right py-1.5 px-3 font-medium text-[var(--color-text-faint)]">Cost</th>
-                <th className="text-right py-1.5 px-3 font-medium text-[var(--color-text-faint)] hidden sm:table-cell">Tokens</th>
-                <th className="text-right py-1.5 px-3 font-medium text-[var(--color-text-faint)] hidden md:table-cell">Duration</th>
-                <th className="text-right py-1.5 px-3 font-medium text-[var(--color-text-faint)]">When</th>
-              </tr>
-            </thead>
-            <tbody>
-              {calls.map((row, i) => (
-                <tr
-                  key={row._id ?? i}
-                  className="border-b border-[var(--color-border)] last:border-0 hover:bg-[var(--color-surface-dim)] transition-colors"
-                >
-                  <td className="py-1.5 px-3 font-mono truncate max-w-[160px]">{row.model}</td>
-                  <td className="py-1.5 px-3">
-                    <span className="px-1.5 py-0.5 rounded text-[10px] bg-[var(--color-surface-dim)]">
-                      {row.feature}
-                    </span>
-                  </td>
-                  <td className="py-1.5 px-3 text-right font-mono font-medium text-[var(--color-primary)]">
-                    {formatCost(row.cost_usd)}
-                  </td>
-                  <td className="py-1.5 px-3 text-right hidden sm:table-cell">
-                    {formatNumber(row.tokens_in + row.tokens_out)}
-                  </td>
-                  <td className="py-1.5 px-3 text-right text-[var(--color-text-muted)] hidden md:table-cell">
-                    {row.duration_ms}ms
-                  </td>
-                  <td className="py-1.5 px-3 text-right text-[var(--color-text-faint)]">
-                    {timeAgo(row.timestamp)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <RunCallsTable calls={calls} />
     </div>
   );
 }

@@ -103,22 +103,8 @@ export interface VideoDetailResponse {
     tokens_out: number;
     avg_duration_ms: number;
   }>;
-  calls: Array<{
-    _id: string;
-    model: string;
-    feature: string;
-    cost_usd: number;
-    tokens_in: number;
-    tokens_out: number;
-    duration_ms: number;
-    timestamp: string;
-    video_id?: string;
-    service?: string;
-    success?: boolean;
-    /** "tokens" (default) or "audio_seconds" for transcription rows. */
-    unit?: string | null;
-    audio_seconds?: number | null;
-  }>;
+  /** The video's pipeline attempts with their calls, newest first (90 days, at most 50). */
+  runs: RunSummary[];
 }
 
 // --- New Analytics Types ---
@@ -236,7 +222,16 @@ export interface RunCallSummary {
   audio_seconds?: number | null;
 }
 
+/** An attempt's lifecycle state (the runs[] entry's `status`). */
+export type RunStatus = 'dispatched' | 'running' | 'completed' | 'failed' | 'cache_hit';
+
+/**
+ * One pipeline attempt (D10), keyed by `run_id`. Ledger rows written before P1
+ * have no run id and group by `request_id`; rows with neither share one
+ * "unattributed (legacy)" bucket.
+ */
 export interface RunSummary {
+  run_id: string | null;
   request_id: string | null;
   video_id: string | null;
   video_summary_id: string | null;
@@ -246,8 +241,20 @@ export interface RunSummary {
   total_cost_usd: number;
   call_count: number;
   regen_ordinal: number | null;
-  /** Direct link to this run's Langfuse trace, resolved server-side. Null when unconfigured/unresolvable. */
+  /** The attempt's runs[] entry fields (the ledger's own values as the fallback); null on legacy rows. */
+  attempt: number | null;
+  pipeline_version: string | null;
+  bypass: boolean | null;
+  /** Where the attempt ran: `worker`, `sse` or `dev`. */
+  path: string | null;
+  /** A `RunStatus` on the wire; kept a string so a new value still renders. */
+  status: string | null;
+  /** The run id this attempt retried. */
+  retry_of: string | null;
+  /** This attempt's Langfuse trace, from its stored trace id. Null when unconfigured or unknown. */
   langfuse_url: string | null;
+  /** The video row's Langfuse session (`pipeline-<videoSummaryId>`, every attempt of the row). */
+  session_url: string | null;
   /**
    * Partial-result flag from the run's videoSummaryCache doc (dropped
    * extraction batches / critical coverage). True = degraded, false = clean,
@@ -257,6 +264,29 @@ export interface RunSummary {
   /** Why: "partial_extraction" and/or "media_download_failed". Null/undefined = not recorded. */
   degraded_reasons?: string[] | null;
   calls: RunCallSummary[];
+}
+
+// --- Chat-session usage (GET /usage/by-session) ---
+
+/**
+ * One chat session's assistant usage (D10), keyed by the web's session id.
+ * Rows written before P1 carry none and share the `session_id: null` bucket.
+ */
+export interface SessionSummary {
+  session_id: string | null;
+  user_id: string | null;
+  /** The video chat's summary id; null for the library chat. */
+  video_summary_id: string | null;
+  /** Distinct gateway requests: chat turns and the actions they sent. */
+  turns: number;
+  /** LLM calls made inside tools (a tool that calls no model is not counted). */
+  tool_llm_calls: number;
+  call_count: number;
+  total_cost_usd: number;
+  first_call: string;
+  last_call: string;
+  /** The Langfuse session `chat-<session_id>`; null when unconfigured or for the legacy bucket. */
+  langfuse_url: string | null;
 }
 
 // --- User-360 activity types (GET /users/{id}/activity) ---
@@ -417,8 +447,11 @@ export const api = {
     recent: (limit = 20, beforeId?: string) => apiFetch<Array<Record<string, unknown>>>(`/usage/recent${qs({ limit, before_id: beforeId })}`),
     duplicates: (days = 7) => apiFetch<DuplicateRow[]>(`/usage/duplicates${qs({ days })}`),
     byOutputType: (days = 30) => apiFetch<OutputTypeUsage[]>(`/usage/by-output-type${qs({ days })}`),
-    byRun: (days = 30, limit = 20, offset = 0) =>
-      apiFetch<RunSummary[]>(`/usage/by-run${qs({ days, limit, offset })}`),
+    /** Pipeline attempts, newest first; `videoId` (a YouTube id) narrows to one video. */
+    byRun: (days = 30, limit = 20, offset = 0, videoId?: string) =>
+      apiFetch<RunSummary[]>(`/usage/by-run${qs({ days, limit, offset, video_id: videoId })}`),
+    bySession: (days = 30, limit = 20, offset = 0) =>
+      apiFetch<SessionSummary[]>(`/usage/by-session${qs({ days, limit, offset })}`),
   },
   shares: {
     top: (days = 30, limit = 10) => apiFetch<ShareItem[]>(`/shares/top${qs({ days, limit })}`),

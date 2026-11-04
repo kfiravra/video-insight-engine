@@ -8,6 +8,9 @@ import {
   mockUsageRecent,
   mockUsageByVideo,
   mockVideoDetail,
+  mockUsageByRun,
+  mockUsageBySession,
+  mockUsageAnomalies,
   mockUsageDuplicates,
   mockHealthServices,
   mockHealthOverview,
@@ -31,6 +34,9 @@ export {
   mockUsageRecent,
   mockUsageByVideo,
   mockVideoDetail,
+  mockUsageByRun,
+  mockUsageBySession,
+  mockUsageAnomalies,
   mockUsageDuplicates,
   mockHealthServices,
   mockHealthOverview,
@@ -67,6 +73,9 @@ export async function setupAdminApiMocks(page: Page) {
   await page.route('**/usage/recent*', (route) => fulfill(route, mockUsageRecent));
   await page.route('**/usage/duplicates*', (route) => fulfill(route, mockUsageDuplicates));
   await page.route('**/usage/by-output-type*', (route) => fulfill(route, mockUsageByOutputType));
+  await page.route('**/usage/by-run*', (route) => fulfill(route, mockUsageByRun));
+  await page.route('**/usage/by-session*', (route) => fulfill(route, mockUsageBySession));
+  await page.route('**/usage/anomalies*', (route) => fulfill(route, mockUsageAnomalies));
 
   await page.route('**/health/services*', (route) => fulfill(route, mockHealthServices));
   await page.route('**/health/overview*', (route) => fulfill(route, mockHealthOverview));
@@ -89,7 +98,7 @@ export async function setupAdminApiMocks(page: Page) {
 // --- Test Fixture ---
 
 export const test = base.extend<{ adminPage: Page }>({
-  adminPage: async ({ page }, use) => {
+  adminPage: async ({ page }, provide) => {
     // Set up API mocks BEFORE navigation
     await setupAdminApiMocks(page);
 
@@ -104,7 +113,7 @@ export const test = base.extend<{ adminPage: Page }>({
     // Wait for the app to render (nav header indicates auth passed)
     await page.waitForSelector('header nav', { timeout: 10_000 });
 
-    await use(page);
+    await provide(page);
   },
 });
 

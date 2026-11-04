@@ -90,8 +90,9 @@ test.describe('Video Detail Page', () => {
     // Category badge
     await expect(adminPage.getByText('coding')).toBeVisible();
 
-    // Status badge
-    await expect(adminPage.getByText('completed')).toBeVisible();
+    // Status badge (the header's; the runs table below has its own status pills)
+    const header = adminPage.locator('[data-slot="panel"]').first();
+    await expect(header.getByText('completed')).toBeVisible();
   });
 
   test('should display feature breakdown', async ({ adminPage }) => {
@@ -100,10 +101,13 @@ test.describe('Video Detail Page', () => {
     await expect(adminPage.getByText('Cost by Feature')).toBeVisible();
   });
 
-  test('should display individual calls table', async ({ adminPage }) => {
+  test('should display the video runs, each expandable to its calls', async ({ adminPage }) => {
     await adminPage.goto('/videos/abc123');
 
-    await expect(adminPage.getByText('Individual Calls (2)')).toBeVisible();
+    await expect(adminPage.getByText('Pipeline Runs (2)')).toBeVisible();
+    await expect(adminPage.getByText('Individual Calls')).toHaveCount(0);
+
+    await adminPage.getByRole('button', { name: 'Expand' }).first().click();
     await expect(adminPage.getByText('claude-sonnet-4-6')).toBeVisible();
     await expect(adminPage.getByText('gpt-4o')).toBeVisible();
   });

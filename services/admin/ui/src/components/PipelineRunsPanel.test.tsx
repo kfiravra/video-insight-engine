@@ -21,10 +21,6 @@ vi.mock('../lib/api', async () => {
   };
 });
 
-vi.mock('../lib/langfuse', () => ({
-  buildLangfuseTraceUrl: () => null,
-}));
-
 function makeWrapper() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
@@ -34,7 +30,29 @@ function makeWrapper() {
   );
 }
 
+async function renderPanel() {
+  const { PipelineRunsPanel } = await import('./PipelineRunsPanel');
+  return render(<PipelineRunsPanel days={7} />, { wrapper: makeWrapper() });
+}
+
+/** The tone of the status pill that reads `label`. */
+function pillTone(label: string): string | null {
+  return screen.getByText(label).closest('[data-slot="tone-pill"]')?.getAttribute('data-tone') ?? null;
+}
+
+const LEGACY_FIELDS = {
+  attempt: null,
+  pipeline_version: null,
+  bypass: null,
+  path: null,
+  status: null,
+  retry_of: null,
+  langfuse_url: null,
+  session_url: null,
+} satisfies Partial<RunSummary>;
+
 const RUN_1: RunSummary = {
+  run_id: 'run-aaa111',
   request_id: 'req-aaa111',
   video_id: 'ytid-abc',
   video_summary_id: 'vsid-001',
@@ -44,7 +62,14 @@ const RUN_1: RunSummary = {
   total_cost_usd: 0.0125,
   call_count: 5,
   regen_ordinal: 1,
+  attempt: 1,
+  pipeline_version: 'v11',
+  bypass: false,
+  path: 'worker',
+  status: 'completed',
+  retry_of: null,
   langfuse_url: 'https://cloud.langfuse.com/project/proj-1/traces/trace-aaa',
+  session_url: 'https://cloud.langfuse.com/project/proj-1/sessions/pipeline-vsid-001',
   calls: [
     {
       id: 'call-1',
@@ -60,31 +85,63 @@ const RUN_1: RunSummary = {
   ],
 };
 
+/** A retry of RUN_1's request: same request id, its own run id. */
+const RETRY_RUN: RunSummary = {
+  ...RUN_1,
+  run_id: '3f2a9b1c-5d6e-4f70-8a9b-0c1d2e3fe7d0',
+  first_call: '2026-06-01T10:05:00.000Z',
+  attempt: 2,
+  bypass: true,
+  path: 'sse',
+  status: 'failed',
+  retry_of: '9c8b7a6d-1e2f-4a3b-8c4d-5e6f7a8b0c1d',
+  langfuse_url: 'https://cloud.langfuse.com/project/proj-1/traces/trace-retry',
+  calls: [
+    {
+      id: 'call-retry',
+      feature: 'extract',
+      model: 'claude-sonnet-4-6',
+      cost_usd: 0.004,
+      tokens_in: 900,
+      tokens_out: 100,
+      duration_ms: 900,
+      success: false,
+      timestamp: '2026-06-01T10:05:30.000Z',
+    },
+  ],
+};
+
 const RUN_2: RunSummary = {
+  ...RUN_1,
+  run_id: 'run-bbb222',
   request_id: 'req-bbb222',
-  video_id: 'ytid-abc',
   video_summary_id: 'vsid-002',
-  user_id: 'user-1',
   first_call: '2026-06-02T09:00:00.000Z',
   last_call: '2026-06-02T09:03:00.000Z',
   total_cost_usd: 0.0095,
   call_count: 4,
   regen_ordinal: 2,
-  langfuse_url: null,
+  calls: [],
+};
+
+/** Written before run ids: grouped by its request id, no runs[] entry fields. */
+const REQUEST_KEYED_RUN: RunSummary = {
+  ...RUN_1,
+  ...LEGACY_FIELDS,
+  run_id: null,
+  request_id: 'req-old111',
+  regen_ordinal: null,
   calls: [],
 };
 
 const RUN_WITH_AUDIO: RunSummary = {
+  ...RUN_1,
+  run_id: 'run-ccc333',
   request_id: 'req-ccc333',
   video_id: 'ytid-xyz',
   video_summary_id: 'vsid-003',
-  user_id: 'user-2',
-  first_call: '2026-06-03T11:00:00.000Z',
-  last_call: '2026-06-03T11:05:00.000Z',
   total_cost_usd: 0.36,
   call_count: 2,
-  regen_ordinal: 1,
-  langfuse_url: null,
   calls: [
     {
       id: 'call-audio',
@@ -103,6 +160,8 @@ const RUN_WITH_AUDIO: RunSummary = {
 };
 
 const UNATTRIBUTED_RUN: RunSummary = {
+  ...LEGACY_FIELDS,
+  run_id: null,
   request_id: null,
   video_id: null,
   video_summary_id: null,
@@ -112,7 +171,6 @@ const UNATTRIBUTED_RUN: RunSummary = {
   total_cost_usd: 0.001,
   call_count: 1,
   regen_ordinal: null,
-  langfuse_url: null,
   calls: [],
 };
 
@@ -125,135 +183,166 @@ afterEach(() => {
 });
 
 describe('PipelineRunsPanel', () => {
-  it('should export PipelineRunsPanel component', async () => {
-    const mod = await import('./PipelineRunsPanel');
-    expect(typeof mod.PipelineRunsPanel).toBe('function');
-  });
-
   it('should show loading skeleton while fetching', async () => {
     mockByRun.mockReturnValue(new Promise(() => {})); // never resolves
-    const { PipelineRunsPanel } = await import('./PipelineRunsPanel');
-    const wrapper = makeWrapper();
-    render(<PipelineRunsPanel days={7} />, { wrapper });
-    // SkeletonPanel renders with data-slot="skeleton-panel"
+    await renderPanel();
     expect(document.querySelector('[data-slot="skeleton-panel"]')).toBeTruthy();
   });
 
-  it('should render run rows when data is available', async () => {
+  it('should request the selected window', async () => {
+    mockByRun.mockResolvedValue([]);
+    await renderPanel();
+    await waitFor(() => expect(mockByRun).toHaveBeenCalledWith(7, 20, 0));
+  });
+
+  it('should show an error state when the request fails', async () => {
+    mockByRun.mockRejectedValue(new Error('boom'));
+    await renderPanel();
+    expect(await screen.findByText('Failed to load pipeline runs')).toBeTruthy();
+  });
+
+  it('should label each row by its run id when the run has one', async () => {
     mockByRun.mockResolvedValue([RUN_1, RUN_2]);
-    const { PipelineRunsPanel } = await import('./PipelineRunsPanel');
-    const wrapper = makeWrapper();
-    render(<PipelineRunsPanel days={7} />, { wrapper });
-    await waitFor(() => {
-      expect(screen.getByText(/req-aaa111/i)).toBeTruthy();
-    });
-    expect(screen.getByText(/req-bbb222/i)).toBeTruthy();
+    await renderPanel();
+    expect(await screen.findByText('run-aaa111')).toBeTruthy();
+    expect(screen.getByText('run-bbb222')).toBeTruthy();
+    expect(screen.queryByText('req-aaa111')).toBeNull();
   });
 
-  it('should render the server-resolved Langfuse link when langfuse_url is set', async () => {
-    // buildLangfuseTraceUrl is mocked to null, so a link can only come from the
-    // backend-provided run.langfuse_url.
-    mockByRun.mockResolvedValue([RUN_1]);
-    const { PipelineRunsPanel } = await import('./PipelineRunsPanel');
-    const wrapper = makeWrapper();
-    render(<PipelineRunsPanel days={7} />, { wrapper });
-    const link = await screen.findByRole('link', { name: /open in langfuse/i });
-    expect(link.getAttribute('href')).toBe(RUN_1.langfuse_url);
+  it('should shorten a long run id and keep the full id in the title', async () => {
+    mockByRun.mockResolvedValue([RETRY_RUN]);
+    await renderPanel();
+    const id = await screen.findByText('3f2a9b…e7d0');
+    expect(id.getAttribute('title')).toContain(RETRY_RUN.run_id);
   });
 
-  it('should not render a Langfuse link when langfuse_url is null and no fallback', async () => {
-    mockByRun.mockResolvedValue([RUN_2]);
-    const { PipelineRunsPanel } = await import('./PipelineRunsPanel');
-    const wrapper = makeWrapper();
-    render(<PipelineRunsPanel days={7} />, { wrapper });
-    await waitFor(() => screen.getByText(/req-bbb222/i));
-    expect(screen.queryByRole('link', { name: /open in langfuse/i })).toBeNull();
+  it('should fall back to the request id when a legacy row has no run id', async () => {
+    mockByRun.mockResolvedValue([REQUEST_KEYED_RUN]);
+    await renderPanel();
+    expect(await screen.findByText('req-old111')).toBeTruthy();
   });
 
-  it('should show "unattributed (legacy)" for null request_id', async () => {
+  it('should show "unattributed (legacy)" when a row has neither id', async () => {
     mockByRun.mockResolvedValue([UNATTRIBUTED_RUN]);
-    const { PipelineRunsPanel } = await import('./PipelineRunsPanel');
-    const wrapper = makeWrapper();
-    render(<PipelineRunsPanel days={7} />, { wrapper });
-    await waitFor(() => {
-      expect(screen.getByText(/unattributed/i)).toBeTruthy();
-    });
+    await renderPanel();
+    expect(await screen.findByText('unattributed (legacy)')).toBeTruthy();
+  });
+
+  it('should render the attempt, version, bypass and path of a run', async () => {
+    mockByRun.mockResolvedValue([RETRY_RUN]);
+    await renderPanel();
+    await screen.findByText('3f2a9b…e7d0');
+    for (const header of ['Attempt', 'Version', 'Bypass', 'Path', 'Status', 'Cost', 'Calls', 'Langfuse']) {
+      expect(screen.getByRole('columnheader', { name: header })).toBeTruthy();
+    }
+    expect(screen.getByText('#2')).toBeTruthy();
+    expect(screen.getByText('v11')).toBeTruthy();
+    expect(screen.getByText('yes')).toBeTruthy();
+    expect(screen.getByText('sse')).toBeTruthy();
+  });
+
+  it('should render dashes for the attempt fields of a legacy row', async () => {
+    mockByRun.mockResolvedValue([REQUEST_KEYED_RUN]);
+    await renderPanel();
+    await screen.findByText('req-old111');
+    // attempt, version, bypass, path, status
+    expect(screen.getAllByText('—')).toHaveLength(5);
+  });
+
+  it.each([
+    ['completed', 'completed', 'success'],
+    ['failed', 'failed', 'danger'],
+    ['running', 'running', 'warning'],
+    ['dispatched', 'dispatched', 'warning'],
+    ['cache_hit', 'cache hit', 'neutral'],
+    ['requeued', 'requeued', 'neutral'],
+  ])('should tone the %s status badge', async (status, label, tone) => {
+    mockByRun.mockResolvedValue([{ ...RUN_1, status }]);
+    await renderPanel();
+    await screen.findByText('run-aaa111');
+    expect(pillTone(label)).toBe(tone);
+  });
+
+  it('should name the run a retry continues', async () => {
+    mockByRun.mockResolvedValue([RETRY_RUN]);
+    await renderPanel();
+    const retry = await screen.findByText(/retry of/i);
+    expect(retry.textContent).toBe('retry of 9c8b7a…0c1d');
+    expect(retry.getAttribute('title')).toContain(RETRY_RUN.retry_of);
+  });
+
+  it('should not show a retry line for a first attempt', async () => {
+    mockByRun.mockResolvedValue([RUN_1]);
+    await renderPanel();
+    await screen.findByText('run-aaa111');
+    expect(screen.queryByText(/retry of/i)).toBeNull();
+  });
+
+  it('should link the run trace and the row session in Langfuse', async () => {
+    mockByRun.mockResolvedValue([RUN_1]);
+    await renderPanel();
+    const trace = await screen.findByRole('link', { name: 'Open trace in Langfuse' });
+    expect(trace.getAttribute('href')).toBe(RUN_1.langfuse_url);
+    expect(trace.getAttribute('target')).toBe('_blank');
+    const session = screen.getByRole('link', { name: 'Open session in Langfuse' });
+    expect(session.getAttribute('href')).toBe(RUN_1.session_url);
+  });
+
+  it('should render no Langfuse links when the server sends none', async () => {
+    mockByRun.mockResolvedValue([REQUEST_KEYED_RUN, UNATTRIBUTED_RUN]);
+    await renderPanel();
+    await screen.findByText('req-old111');
+    expect(screen.queryAllByRole('link')).toHaveLength(0);
   });
 
   it('should show a regen badge for regen_ordinal > 1', async () => {
     mockByRun.mockResolvedValue([RUN_2]);
-    const { PipelineRunsPanel } = await import('./PipelineRunsPanel');
-    const wrapper = makeWrapper();
-    render(<PipelineRunsPanel days={7} />, { wrapper });
-    await waitFor(() => {
-      expect(screen.getByText(/regen/i)).toBeTruthy();
-    });
+    await renderPanel();
+    expect(await screen.findByText('regen #2')).toBeTruthy();
   });
 
   it('should NOT show a regen badge for regen_ordinal === 1', async () => {
     mockByRun.mockResolvedValue([RUN_1]);
-    const { PipelineRunsPanel } = await import('./PipelineRunsPanel');
-    const wrapper = makeWrapper();
-    render(<PipelineRunsPanel days={7} />, { wrapper });
-    await waitFor(() => {
-      expect(screen.queryByText(/regen/i)).toBeNull();
-    });
+    await renderPanel();
+    await screen.findByText('run-aaa111');
+    expect(screen.queryByText(/regen/i)).toBeNull();
   });
 
   it('should show a degraded badge when the run doc is flagged degraded', async () => {
     mockByRun.mockResolvedValue([{ ...RUN_1, degraded: true }]);
-    const { PipelineRunsPanel } = await import('./PipelineRunsPanel');
-    const wrapper = makeWrapper();
-    render(<PipelineRunsPanel days={7} />, { wrapper });
-    await waitFor(() => {
-      expect(screen.getByText(/degraded/i)).toBeTruthy();
-    });
+    await renderPanel();
+    expect(await screen.findByText(/degraded/i)).toBeTruthy();
   });
 
   it('should name a failed media download on the degraded badge', async () => {
-    mockByRun.mockResolvedValue([
-      { ...RUN_1, degraded: true, degraded_reasons: ['media_download_failed'] },
-    ]);
-    const { PipelineRunsPanel } = await import('./PipelineRunsPanel');
-    const wrapper = makeWrapper();
-    render(<PipelineRunsPanel days={7} />, { wrapper });
-    await waitFor(() => {
-      expect(screen.getByText(/degraded · media/i)).toBeTruthy();
-    });
+    mockByRun.mockResolvedValue([{ ...RUN_1, degraded: true, degraded_reasons: ['media_download_failed'] }]);
+    await renderPanel();
+    expect(await screen.findByText(/degraded · media/i)).toBeTruthy();
   });
 
   it('should NOT show a degraded badge for clean or unresolved runs', async () => {
     mockByRun.mockResolvedValue([{ ...RUN_1, degraded: false }, UNATTRIBUTED_RUN]);
-    const { PipelineRunsPanel } = await import('./PipelineRunsPanel');
-    const wrapper = makeWrapper();
-    render(<PipelineRunsPanel days={7} />, { wrapper });
-    await waitFor(() => {
-      expect(screen.getByText('unattributed (legacy)')).toBeTruthy();
-    });
+    await renderPanel();
+    await screen.findByText('unattributed (legacy)');
     expect(screen.queryByText(/degraded/i)).toBeNull();
   });
 
   it('should expand call details when a row is clicked', async () => {
     mockByRun.mockResolvedValue([RUN_1]);
-    const { PipelineRunsPanel } = await import('./PipelineRunsPanel');
-    const wrapper = makeWrapper();
-    render(<PipelineRunsPanel days={7} />, { wrapper });
-    await waitFor(() => screen.getByText(/req-aaa111/i));
+    await renderPanel();
+    await screen.findByText('run-aaa111');
 
-    // find expand button
     const expandBtn = screen.getByRole('button', { name: /expand/i });
     fireEvent.click(expandBtn);
 
-    // The call details panel should now be visible (feature "plan")
     expect(screen.getByText('plan')).toBeTruthy();
+    expect(expandBtn.getAttribute('aria-expanded')).toBe('true');
   });
 
   it('should collapse call details when expanded row is clicked again', async () => {
     mockByRun.mockResolvedValue([RUN_1]);
-    const { PipelineRunsPanel } = await import('./PipelineRunsPanel');
-    const wrapper = makeWrapper();
-    render(<PipelineRunsPanel days={7} />, { wrapper });
-    await waitFor(() => screen.getByText(/req-aaa111/i));
+    await renderPanel();
+    await screen.findByText('run-aaa111');
 
     const expandBtn = screen.getByRole('button', { name: /expand/i });
     fireEvent.click(expandBtn); // open
@@ -261,14 +350,23 @@ describe('PipelineRunsPanel', () => {
     expect(screen.queryByText('plan')).toBeNull();
   });
 
+  it('should expand one attempt only when two attempts share a request id', async () => {
+    mockByRun.mockResolvedValue([RETRY_RUN, RUN_1]);
+    await renderPanel();
+    await screen.findByText('run-aaa111');
+
+    const [retryToggle] = screen.getAllByRole('button', { name: /expand/i });
+    fireEvent.click(retryToggle);
+
+    expect(screen.getByText('extract')).toBeTruthy();
+    expect(screen.queryByText('plan')).toBeNull();
+  });
+
   it('should render audio-unit calls as "N min audio" instead of tokens', async () => {
     mockByRun.mockResolvedValue([RUN_WITH_AUDIO]);
-    const { PipelineRunsPanel } = await import('./PipelineRunsPanel');
-    const wrapper = makeWrapper();
-    render(<PipelineRunsPanel days={7} />, { wrapper });
-    await waitFor(() => screen.getByText(/req-ccc333/i));
+    await renderPanel();
+    await screen.findByText('run-ccc333');
 
-    // Expand to reveal the transcription call row.
     fireEvent.click(screen.getByRole('button', { name: /expand/i }));
 
     // 3600s / 60 = 60.0 min audio — not "0" tokens.
@@ -278,11 +376,7 @@ describe('PipelineRunsPanel', () => {
 
   it('should show empty state when no runs are returned', async () => {
     mockByRun.mockResolvedValue([]);
-    const { PipelineRunsPanel } = await import('./PipelineRunsPanel');
-    const wrapper = makeWrapper();
-    render(<PipelineRunsPanel days={7} />, { wrapper });
-    await waitFor(() => {
-      expect(screen.getByText(/no pipeline runs/i)).toBeTruthy();
-    });
+    await renderPanel();
+    expect(await screen.findByText(/no pipeline runs/i)).toBeTruthy();
   });
 });

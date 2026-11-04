@@ -175,6 +175,14 @@ export function useUsageByRun(days = 30, limit = 20, offset = 0) {
   });
 }
 
+export function useUsageBySession(days = 30, limit = 20, offset = 0) {
+  return useQuery({
+    queryKey: ['usage-by-session', days, limit, offset],
+    queryFn: () => api.usage.bySession(days, limit, offset),
+    staleTime: 30_000,
+  });
+}
+
 export function useUserActivity(userId: string | null | undefined) {
   return useQuery({
     queryKey: ['user-activity', userId],

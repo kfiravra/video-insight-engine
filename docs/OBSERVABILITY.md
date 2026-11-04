@@ -104,7 +104,7 @@ Every `llm_usage` row also carries the ids of its attempt or chat (D9): `run_id`
 
 The vie-admin **backend** builds every link from stored ids, with no Langfuse API call (P-6, D10). `GET /usage/by-run` groups the summarizer's ledger rows by `run_id` (legacy rows by `request_id`), reads the run's `videoSummaryCache` doc (the same batched lookup as the degraded badge), takes the `runs[]` entry with the run's id (legacy rows: the newest entry with their `request_id`) and returns `{LANGFUSE_BASE_URL}/project/{LANGFUSE_PROJECT_ID}/traces/{traceId}` as `langfuse_url` (falling back to the rows' own `trace_id`) and `…/sessions/pipeline-{videoSummaryId}` as `session_url`. `GET /usage/by-session` returns `…/sessions/chat-{sessionId}` per chat session (`services/admin/src/services/langfuse.py`). **`LANGFUSE_PROJECT_ID` is required**: blank → `null` links, never an error. Runs dispatched before P0b (no `runs[]`, no `trace_id`) and GDPR-stripped entries get no trace link. Responses cached 30 s. The old tag lookup (`GET /api/public/traces?tags=requestId:…`, deprecated by Langfuse) and the `/api/public/projects` resolver are gone.
 
-`PipelineRunsPanel` renders `run.langfuse_url` and falls back to the build-time `buildLangfuseTraceUrl` helper (`services/admin/ui/src/lib/langfuse.ts`, `VITE_LANGFUSE_*`) only when the backend returns nothing; that fallback goes in P2.
+The admin UI renders only the links the backend returns (`RunsTable` / `SessionsPanel`: "Trace ↗", "Session ↗"); a `null` link renders nothing. The old build-time fallback (`lib/langfuse.ts`, `VITE_LANGFUSE_*`) is gone.
 
 ### Reading a trace
 

@@ -264,7 +264,8 @@ React SPA served as static files from the same container.
 ### Pages
 
 - **Dashboard** — StatsCards, ServiceHealth, CostChart, FeatureBreakdown, AlertsBanner
-- **Usage** — CostChart, ModelBreakdown, FeatureBreakdown, RecentCalls
+- **Usage** — CostChart, ModelBreakdown, FeatureBreakdown, LatencyPanel, **Pipeline Runs** (`PipelineRunsPanel` → `RunsTable`: one row per run id — attempt, version, bypass, path, status pill, cost, calls, "Trace ↗" / "Session ↗" Langfuse links; regen, retry-of and degraded badges; a row expands to its calls), **Chat Sessions** (`SessionsPanel`: session, surface video/library, turns, tool LLM calls, calls, cost, last activity, "Session ↗"), Anomalies, Duplicates, RecentCalls
+- **Video detail** (`/videos/:youtubeId`) — metadata, cost stats, cost by feature, and the video's **runs** (the same `RunsTable`, from `/usage/video/{id}`'s `runs`), each expandable to its calls; the Videos page's row drawer lists the runs' calls too
 - **Health** — ServiceHealth, 7-day uptime grid
 - **Alerts** — Alert thresholds, recent alerts table
 - **Users** — cost table; the user drawer (`components/users/UserDetailDrawer.tsx`) has Overview, **Account**, Videos, Assistant and Adjustments (read-only USD history) tabs. The Account tab (`AccountPanel`) is:

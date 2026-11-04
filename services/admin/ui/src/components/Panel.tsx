@@ -43,11 +43,13 @@ export function Panel({
     .join(' ');
 
   const hasHeader = title !== undefined || actions !== undefined;
+  // A flush panel (an edge-to-edge table) still insets its header, or the title touches the border.
+  const headerInset = padding === 'none' ? 'px-4 pt-3' : '';
 
   return (
     <div className={classes} data-slot="panel" data-tone={tone} data-padding={padding}>
       {hasHeader && (
-        <div className="flex items-center justify-between mb-3" data-slot="panel-header">
+        <div className={`flex items-center justify-between mb-3 ${headerInset}`} data-slot="panel-header">
           {title !== undefined ? (
             <div className="text-sm font-medium text-[var(--color-text)]" data-slot="panel-title">
               {title}
