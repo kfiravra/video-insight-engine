@@ -33,6 +33,17 @@ export const SMOKE_USER = {
   name: "E2E Smoke",
 };
 
+/** A second account with an empty library, for the user-switch test: after
+ * signing out of SMOKE_USER and in as this one, none of the fixture video may
+ * remain on screen. */
+export const SMOKE_USER_B = {
+  email: "e2e-smoke-b@vie.test",
+  password: "E2eSmokePassB123",
+  name: "E2E Smoke B",
+};
+
+export type SmokeCredentials = typeof SMOKE_USER;
+
 /** 24-hex fixed ids so reruns upsert instead of duplicating. */
 export const SMOKE_CACHE_ID = "e2ecac4e0000000000000001";
 export const SMOKE_USER_VIDEO_ID = "e2ec1de00000000000000001";
@@ -62,6 +73,7 @@ interface CollectionLike {
     update: Record<string, unknown>,
     options?: Record<string, unknown>,
   ): Promise<unknown>;
+  deleteMany(filter: Record<string, unknown>): Promise<unknown>;
 }
 
 interface DbLike {
@@ -125,31 +137,37 @@ async function validateToken(accessToken: string): Promise<AuthUser | null> {
   return (await res.json()) as AuthUser;
 }
 
-export async function ensureSmokeUser(): Promise<AuthResult> {
-  // Reuse the previous run's token while it is still valid — POST /auth/login
-  // is IP-rate-limited (10/15min), so every avoided login buys local reruns.
-  const cached = readSeedFile();
+/**
+ * Resolve a live session for one of the smoke accounts: the previous run's
+ * token when it still validates, else login, else register. POST /auth/login
+ * is IP-rate-limited (10/15min) and /auth/register to 5/hour, so every
+ * avoided call buys local reruns.
+ */
+export async function ensureUser(
+  credentials: SmokeCredentials,
+  cached: AuthResult | null,
+): Promise<AuthResult> {
   if (cached) {
     const user = await validateToken(cached.accessToken);
     if (user) return { accessToken: cached.accessToken, user };
   }
 
   const login = await postJson("/auth/login", {
-    email: SMOKE_USER.email,
-    password: SMOKE_USER.password,
+    email: credentials.email,
+    password: credentials.password,
   });
   if (login.status === 200) {
     return login.json as unknown as AuthResult;
   }
 
-  const register = await postJson("/auth/register", SMOKE_USER);
+  const register = await postJson("/auth/register", credentials);
   if (register.status === 201) {
     return register.json as unknown as AuthResult;
   }
 
   throw new Error(
     `Smoke seed: could not login (${login.status}) or register (${register.status}) ` +
-      `the e2e user against ${API_URL}. Is the api + mongo stack running?`,
+      `${credentials.email} against ${API_URL}. Is the api + mongo stack running?`,
   );
 }
 
@@ -248,6 +266,8 @@ function buildTabs(): Record<string, unknown>[] {
 export interface SmokeSeedResult {
   accessToken: string;
   user: AuthUser;
+  /** The empty-library account (SMOKE_USER_B); absent in seed files written before it existed. */
+  userB?: AuthResult;
 }
 
 const SEED_FILE = fileURLToPath(
@@ -278,7 +298,9 @@ export function requireSeedFile(): SmokeSeedResult {
 }
 
 export async function seedSmokeData(): Promise<SmokeSeedResult> {
-  const auth = await ensureSmokeUser();
+  const previous = readSeedFile();
+  const auth = await ensureUser(SMOKE_USER, previous);
+  const authB = await ensureUser(SMOKE_USER_B, previous?.userB ?? null);
 
   const { MongoClient, ObjectId } = loadMongoDriver();
   const client = new MongoClient(MONGODB_URI);
@@ -330,9 +352,13 @@ export async function seedSmokeData(): Promise<SmokeSeedResult> {
       },
       { upsert: true },
     );
+
+    // User B owns nothing: a stray row (a run that generated a video while
+    // signed in as B) would make the user-switch assertion meaningless.
+    await db.collection("userVideos").deleteMany({ userId: new ObjectId(authB.user.id) });
   } finally {
     await client.close();
   }
 
-  return { accessToken: auth.accessToken, user: auth.user };
+  return { accessToken: auth.accessToken, user: auth.user, userB: authB };
 }

@@ -2,8 +2,16 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { authApi } from "@/api/auth";
 import { setAccessToken } from "@/api/client";
-import { useChatStore } from "./chat-store";
+import { resetClientSession } from "@/lib/session-reset";
 import type { User } from "@/types";
+
+/** The sign-out call still in flight, so a login that follows can wait for
+ *  the server to clear the old refresh cookie before it sets the new one. */
+let pendingLogout: Promise<void> | null = null;
+
+export function pendingLogoutRequest(): Promise<void> | null {
+  return pendingLogout;
+}
 
 interface AuthState {
   user: User | null;
@@ -58,17 +66,23 @@ export const useAuthStore = create<AuthState>()(
       },
 
       logout: () => {
-        authApi.logout().catch(() => {}); // Fire and forget
+        // The server call clears the refresh cookie; the client does not wait
+        // for it, but the next login does (see pendingLogoutRequest).
+        const call = authApi.logout().catch(() => {});
+        pendingLogout = call;
+        void call.finally(() => {
+          if (pendingLogout === call) pendingLogout = null;
+        });
         setAccessToken(null);
-        // Don't leak one user's chat transcript to the next session.
-        useChatStore.getState().clearMessages();
+        // Nothing of this user survives for the next one: query cache,
+        // transcript, folder state, open streams.
+        resetClientSession();
         set({ user: null, accessToken: null, isAuthenticated: false });
       },
 
       forceLogout: (reason?: string) => {
         setAccessToken(null);
-        // Don't leak one user's chat transcript to the next session.
-        useChatStore.getState().clearMessages();
+        resetClientSession();
         set({
           user: null,
           accessToken: null,

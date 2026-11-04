@@ -91,7 +91,9 @@ export function useProcessingManager() {
   const accessToken = useAuthStore((s) => s.accessToken);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const { setStreamState, removeStreamState } = useProcessingStore();
-  const { data: videosData } = useAllVideos();
+  // Gated on the session: the login page must not fetch a library, and a
+  // signed-out observer must not keep a cleared list entry alive.
+  const { data: videosData } = useAllVideos({ enabled: isAuthenticated });
   const videos = videosData?.videos;
 
   // Track unsubscribe callbacks by videoSummaryId

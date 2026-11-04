@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/api/client";
+import { registerChatStream, releaseChatStream } from "@/lib/chat-streams";
 import { useBillingText, type BillingText } from "@/hooks/use-billing-text";
 import {
   sendAssistantMessage,
@@ -191,6 +192,8 @@ export function useSidebarChat(options: UseSidebarChatOptions = {}) {
       abortControllerRef.current?.abort();
       const controller = new AbortController();
       abortControllerRef.current = controller;
+      // Sign-out aborts registered turns from outside the hook.
+      registerChatStream(controller);
 
       const handleEvent = (event: AssistantChatEvent) => {
         if (!mountedRef.current) return;
@@ -329,7 +332,7 @@ export function useSidebarChat(options: UseSidebarChatOptions = {}) {
           )
         : sendLibraryMessage(message, history, handleEvent, controller.signal, confirmToken);
 
-      request.catch((err) => {
+      request.finally(() => releaseChatStream(controller)).catch((err) => {
         if (!mountedRef.current) return;
         // Ignore abort errors (user navigated away or sent another message)
         if (err instanceof Error && err.name === "AbortError") return;

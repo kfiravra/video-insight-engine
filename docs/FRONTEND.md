@@ -620,32 +620,33 @@ export function useAddVideo() {
 
 ### Auth Store
 
-```typescript
-// src/stores/auth-store.ts
-import { create } from "zustand";
-import { persist } from "zustand/middleware";
+`src/stores/auth-store.ts` persists `accessToken` and `user` under the `vie-auth`
+localStorage key; `isAuthenticated` and `isLoading` are derived at runtime by `checkAuth()`
+(`GET /auth/me` on app mount). The raw token is mirrored to `localStorage.accessToken`, the
+key `api/client.ts` reads to build `Authorization` headers.
 
+```typescript
 interface AuthState {
   user: User | null;
   accessToken: string | null;
   isAuthenticated: boolean;
-  setAuth: (user: User, token: string) => void;
+  isLoading: boolean;
+  login: (email: string, password: string) => Promise<void>;
+  loginDemo: () => Promise<void>;
+  register: (email: string, password: string, name: string) => Promise<void>;
   logout: () => void;
+  forceLogout: (reason?: string) => void;   // 401 after a failed refresh
+  checkAuth: () => Promise<void>;
 }
-
-export const useAuthStore = create<AuthState>()(
-  persist(
-    (set) => ({
-      user: null,
-      accessToken: null,
-      isAuthenticated: false,
-      setAuth: (user, accessToken) => set({ user, accessToken, isAuthenticated: true }),
-      logout: () => set({ user: null, accessToken: null, isAuthenticated: false }),
-    }),
-    { name: "vie-auth" }
-  )
-);
 ```
+
+**Sign-out wipes the client.** `logout()` and `forceLogout()` call
+`resetClientSession()` (`src/lib/session-reset.ts`), which cancels and clears the React
+Query cache, aborts every open pipeline and chat stream, empties the processing store and
+the chat transcript, and resets the user-scoped part of the UI store (`resetUserScope()`:
+selected, expanded and favourite ids, selection state, search). Query keys carry no user id,
+so this reset is what keeps one user's folders and videos from being served to the next
+user from cache. Layout preferences (sidebar width, text size, sort, theme) survive.
 
 ### Selectors (Prevent Re-renders)
 

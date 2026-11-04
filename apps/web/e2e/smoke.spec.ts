@@ -13,6 +13,7 @@
  *   2. Library (/board) renders the seeded video
  *   3. /video/:id renders tabs from the cached document + tab switching
  *   4. Assistant panel opens (no message is sent — opening is free)
+ *   5. Signing out and in as another user never shows the first user's library
  *
  * Requirements: api on :3000 and MongoDB on :27017 (docker-compose stack).
  * Run just this subset with: npx playwright test --project=smoke
@@ -21,6 +22,7 @@ import { test, expect, type Page } from "@playwright/test";
 import {
   requireSeedFile,
   SMOKE_USER,
+  SMOKE_USER_B,
   SMOKE_VIDEO_TITLE,
   SMOKE_VIDEO_PATH,
   SMOKE_TAB_LABELS,
@@ -122,6 +124,48 @@ test.describe("Smoke — real stack with seeded MongoDB", () => {
       .click();
 
     await expect(page.getByText(SMOKE_CHECKLIST_ITEM)).toBeVisible();
+  });
+
+  test("should never show the previous user's library after switching users", async ({
+    page,
+  }) => {
+    if (!seed.userB) {
+      throw new Error("Smoke seed predates the second user: rerun the smoke project to reseed.");
+    }
+    await injectAuth(page);
+    await page.goto("/board");
+    await expect(page.getByText(SMOKE_VIDEO_TITLE).first()).toBeVisible({
+      timeout: 15000,
+    });
+
+    // Sign out through the header menu, the way a user does.
+    await page.getByRole("button", { name: seed.user.name, exact: true }).click();
+    await page.getByRole("menuitem", { name: "Sign out" }).click();
+    await page.getByRole("button", { name: "Log out" }).click();
+    await page.waitForURL("**/login", { timeout: 15000 });
+
+    // Sign-out leaves nothing of the first user behind on the client.
+    const leftovers = await page.evaluate(() => ({
+      accessToken: localStorage.getItem("accessToken"),
+      auth: JSON.parse(localStorage.getItem("vie-auth") ?? "{}").state ?? {},
+      ui: JSON.parse(localStorage.getItem("vie-ui-store") ?? "{}").state ?? {},
+    }));
+    expect(leftovers.accessToken).toBeNull();
+    expect(leftovers.auth.user ?? null).toBeNull();
+    expect(leftovers.ui.expandedFolderIds ?? []).toEqual([]);
+
+    await page.getByLabel("Email").fill(SMOKE_USER_B.email);
+    await page.getByLabel("Password", { exact: true }).fill(SMOKE_USER_B.password);
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await page.waitForURL("**/board", { timeout: 15000 });
+
+    // B's board settles on its own empty library; A's video is nowhere.
+    await expect(page.getByText("Your library is empty")).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText(SMOKE_VIDEO_TITLE)).toHaveCount(0);
+    const signedIn = await page.evaluate(
+      () => JSON.parse(localStorage.getItem("vie-auth") ?? "{}").state?.user?.email,
+    );
+    expect(signedIn).toBe(SMOKE_USER_B.email);
   });
 
   test("should open the assistant panel from the sidebar", async ({ page }) => {

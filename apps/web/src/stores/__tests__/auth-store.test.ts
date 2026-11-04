@@ -2,8 +2,12 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/mocks/server";
 import { createMockUser } from "@/test/mocks/handlers";
-import { useAuthStore } from "../auth-store";
+import { useAuthStore, pendingLogoutRequest } from "../auth-store";
 import { useChatStore } from "../chat-store";
+import { useUIStore } from "../ui-store";
+import { useProcessingStore } from "@/features/video-output/stores/processing-store";
+import { registerChatStream } from "@/lib/chat-streams";
+import { queryClient } from "@/lib/query-client";
 import { setAccessToken, getAccessToken } from "@/api/client";
 
 const API_URL = "http://localhost:3000/api";
@@ -192,6 +196,57 @@ describe("authStore", () => {
       expect(useChatStore.getState().sessionIds).toEqual({});
     });
 
+    it("should empty the query cache so the next user never sees this user's library", async () => {
+      const { login, logout } = useAuthStore.getState();
+      await login("test@example.com", "password123");
+      queryClient.setQueryData(["videos", "list", { folderId: undefined }], { videos: ["mine"] });
+      queryClient.setQueryData(["folders", "list"], [{ id: "f1" }]);
+
+      logout();
+
+      expect(queryClient.getQueryCache().getAll()).toHaveLength(0);
+    });
+
+    it("should forget the user's folder state while keeping layout preferences", async () => {
+      const { login, logout } = useAuthStore.getState();
+      await login("test@example.com", "password123");
+      useUIStore.getState().expandFolder("f1");
+      useUIStore.getState().toggleFavorite("v1");
+      useUIStore.getState().setSidebarWidth(444);
+
+      logout();
+
+      expect(useUIStore.getState().expandedFolderIds).toEqual([]);
+      expect(useUIStore.getState().favoriteVideoIds).toEqual([]);
+      expect(useUIStore.getState().sidebarWidth).toBe(444);
+    });
+
+    it("should abort the open chat and pipeline streams", async () => {
+      const { login, logout } = useAuthStore.getState();
+      await login("test@example.com", "password123");
+      const chatTurn = new AbortController();
+      registerChatStream(chatTurn);
+      useProcessingStore.getState().setStreamState("vs-1", { phase: "connecting", metadata: null, error: null });
+
+      logout();
+
+      expect(chatTurn.signal.aborted).toBe(true);
+      expect(useProcessingStore.getState().streams.size).toBe(0);
+    });
+
+    it("should expose the sign-out call so a login can wait for it", async () => {
+      const { login, logout } = useAuthStore.getState();
+      await login("test@example.com", "password123");
+
+      logout();
+
+      const pending = pendingLogoutRequest();
+      expect(pending).not.toBeNull();
+      await pending;
+      await new Promise((r) => setTimeout(r, 0));
+      expect(pendingLogoutRequest()).toBeNull();
+    });
+
     it("should not throw even if logout API fails", async () => {
       // Override logout to fail
       server.use(
@@ -239,6 +294,18 @@ describe("authStore", () => {
       forceLogout("Session expired");
 
       expect(useChatStore.getState().sessionIds).toEqual({});
+    });
+
+    it("should empty the query cache and the user's folder state", async () => {
+      const { login, forceLogout } = useAuthStore.getState();
+      await login("test@example.com", "password123");
+      queryClient.setQueryData(["folders", "list"], [{ id: "f1" }]);
+      useUIStore.getState().expandFolder("f1");
+
+      forceLogout("Session expired");
+
+      expect(queryClient.getQueryCache().getAll()).toHaveLength(0);
+      expect(useUIStore.getState().expandedFolderIds).toEqual([]);
     });
 
     it("should set null reason when none provided", async () => {
