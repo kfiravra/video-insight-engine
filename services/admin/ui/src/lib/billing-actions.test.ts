@@ -52,7 +52,7 @@ describe('billingActions', () => {
   it('should leave the idempotency header out when no key is given', async () => {
     const fetchMock = stubFetch();
 
-    await billingActions.adjust(USER, { bucket: 'plan', minutes: -5, reason: 'fix' });
+    await billingActions.adjust(USER, { bucket: 'plan', tokens: -5, reason: 'fix' });
 
     expect(lastCall(fetchMock).init.headers).not.toHaveProperty('Idempotency-Key');
   });
@@ -68,21 +68,21 @@ describe('billingActions', () => {
   it('should POST an adjustment with its sign', async () => {
     const fetchMock = stubFetch();
 
-    await billingActions.adjust(USER, { bucket: 'credit', minutes: -30, reason: 'refund' });
+    await billingActions.adjust(USER, { bucket: 'credit', tokens: -30, reason: 'refund' });
 
     const { url, body } = lastCall(fetchMock);
     expect(url).toBe(`/billing/accounts/${USER}/adjust`);
-    expect(body).toEqual({ bucket: 'credit', minutes: -30, reason: 'refund' });
+    expect(body).toEqual({ bucket: 'credit', tokens: -30, reason: 'refund' });
   });
 
   it('should POST a recurring grant to the grants route', async () => {
     const fetchMock = stubFetch();
 
-    await billingActions.createRecurringGrant(USER, { minutes: 300, every: 'month', active: true, reason: 'demo' });
+    await billingActions.createRecurringGrant(USER, { tokens: 300, every: 'month', active: true, reason: 'demo' });
 
     const { url, body } = lastCall(fetchMock);
     expect(url).toBe(`/billing/accounts/${USER}/recurring-grants`);
-    expect(body).toEqual({ minutes: 300, every: 'month', active: true, reason: 'demo' });
+    expect(body).toEqual({ tokens: 300, every: 'month', active: true, reason: 'demo' });
   });
 
   it('should DELETE a recurring grant with its reason in the body', async () => {

@@ -22,7 +22,6 @@ type CapFields = Omit<CapsFormValues, 'reason'>;
 
 const NUMERIC_FIELDS: Array<{ name: NumericCap; label: string; hint: string }> = [
   { name: 'maxVideoMinutes', label: 'Max video length (minutes)', hint: 'Lowers the plan limit for this account.' },
-  { name: 'freeVideosPerDay', label: 'Free videos per day', hint: '0 turns the free video off.' },
   { name: 'maxConcurrent', label: 'Runs at once', hint: 'Most videos this account may have in flight.' },
 ];
 

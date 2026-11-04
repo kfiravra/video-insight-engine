@@ -18,7 +18,7 @@ interface AccountActionsProps {
 
 /**
  * The Account tab's action buttons. Each opens a dialog that asks for a reason;
- * granting minutes stays the form above the tab. Reads the account from the same
+ * granting tokens stays the form above the tab. Reads the account from the same
  * query as the tab, so the dialogs start from the plan and caps on screen.
  */
 export function AccountActions({ userId, notice, onDone }: AccountActionsProps) {

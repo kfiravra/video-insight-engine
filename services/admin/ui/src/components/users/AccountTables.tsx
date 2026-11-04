@@ -8,8 +8,8 @@ import type {
 import {
   describeSource,
   formatCents,
-  formatMinutes,
-  formatSignedMinutes,
+  formatSignedAmount,
+  formatTokens,
 } from '../../lib/billing';
 import { formatCost, formatDateTime, formatDateTimeUtc, shortId, timeAgo } from '../../lib/format';
 
@@ -67,13 +67,13 @@ const ROW = 'border-t border-[var(--color-border)]';
 type LotStatus = 'Open' | 'Expired' | 'Used up';
 
 /**
- * Expired is checked first: the repair job zeroes the minutes of an expired lot
+ * Expired is checked first: the repair job zeroes the tokens of an expired lot
  * (recurring monthly grants included), so "nothing left" alone would make every
  * expired lot read "Used up".
  */
 function lotStatus(lot: BillingCreditLot): LotStatus {
   if (lot.expired) return 'Expired';
-  return lot.minutesRemaining === 0 ? 'Used up' : 'Open';
+  return lot.tokensRemaining === 0 ? 'Used up' : 'Open';
 }
 
 const LOT_STATUS_COLOR: Record<LotStatus, string> = {
@@ -103,9 +103,9 @@ export function LotsTable({ lots }: { lots: BillingCreditLot[] }) {
               <td className="p-2 hidden sm:table-cell font-mono text-[var(--color-text-muted)]">
                 {describeSource(lot.source)}
               </td>
-              <td className="p-2 text-right font-mono font-medium">{formatMinutes(lot.minutesRemaining)}</td>
+              <td className="p-2 text-right font-mono font-medium">{formatTokens(lot.tokensRemaining)}</td>
               <td className="p-2 text-right hidden sm:table-cell font-mono text-[var(--color-text-muted)]">
-                {formatMinutes(lot.minutesGranted)}
+                {formatTokens(lot.tokensGranted)}
               </td>
               <td className="p-2 text-right text-[10px]">
                 {lot.expiresAt === null ? 'Never' : formatDateTimeUtc(lot.expiresAt)}
@@ -125,8 +125,8 @@ export function LotsTable({ lots }: { lots: BillingCreditLot[] }) {
 // ─── Open holds ───
 
 function describeSplit(hold: BillingHold): string {
-  const { free, plan, credit } = hold.split;
-  return [free > 0 && `free ${free}`, plan > 0 && `plan ${plan}`, credit > 0 && `credit ${credit}`]
+  const { plan, credit } = hold.split;
+  return [plan > 0 && `plan ${formatTokens(plan)}`, credit > 0 && `credit ${formatTokens(credit)}`]
     .filter(Boolean)
     .join(', ');
 }
@@ -144,7 +144,7 @@ export function HoldsTable({ holds }: { holds: BillingHold[] }) {
         {holds.map((hold) => (
           <tr key={hold.requestId} className={ROW}>
             <td className="p-2 font-mono">{hold.youtubeId ?? '—'}</td>
-            <td className="p-2 text-right font-mono font-medium">{formatMinutes(hold.minutes)}</td>
+            <td className="p-2 text-right font-mono font-medium">{formatTokens(hold.tokens)}</td>
             <td className="p-2 hidden sm:table-cell text-[var(--color-text-muted)]">{describeSplit(hold)}</td>
             <td className="p-2 text-right text-[10px]" title={formatDateTime(hold.createdAt)}>
               {timeAgo(hold.createdAt)}
@@ -168,7 +168,7 @@ export function GrantsTable({ grants, renderActions }: GrantsTableProps) {
   return (
     <Section title="Recurring grants" count={grants.length} empty="No recurring grants.">
       <Head>
-        <Th align="right">Minutes</Th>
+        <Th align="right">Tokens</Th>
         <Th>Every</Th>
         <Th>Status</Th>
         <Th align="right" hide="hidden sm:table-cell">Next run</Th>
@@ -179,7 +179,7 @@ export function GrantsTable({ grants, renderActions }: GrantsTableProps) {
       <tbody>
         {grants.map((grant) => (
           <tr key={grant.grantId} className={ROW}>
-            <td className="p-2 text-right font-mono font-medium">{formatMinutes(grant.minutes)}</td>
+            <td className="p-2 text-right font-mono font-medium">{formatTokens(grant.tokens)}</td>
             <td className="p-2">{grant.every}</td>
             <td
               className="p-2"
@@ -202,9 +202,9 @@ export function GrantsTable({ grants, renderActions }: GrantsTableProps) {
 
 // ─── Ledger ───
 
-function minutesColor(minutes: number): string {
-  if (minutes > 0) return 'var(--color-success)';
-  return minutes < 0 ? 'var(--color-warning)' : 'var(--color-text-muted)';
+function amountColor(amount: number): string {
+  if (amount > 0) return 'var(--color-success)';
+  return amount < 0 ? 'var(--color-warning)' : 'var(--color-text-muted)';
 }
 
 function LedgerRow({ entry }: { entry: BillingLedgerEntry }) {
@@ -213,8 +213,8 @@ function LedgerRow({ entry }: { entry: BillingLedgerEntry }) {
       <td className="p-2 text-[10px] whitespace-nowrap">{formatDateTime(entry.createdAt)}</td>
       <td className="p-2">{entry.type}</td>
       <td className="p-2">{entry.bucket}</td>
-      <td className="p-2 text-right font-mono font-medium" style={{ color: minutesColor(entry.minutes) }}>
-        {formatSignedMinutes(entry.minutes)}
+      <td className="p-2 text-right font-mono font-medium" style={{ color: amountColor(entry.amount) }}>
+        {formatSignedAmount(entry.amount, entry.unit)}
       </td>
       <td className="p-2 min-w-0">
         <div className="truncate max-w-[220px]" title={entry.reason ?? undefined}>
@@ -245,7 +245,7 @@ export function LedgerTable({ entries }: LedgerTableProps) {
         <Th>When</Th>
         <Th>Type</Th>
         <Th>Bucket</Th>
-        <Th align="right">Minutes</Th>
+        <Th align="right">Amount</Th>
         <Th>Reason</Th>
         <Th hide="hidden sm:table-cell">Actor</Th>
         <Th align="right" hide="hidden md:table-cell">Cost</Th>

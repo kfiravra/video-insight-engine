@@ -30,6 +30,14 @@ describe('SetPlanDialog', () => {
     expect(screen.getByRole('dialog', { name: 'Set plan' })).toBeTruthy();
   });
 
+  it('should say Pro grants 20,000 tokens per monthly cycle for the term', () => {
+    setup();
+
+    expect(screen.getByRole('dialog', { name: 'Set plan' }).textContent).toContain(
+      'Pro grants 20,000 tokens per monthly cycle for the term',
+    );
+  });
+
   it.each([
     ['free', 'pro'],
     ['pro', 'free'],

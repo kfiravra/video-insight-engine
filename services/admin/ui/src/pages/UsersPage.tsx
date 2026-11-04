@@ -107,7 +107,7 @@ export function UsersPage({ days = 7 }: UsersPageProps = {}) {
               {visible.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="p-6 text-center text-xs text-[var(--color-text-muted)]">
-                    No users with usage, a minutes account or a sign-up in the last {days} days.
+                    No users with usage, a billing account or a sign-up in the last {days} days.
                   </td>
                 </tr>
               ) : (

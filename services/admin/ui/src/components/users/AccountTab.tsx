@@ -8,7 +8,7 @@ import type { BillingRecurringGrant } from '../../lib/billing';
 
 interface AccountTabProps {
   userId: string;
-  /** Action buttons (set plan, grant minutes, ...); rendered above the summary. */
+  /** Action buttons (set plan, grant tokens, ...); rendered above the summary. */
   actions?: ReactNode;
   /** A row action for each recurring grant (delete); the table has no actions column without it. */
   grantActions?: (grant: BillingRecurringGrant) => ReactNode;
@@ -50,7 +50,7 @@ function LoadOlder({ loading, onClick }: LoadOlderProps) {
   );
 }
 
-/** Read-only view of a user's minutes account: plan, buckets, lots, holds, grants, ledger. */
+/** Read-only view of a user's token account: plan, buckets, lots, holds, grants, ledger. */
 export function AccountTab({ userId, actions, grantActions }: AccountTabProps) {
   const { data, isLoading, isError, error, refetch, hasNextPage, fetchNextPage, isFetchingNextPage } =
     useBillingAccount(userId);

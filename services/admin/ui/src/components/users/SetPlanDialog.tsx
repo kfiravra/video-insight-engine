@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { billingActions } from '../../lib/billing-actions';
-import { buildPlanRequest, PRO_PERIOD_MINUTES } from '../../lib/billing-forms';
+import { buildPlanRequest, PRO_PERIOD_TOKENS } from '../../lib/billing-forms';
 import { ActionDialog, DialogField } from './ActionDialog';
+import { formatNumber } from '../../lib/format';
 import { INPUT_CLASS } from './dialog-styles';
 
 interface SetPlanDialogProps {
@@ -11,7 +12,7 @@ interface SetPlanDialogProps {
   onDone: (message: string) => void;
 }
 
-/** Set the account's plan by hand: Pro grants the month's minutes now for a term; free stops plan minutes. */
+/** Set the account's plan by hand: Pro grants the month's tokens now for a term; free stops plan tokens. */
 export function SetPlanDialog({ userId, currentPlan, onClose, onDone }: SetPlanDialogProps) {
   const [planId, setPlanId] = useState<'free' | 'pro'>(currentPlan === 'pro' ? 'free' : 'pro');
   const [periodEnd, setPeriodEnd] = useState('');
@@ -19,7 +20,7 @@ export function SetPlanDialog({ userId, currentPlan, onClose, onDone }: SetPlanD
   return (
     <ActionDialog
       title="Set plan"
-      description={`A manual plan, no payment. Pro grants ${PRO_PERIOD_MINUTES} minutes now and renews monthly for the term; free stops plan minutes.`}
+      description={`A manual plan, no payment. Pro grants ${formatNumber(PRO_PERIOD_TOKENS)} tokens per monthly cycle for the term; free stops plan tokens.`}
       submitLabel="Set plan"
       userId={userId}
       buildRequest={(reason) => buildPlanRequest({ planId, periodEnd, reason })}

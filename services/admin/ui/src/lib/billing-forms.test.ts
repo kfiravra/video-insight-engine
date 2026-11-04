@@ -6,7 +6,7 @@ import {
   buildPlanRequest,
   buildRecurringGrantRequest,
   capsToForm,
-  MAX_ADMIN_MINUTES,
+  MAX_ADMIN_TOKENS,
   MAX_REASON_LENGTH,
 } from './billing-forms';
 
@@ -95,14 +95,10 @@ describe('buildCapsRequest', () => {
     expect(request).toEqual({ blocked: null, reason: 'why' });
   });
 
-  it('should allow zero free videos per day', () => {
-    expect(buildCapsRequest(form({ freeVideosPerDay: '0' }), none)).toEqual({ freeVideosPerDay: 0, reason: 'why' });
-  });
 
   it.each([
-    ['maxVideoMinutes', '2', 'Max video length must be between 3 and 180'],
-    ['maxVideoMinutes', '181', 'Max video length must be between 3 and 180'],
-    ['freeVideosPerDay', '101', 'Free videos per day must be between 0 and 100'],
+    ['maxVideoMinutes', '0', 'Max video length must be between 1 and 180'],
+    ['maxVideoMinutes', '181', 'Max video length must be between 1 and 180'],
     ['maxConcurrent', '0', 'Runs at once must be between 1 and 1000'],
     ['maxConcurrent', '1.5', 'Runs at once must be a whole number'],
   ] as const)('should reject %s = %s', (field, value, message) => {
@@ -112,9 +108,8 @@ describe('buildCapsRequest', () => {
 
 describe('capsToForm', () => {
   it('should show the current caps as strings', () => {
-    expect(capsToForm({ maxVideoMinutes: 60, freeVideosPerDay: 0, maxConcurrent: null, blocked: true })).toEqual({
+    expect(capsToForm({ maxVideoMinutes: 60, maxConcurrent: null, blocked: true })).toEqual({
       maxVideoMinutes: '60',
-      freeVideosPerDay: '0',
       maxConcurrent: '',
       blocked: true,
     });
@@ -122,35 +117,35 @@ describe('capsToForm', () => {
 });
 
 describe('buildAdjustRequest', () => {
-  it('should keep the sign of the minutes', () => {
-    expect(buildAdjustRequest({ bucket: 'credit', minutes: '-30', reason: 'refund' })).toEqual({
+  it('should keep the sign of the tokens', () => {
+    expect(buildAdjustRequest({ bucket: 'credit', tokens: '-30', reason: 'refund' })).toEqual({
       bucket: 'credit',
-      minutes: -30,
+      tokens: -30,
       reason: 'refund',
     });
   });
 
-  it('should reject 0 minutes', () => {
-    expect(() => buildAdjustRequest({ bucket: 'plan', minutes: '0', reason: 'r' })).toThrow('Minutes must not be 0');
+  it('should reject 0 tokens', () => {
+    expect(() => buildAdjustRequest({ bucket: 'plan', tokens: '0', reason: 'r' })).toThrow('Tokens must not be 0');
   });
 
-  it.each(['', '1.5', 'abc'])('should reject "%s" minutes', (minutes) => {
-    expect(() => buildAdjustRequest({ bucket: 'plan', minutes, reason: 'r' })).toThrow('Minutes must be a whole number');
+  it.each(['', '1.5', 'abc'])('should reject "%s" tokens', (tokens) => {
+    expect(() => buildAdjustRequest({ bucket: 'plan', tokens, reason: 'r' })).toThrow('Tokens must be a whole number');
   });
 
-  it.each([`${MAX_ADMIN_MINUTES + 1}`, `-${MAX_ADMIN_MINUTES + 1}`])('should reject %s minutes', (minutes) => {
-    expect(() => buildAdjustRequest({ bucket: 'plan', minutes, reason: 'r' })).toThrow(/Minutes must be between/);
+  it.each([`${MAX_ADMIN_TOKENS + 1}`, `-${MAX_ADMIN_TOKENS + 1}`])('should reject %s tokens', (tokens) => {
+    expect(() => buildAdjustRequest({ bucket: 'plan', tokens, reason: 'r' })).toThrow(/Tokens must be between/);
   });
 
   it('should require a reason', () => {
-    expect(() => buildAdjustRequest({ bucket: 'plan', minutes: '5', reason: '' })).toThrow('Reason is required');
+    expect(() => buildAdjustRequest({ bucket: 'plan', tokens: '5', reason: '' })).toThrow('Reason is required');
   });
 });
 
 describe('buildRecurringGrantRequest', () => {
   it('should build a monthly grant', () => {
-    expect(buildRecurringGrantRequest({ minutes: '300', active: true, reason: 'demo' })).toEqual({
-      minutes: 300,
+    expect(buildRecurringGrantRequest({ tokens: '300', active: true, reason: 'demo' })).toEqual({
+      tokens: 300,
       every: 'month',
       active: true,
       reason: 'demo',
@@ -158,17 +153,17 @@ describe('buildRecurringGrantRequest', () => {
   });
 
   it('should keep an inactive grant inactive', () => {
-    expect(buildRecurringGrantRequest({ minutes: '300', active: false, reason: 'demo' }).active).toBe(false);
+    expect(buildRecurringGrantRequest({ tokens: '300', active: false, reason: 'demo' }).active).toBe(false);
   });
 
-  it.each(['0', '-5', '100001'])('should reject %s minutes', (minutes) => {
-    expect(() => buildRecurringGrantRequest({ minutes, active: true, reason: 'demo' })).toThrow(
-      /Minutes must be between 1 and/,
+  it.each(['0', '-5', '1000001'])('should reject %s tokens', (tokens) => {
+    expect(() => buildRecurringGrantRequest({ tokens, active: true, reason: 'demo' })).toThrow(
+      /Tokens must be between 1 and/,
     );
   });
 
   it('should require a reason', () => {
-    expect(() => buildRecurringGrantRequest({ minutes: '5', active: true, reason: ' ' })).toThrow('Reason is required');
+    expect(() => buildRecurringGrantRequest({ tokens: '5', active: true, reason: ' ' })).toThrow('Reason is required');
   });
 });
 

@@ -5,8 +5,21 @@ import { formatNumber } from './format';
 // packages/types/src/billing.ts. Fields vie-api omits when absent are `null` from
 // vie-admin, so optional fields accept both.
 
-export type BillingBucket = 'free' | 'plan' | 'credit';
-export type BillingLedgerType = 'grant' | 'hold' | 'debit' | 'release' | 'expire' | 'refund' | 'adjust';
+/** `free` appears only on minute entries written before the token migration. */
+export type BillingBucket = 'plan' | 'credit' | 'debt' | 'free';
+export type BillingLedgerType =
+  | 'grant'
+  | 'hold'
+  | 'debit'
+  | 'release'
+  | 'expire'
+  | 'refund'
+  | 'adjust'
+  | 'repay'
+  | 'convert';
+/** Tokens, or minutes on history rows from before the token migration. */
+export type BillingLedgerUnit = 'tokens' | 'minutes';
+export type BillingExecutionKind = 'video' | 'chat' | 'library_chat' | 'action';
 export type BillingSourceKind = 'run' | 'payment' | 'admin' | 'migration' | 'recurring' | 'system';
 
 export interface BillingSource {
@@ -17,7 +30,6 @@ export interface BillingSource {
 /** Admin overrides; null/absent = the plan default. */
 export interface BillingCaps {
   maxVideoMinutes?: number | null;
-  freeVideosPerDay?: number | null;
   maxConcurrent?: number | null;
   blocked?: boolean | null;
 }
@@ -33,14 +45,7 @@ export interface BillingAccountSnapshot {
     periodStart: string | null;
     periodEnd: string | null;
   };
-  free: {
-    perWindow: number;
-    usedInWindow: number;
-    available: boolean;
-    nextFreeAt: string | null;
-    maxVideoMinutes: number;
-  };
-  planMinutes: {
+  planTokens: {
     cycleStart: string | null;
     cycleEnd: string | null;
     granted: number;
@@ -48,6 +53,11 @@ export interface BillingAccountSnapshot {
     remaining: number;
   };
   credits: { available: number };
+  /** Tokens owed (>= 0). */
+  debt: number;
+  /** Plan remaining + credits - debt; negative while in debt. */
+  balance: number;
+  signupGrantAt: string | null;
   caps: BillingCaps;
   openHolds: number;
   version: number;
@@ -56,8 +66,8 @@ export interface BillingAccountSnapshot {
 
 export interface BillingCreditLot {
   lotId: string;
-  minutesGranted: number;
-  minutesRemaining: number;
+  tokensGranted: number;
+  tokensRemaining: number;
   source: BillingSource;
   priceUsdCents?: number | null;
   expiresAt: string | null;
@@ -70,9 +80,9 @@ export interface BillingHold {
   userId: string;
   youtubeId: string | null;
   durationSec: number;
-  minutes: number;
-  split: { free: number; plan: number; credit: number; lots: Array<{ lotId: string; minutes: number }> };
-  freeVideoAt: string | null;
+  /** The estimate held. */
+  tokens: number;
+  split: { plan: number; credit: number; lots: Array<{ lotId: string; tokens: number }> };
   planCycleStart: string | null;
   createdAt: string;
 }
@@ -82,11 +92,15 @@ export interface BillingLedgerEntry {
   userId: string;
   type: BillingLedgerType;
   bucket: BillingBucket;
-  /** Signed: + adds headroom, - consumes it. */
-  minutes: number;
+  unit: BillingLedgerUnit;
+  /** Signed, in `unit`: + adds headroom, - consumes it. */
+  amount: number;
+  mirrorsHold?: boolean | null;
   lotId?: string | null;
   source: BillingSource;
   idempotencyKey: string;
+  executionKind?: BillingExecutionKind | null;
+  executionId?: string | null;
   youtubeId?: string | null;
   durationSec?: number | null;
   /** Internal margin data; admin-only. */
@@ -99,7 +113,7 @@ export interface BillingLedgerEntry {
 
 export interface BillingRecurringGrant {
   grantId: string;
-  minutes: number;
+  tokens: number;
   every: 'month';
   active: boolean;
   nextRunAt: string;
@@ -130,15 +144,28 @@ export interface BillingAccountQuery {
 
 // --- Helpers ---
 
-/** "1,250 min". */
-export function formatMinutes(minutes: number): string {
-  return `${formatNumber(minutes)} min`;
+/** "1,250 tokens". */
+export function formatTokens(tokens: number): string {
+  return `${formatNumber(tokens)} ${Math.abs(tokens) === 1 ? 'token' : 'tokens'}`;
 }
 
-/** "+150 min" / "-12 min": the sign is what tells a grant from a spend. */
-export function formatSignedMinutes(minutes: number): string {
-  const sign = minutes > 0 ? '+' : minutes < 0 ? '-' : '';
-  return `${sign}${formatNumber(Math.abs(minutes))} min`;
+/** "+1,500 tokens" / "−1,200 tokens": the sign is what tells a grant from a spend. */
+export function formatSignedTokens(tokens: number): string {
+  const sign = tokens > 0 ? '+' : tokens < 0 ? '\u2212' : '';
+  return `${sign}${formatNumber(Math.abs(tokens))} ${Math.abs(tokens) === 1 ? 'token' : 'tokens'}`;
+}
+
+/** A ledger amount in its own unit: tokens, or minutes on history rows from before the migration. */
+export function formatSignedAmount(amount: number, unit: BillingLedgerUnit): string {
+  if (unit === 'tokens') return formatSignedTokens(amount);
+  const sign = amount > 0 ? '+' : amount < 0 ? '\u2212' : '';
+  return `${sign}${formatNumber(Math.abs(amount))} min`;
+}
+
+/** The balance, with debt spelled out: "−120 tokens (owes 120)". */
+export function describeBalance(balance: number, debt: number): string {
+  if (balance >= 0 && debt === 0) return formatTokens(balance);
+  return `${formatSignedTokens(balance)} (owes ${formatNumber(debt)})`;
 }
 
 /** Cents as dollars, e.g. 500 -> "$5.00". */

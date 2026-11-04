@@ -25,7 +25,7 @@ describe('AdjustDialog', () => {
 
   it('should require a reason and send nothing without one', async () => {
     setup();
-    setField('adjust-minutes', '30');
+    setField('adjust-tokens', '30');
 
     submitDialog();
 
@@ -36,7 +36,7 @@ describe('AdjustDialog', () => {
   it('should send a positive credit adjustment', async () => {
     mockAdjust.mockResolvedValue({ auditId: 'x' });
     setup();
-    setField('adjust-minutes', '30');
+    setField('adjust-tokens', '30');
     typeReason('support credit');
 
     submitDialog();
@@ -44,7 +44,7 @@ describe('AdjustDialog', () => {
     await waitFor(() => expect(mockAdjust).toHaveBeenCalledOnce());
     expect(mockAdjust).toHaveBeenCalledWith(
       USER_ID,
-      { bucket: 'credit', minutes: 30, reason: 'support credit' },
+      { bucket: 'credit', tokens: 30, reason: 'support credit' },
       expect.any(String),
     );
   });
@@ -53,41 +53,41 @@ describe('AdjustDialog', () => {
     mockAdjust.mockResolvedValue({ auditId: 'x' });
     setup();
     fireEvent.change(screen.getByTestId('adjust-bucket'), { target: { value: 'plan' } });
-    setField('adjust-minutes', '-45');
+    setField('adjust-tokens', '-45');
     typeReason('double counted');
 
     submitDialog();
 
     await waitFor(() => expect(mockAdjust).toHaveBeenCalledOnce());
-    expect(mockAdjust.mock.calls[0][1]).toEqual({ bucket: 'plan', minutes: -45, reason: 'double counted' });
+    expect(mockAdjust.mock.calls[0][1]).toEqual({ bucket: 'plan', tokens: -45, reason: 'double counted' });
   });
 
-  it('should never send 0 minutes', async () => {
+  it('should never send 0 tokens', async () => {
     setup();
-    setField('adjust-minutes', '0');
+    setField('adjust-tokens', '0');
     typeReason('nothing');
 
     submitDialog();
 
-    expect((await screen.findByRole('alert')).textContent).toBe('Minutes must not be 0');
+    expect((await screen.findByRole('alert')).textContent).toBe('Tokens must not be 0');
     expect(mockAdjust).not.toHaveBeenCalled();
   });
 
-  it('should reject minutes that are not whole numbers', async () => {
+  it('should reject tokens that are not whole numbers', async () => {
     setup();
-    setField('adjust-minutes', '2.5');
+    setField('adjust-tokens', '2.5');
     typeReason('half');
 
     submitDialog();
 
-    expect((await screen.findByRole('alert')).textContent).toBe('Minutes must be a whole number');
+    expect((await screen.findByRole('alert')).textContent).toBe('Tokens must be a whole number');
     expect(mockAdjust).not.toHaveBeenCalled();
   });
 
   it('should show the explanation the server gave when the balance would go below zero', async () => {
     mockAdjust.mockRejectedValue(new ApiError(400, 'API error: 400', 'adjustment would take credit below zero'));
     setup();
-    setField('adjust-minutes', '-500');
+    setField('adjust-tokens', '-500');
     typeReason('correction');
 
     submitDialog();
@@ -96,12 +96,12 @@ describe('AdjustDialog', () => {
   });
 
   it.each([
-    ['30', 'Adjusted credit minutes by +30.'],
-    ['-30', 'Adjusted credit minutes by -30.'],
-  ])('should report a %s minute adjustment', async (minutes, message) => {
+    ['30', 'Adjusted credit tokens by +30.'],
+    ['-30', 'Adjusted credit tokens by -30.'],
+  ])('should report a %s token adjustment', async (tokens, message) => {
     mockAdjust.mockResolvedValue({ auditId: 'x' });
     const { onDone } = setup();
-    setField('adjust-minutes', minutes);
+    setField('adjust-tokens', tokens);
     typeReason('r');
 
     submitDialog();

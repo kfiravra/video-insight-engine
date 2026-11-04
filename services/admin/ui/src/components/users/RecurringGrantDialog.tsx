@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { billingActions } from '../../lib/billing-actions';
 import type { BillingRecurringGrant } from '../../lib/billing';
-import { buildDeleteGrantRequest, buildRecurringGrantRequest, MAX_ADMIN_MINUTES } from '../../lib/billing-forms';
+import { buildDeleteGrantRequest, buildRecurringGrantRequest, MAX_ADMIN_TOKENS } from '../../lib/billing-forms';
 import { ActionDialog, DialogField } from './ActionDialog';
 import { INPUT_CLASS, SECONDARY_BUTTON_CLASS } from './dialog-styles';
 
@@ -13,7 +13,7 @@ interface RecurringGrantDialogProps {
 
 /** A credit lot granted every month to a demo or eval account, applied by vie-api's repair job. */
 export function RecurringGrantDialog({ userId, onClose, onDone }: RecurringGrantDialogProps) {
-  const [minutes, setMinutes] = useState('');
+  const [tokens, setTokens] = useState('');
   const [active, setActive] = useState(true);
 
   return (
@@ -22,22 +22,22 @@ export function RecurringGrantDialog({ userId, onClose, onDone }: RecurringGrant
       description="Grants a credit lot of this size every month. Each month's lot is recorded in the ledger."
       submitLabel="Add grant"
       userId={userId}
-      buildRequest={(reason) => buildRecurringGrantRequest({ minutes, active, reason })}
+      buildRequest={(reason) => buildRecurringGrantRequest({ tokens, active, reason })}
       send={(request, key) => billingActions.createRecurringGrant(userId, request, key)}
-      successMessage={(request) => `Recurring grant of ${request.minutes} minutes a month added.`}
+      successMessage={(request) => `Recurring grant of ${request.tokens} tokens a month added.`}
       onClose={onClose}
       onDone={onDone}
     >
-      <DialogField label="Minutes per month" hint={`Whole minutes, 1 to ${MAX_ADMIN_MINUTES}.`}>
+      <DialogField label="Tokens per month" hint={`Whole tokens, 1 to ${MAX_ADMIN_TOKENS}.`}>
         <input
           type="number"
           step="1"
           min="1"
-          max={MAX_ADMIN_MINUTES}
-          value={minutes}
-          onChange={(e) => setMinutes(e.target.value)}
-          aria-label="Minutes per month"
-          data-testid="recurring-minutes"
+          max={MAX_ADMIN_TOKENS}
+          value={tokens}
+          onChange={(e) => setTokens(e.target.value)}
+          aria-label="Tokens per month"
+          data-testid="recurring-tokens"
           className={INPUT_CLASS}
         />
       </DialogField>
@@ -65,7 +65,7 @@ function DeleteGrantDialog({ userId, grant, onClose, onDone }: DeleteGrantDialog
   return (
     <ActionDialog
       title="Delete recurring grant"
-      description={`Stops the monthly grant of ${grant.minutes} minutes. Lots it already granted stay on the account.`}
+      description={`Stops the monthly grant of ${grant.tokens} tokens. Lots it already granted stay on the account.`}
       submitLabel="Delete grant"
       userId={userId}
       buildRequest={(reason) => buildDeleteGrantRequest(reason)}
@@ -93,7 +93,7 @@ export function DeleteGrantButton({ userId, grant, onDone }: DeleteGrantButtonPr
         type="button"
         onClick={() => setOpen(true)}
         className={SECONDARY_BUTTON_CLASS}
-        aria-label={`Delete recurring grant of ${grant.minutes} minutes`}
+        aria-label={`Delete recurring grant of ${grant.tokens} tokens`}
         data-testid={`delete-grant-${grant.grantId}`}
       >
         Delete

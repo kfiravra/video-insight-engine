@@ -227,7 +227,7 @@ export function AdjustmentsTab({ userId }: AdjustmentsTabProps) {
           Past USD adjustments
         </h4>
         <p className="text-[10px] text-[var(--color-text-faint)]">
-          History from before the minutes ledger. New grants are in minutes, on the Account tab.
+          History from before the ledger. New grants are in tokens, on the Account tab.
         </p>
         {data.adjustments.length === 0 ? (
           <p className="text-xs text-[var(--color-text-muted)]">No USD grants or adjustments recorded.</p>

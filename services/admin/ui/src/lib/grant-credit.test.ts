@@ -2,11 +2,11 @@ import { describe, it, expect } from 'vitest';
 import { buildGrantRequest } from './grant-credit';
 
 const NOW = new Date('2026-11-01T10:00:00Z');
-const base = { minutes: '150', reason: 'goodwill', expiry: '' };
+const base = { tokens: '150', reason: 'goodwill', expiry: '' };
 
 describe('buildGrantRequest', () => {
   it('should build a request with no expiry by default', () => {
-    expect(buildGrantRequest(base, NOW)).toEqual({ minutes: 150, reason: 'goodwill' });
+    expect(buildGrantRequest(base, NOW)).toEqual({ tokens: 150, reason: 'goodwill' });
   });
 
   it('should trim the reason', () => {
@@ -22,18 +22,18 @@ describe('buildGrantRequest', () => {
   it('should have no adminId or dollar field: the server knows who is granting', () => {
     expect(Object.keys(buildGrantRequest({ ...base, expiry: '2027-01-31' }, NOW)).sort()).toEqual([
       'expiresAt',
-      'minutes',
       'reason',
+      'tokens',
     ]);
   });
 
-  it.each(['', '  ', 'abc', '1.5', '0', '-5', '100001'])('should reject %j minutes', (minutes) => {
-    expect(() => buildGrantRequest({ ...base, minutes }, NOW)).toThrow(/minutes/i);
+  it.each(['', '  ', 'abc', '1.5', '0', '-5', '1000001'])('should reject %j tokens', (tokens) => {
+    expect(() => buildGrantRequest({ ...base, tokens }, NOW)).toThrow(/tokens/i);
   });
 
   it('should accept the limits', () => {
-    expect(buildGrantRequest({ ...base, minutes: '1' }, NOW).minutes).toBe(1);
-    expect(buildGrantRequest({ ...base, minutes: '100000' }, NOW).minutes).toBe(100_000);
+    expect(buildGrantRequest({ ...base, tokens: '1' }, NOW).tokens).toBe(1);
+    expect(buildGrantRequest({ ...base, tokens: '1000000' }, NOW).tokens).toBe(1_000_000);
   });
 
   it('should require a reason', () => {

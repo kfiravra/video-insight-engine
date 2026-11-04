@@ -25,14 +25,14 @@ function renderForm() {
   return { invalidate };
 }
 
-function fill(minutes: string, reason: string, expiry = '') {
-  fireEvent.change(screen.getByTestId('grant-credit-minutes'), { target: { value: minutes } });
+function fill(tokens: string, reason: string, expiry = '') {
+  fireEvent.change(screen.getByTestId('grant-credit-tokens'), { target: { value: tokens } });
   fireEvent.change(screen.getByTestId('grant-credit-reason'), { target: { value: reason } });
   if (expiry) fireEvent.change(screen.getByTestId('grant-credit-expiry'), { target: { value: expiry } });
 }
 
 function submit() {
-  const form = screen.getByTestId('grant-credit-minutes').closest('form');
+  const form = screen.getByTestId('grant-credit-tokens').closest('form');
   if (!form) throw new Error('grant form not found');
   fireEvent.submit(form);
 }
@@ -43,10 +43,10 @@ describe('GrantCreditForm', () => {
     localStorage.clear();
   });
 
-  it('should have minutes, reason and an optional expiry, and no admin id field', () => {
+  it('should have tokens, reason and an optional expiry, and no admin id field', () => {
     renderForm();
 
-    expect(screen.getByLabelText('Minutes')).toBeTruthy();
+    expect(screen.getByLabelText('Tokens')).toBeTruthy();
     expect(screen.getByLabelText('Reason')).toBeTruthy();
     expect(screen.getByLabelText('Expires (optional)')).toBeTruthy();
     expect(screen.queryByLabelText(/admin/i)).toBeNull();
@@ -66,7 +66,7 @@ describe('GrantCreditForm', () => {
     expect(setItem).not.toHaveBeenCalledWith('admin_user_id', expect.anything());
   });
 
-  it('should send minutes and reason, without any admin id or dollar amount', async () => {
+  it('should send tokens and reason, without any admin id or dollar amount', async () => {
     mockGrantCredit.mockResolvedValue({ lotId: 'l', auditId: 'a' });
     renderForm();
 
@@ -74,7 +74,7 @@ describe('GrantCreditForm', () => {
     submit();
 
     await waitFor(() => expect(mockGrantCredit).toHaveBeenCalledOnce());
-    expect(mockGrantCredit).toHaveBeenCalledWith(USER_ID, { minutes: 150, reason: 'goodwill' }, expect.any(String));
+    expect(mockGrantCredit).toHaveBeenCalledWith(USER_ID, { tokens: 150, reason: 'goodwill' }, expect.any(String));
   });
 
   it('should send the expiry as the end of the chosen day when one is picked', async () => {
@@ -85,17 +85,17 @@ describe('GrantCreditForm', () => {
     submit();
 
     await waitFor(() => expect(mockGrantCredit).toHaveBeenCalled());
-    expect(mockGrantCredit.mock.calls[0][1]).toEqual({ minutes: 60, reason: 'promo', expiresAt: '2099-12-31T23:59:59.000Z' });
+    expect(mockGrantCredit.mock.calls[0][1]).toEqual({ tokens: 60, reason: 'promo', expiresAt: '2099-12-31T23:59:59.000Z' });
   });
 
   it.each([
-    ['5000000', 'Minutes must be between 1 and 100000'],
-    ['0', 'Minutes must be between 1 and 100000'],
-    ['2.5', 'Enter a whole number of minutes'],
-  ])('should show an error and not call the API for %s minutes', async (minutes, text) => {
+    ['5000000', 'Tokens must be between 1 and 1000000'],
+    ['0', 'Tokens must be between 1 and 1000000'],
+    ['2.5', 'Enter a whole number of tokens'],
+  ])('should show an error and not call the API for %s tokens', async (tokens, text) => {
     renderForm();
 
-    fill(minutes, 'a reason');
+    fill(tokens, 'a reason');
     submit();
 
     await waitFor(() => expect(screen.getByText(text)).toBeTruthy());
@@ -129,8 +129,8 @@ describe('GrantCreditForm', () => {
     fill('150', 'goodwill');
     submit();
 
-    await waitFor(() => expect(screen.getByText('Granted 150 minutes.')).toBeTruthy());
-    expect((screen.getByTestId('grant-credit-minutes') as HTMLInputElement).value).toBe('');
+    await waitFor(() => expect(screen.getByText('Granted 150 tokens.')).toBeTruthy());
+    expect((screen.getByTestId('grant-credit-tokens') as HTMLInputElement).value).toBe('');
     expect((screen.getByTestId('grant-credit-reason') as HTMLInputElement).value).toBe('');
     await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ['billing-account', USER_ID] }));
   });
@@ -225,7 +225,7 @@ describe('GrantCreditForm', () => {
       fill('30', 'comp');
       submit();
       await waitFor(() => expect(mockGrantCredit).toHaveBeenCalledTimes(1));
-      await waitFor(() => expect((screen.getByTestId('grant-credit-minutes') as HTMLInputElement).value).toBe(''));
+      await waitFor(() => expect((screen.getByTestId('grant-credit-tokens') as HTMLInputElement).value).toBe(''));
 
       fill('30', 'comp');
       submit();

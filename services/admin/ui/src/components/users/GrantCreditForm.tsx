@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { api, describeApiError } from '../../lib/api';
-import { MAX_ADMIN_MINUTES, MAX_REASON_LENGTH } from '../../lib/billing-forms';
+import { MAX_ADMIN_TOKENS, MAX_REASON_LENGTH } from '../../lib/billing-forms';
 import { buildGrantRequest, type GrantFormValues } from '../../lib/grant-credit';
 import { useAttemptKey } from '../../hooks/use-attempt-key';
 import { useRefreshAfterSend } from '../../hooks/use-refresh-after-send';
@@ -15,7 +15,7 @@ interface FormMessage {
   text: string;
 }
 
-const EMPTY_VALUES: GrantFormValues = { minutes: '', reason: '', expiry: '' };
+const EMPTY_VALUES: GrantFormValues = { tokens: '', reason: '', expiry: '' };
 const FIELD_CLASS =
   'px-2 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-surface)] text-xs';
 
@@ -41,7 +41,7 @@ function useGrantCredit(userId: string) {
     },
     onSuccess: (request) => {
       reset();
-      setMessage({ kind: 'ok', text: `Granted ${request.minutes} minutes.` });
+      setMessage({ kind: 'ok', text: `Granted ${request.tokens} tokens.` });
       setValues(EMPTY_VALUES);
     },
     onError: (e: unknown) => setMessage({ kind: 'err', text: describeApiError(e) }),
@@ -70,12 +70,12 @@ function GrantFields({ values, setField }: GrantFieldsProps) {
         type="number"
         step="1"
         min="1"
-        max={MAX_ADMIN_MINUTES}
-        value={values.minutes}
-        onChange={setField('minutes')}
-        placeholder="Minutes"
-        aria-label="Minutes"
-        data-testid="grant-credit-minutes"
+        max={MAX_ADMIN_TOKENS}
+        value={values.tokens}
+        onChange={setField('tokens')}
+        placeholder="Tokens"
+        aria-label="Tokens"
+        data-testid="grant-credit-tokens"
         className={FIELD_CLASS}
       />
       <input
@@ -101,7 +101,7 @@ function GrantFields({ values, setField }: GrantFieldsProps) {
 }
 
 /**
- * Grant minutes to a user (a credit lot). Who is granting comes from the
+ * Grant tokens to a user (a credit lot). Who is granting comes from the
  * signed-in admin session on the server, so there is no admin id to type; the
  * reason is required and lands in the ledger and the audit log.
  */
@@ -116,7 +116,7 @@ export function GrantCreditForm({ userId }: GrantCreditFormProps) {
         submit();
       }}
     >
-      <h4 className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Grant minutes</h4>
+      <h4 className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Grant tokens</h4>
       <GrantFields values={values} setField={setField} />
       <p className="text-[10px] text-[var(--color-text-faint)]">
         Adds a credit lot to this account; no expiry unless you pick a date. Recorded in the audit log under your
@@ -128,7 +128,7 @@ export function GrantCreditForm({ userId }: GrantCreditFormProps) {
           disabled={pending}
           className="px-3 py-1.5 rounded-md bg-[var(--color-primary)] text-white text-xs font-medium disabled:opacity-60"
         >
-          {pending ? 'Granting…' : 'Grant minutes'}
+          {pending ? 'Granting…' : 'Grant tokens'}
         </button>
         {message && (
           <span

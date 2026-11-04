@@ -9,15 +9,17 @@ function account(plan: BillingAccountSnapshot['plan']): BillingAccountSnapshot {
     ownerType: 'user',
     ownerId: 'a'.repeat(24),
     plan,
-    free: { perWindow: 1, usedInWindow: 0, available: true, nextFreeAt: null, maxVideoMinutes: 30 },
-    planMinutes: {
+    planTokens: {
       cycleStart: '2026-10-01T00:00:00.000Z',
       cycleEnd: '2026-11-01T00:00:00.000Z',
-      granted: 600,
-      used: 140,
-      remaining: 460,
+      granted: 20000,
+      used: 5400,
+      remaining: 14600,
     },
-    credits: { available: 90 },
+    credits: { available: 900 },
+    debt: 0,
+    balance: 15500,
+    signupGrantAt: '2026-09-01T00:00:00.000Z',
     caps: {},
     openHolds: 0,
     version: 7,
@@ -50,5 +52,26 @@ describe('AccountSummary', () => {
     );
 
     expect(screen.getByTestId('account-plan').textContent).toContain('No plan term');
+  });
+
+  it('should show the balance and no free-video tile', () => {
+    render(<AccountSummary account={account({ id: 'free', status: 'active', source: null, periodStart: null, periodEnd: null })} />);
+
+    expect(screen.getByTestId('account-balance').textContent).toContain('15,500 tokens');
+    expect(screen.queryByTestId('account-free-video')).toBeNull();
+  });
+
+  it('should spell out debt in the balance tile', () => {
+    render(
+      <AccountSummary
+        account={{
+          ...account({ id: 'free', status: 'active', source: null, periodStart: null, periodEnd: null }),
+          balance: -120,
+          debt: 120,
+        }}
+      />,
+    );
+
+    expect(screen.getByTestId('account-balance').textContent).toContain('−120 tokens (owes 120)');
   });
 });

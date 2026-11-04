@@ -29,14 +29,13 @@ describe('CapsDialog', () => {
   });
 
   it('should start from the caps the account has now', () => {
-    setup({ maxVideoMinutes: 60, freeVideosPerDay: 0, maxConcurrent: null, blocked: true });
+    setup({ maxVideoMinutes: 60, maxConcurrent: null, blocked: true });
 
     expect([
       input('cap-maxVideoMinutes').value,
-      input('cap-freeVideosPerDay').value,
       input('cap-maxConcurrent').value,
       input('cap-blocked').checked,
-    ]).toEqual(['60', '0', '', true]);
+    ]).toEqual(['60', '', true]);
   });
 
   it('should require a reason and send nothing without one', async () => {
@@ -114,7 +113,7 @@ describe('CapsDialog', () => {
 
     submitDialog();
 
-    expect((await screen.findByRole('alert')).textContent).toBe('Max video length must be between 3 and 180');
+    expect((await screen.findByRole('alert')).textContent).toBe('Max video length must be between 1 and 180');
     expect(mockSetCaps).not.toHaveBeenCalled();
   });
 

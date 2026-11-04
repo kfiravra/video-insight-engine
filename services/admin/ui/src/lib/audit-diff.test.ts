@@ -10,10 +10,10 @@ describe('diffAudit', () => {
   });
 
   it('should walk nested objects into dotted paths, sorted', () => {
-    const before = { planMinutes: { granted: 0, used: 0 }, caps: {} };
-    const after = { planMinutes: { granted: 600, used: 0 }, caps: { maxConcurrent: 2 } };
+    const before = { planTokens: { granted: 0, used: 0 }, caps: {} };
+    const after = { planTokens: { granted: 20000, used: 0 }, caps: { maxConcurrent: 2 } };
 
-    expect(diffAudit(before, after).map((line) => line.path)).toEqual(['caps.maxConcurrent', 'planMinutes.granted']);
+    expect(diffAudit(before, after).map((line) => line.path)).toEqual(['caps.maxConcurrent', 'planTokens.granted']);
   });
 
   it('should ignore version and updatedAt, which change on every write', () => {
