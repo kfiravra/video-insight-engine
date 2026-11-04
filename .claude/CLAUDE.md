@@ -50,6 +50,7 @@ Mongo + Redis + Qdrant + RabbitMQ via docker compose. Full context dump: [PROJEC
 ## Working conventions
 
 - Task state lives in `dev/active/<task>/plan.md` + `notes.md`; it is local and never committed (`/task-plan`, `/resume`, `/handoff`).
+- After every completed plan step, tick its checkbox in `plan.md` and update `notes.md` State/Next; at every phase end add a Log line and the gate path. Never batch these to the end of a phase.
 - Phase end: `/phase-review` by area, then one review-fix commit.
 - Spend is stated before any run that costs money or minutes: pipeline runs (video, model, cached or not), agent fan-outs (count, model), e2e against live services.
   One line, then wait for the word; never start it in the same breath.
