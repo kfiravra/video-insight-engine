@@ -32,6 +32,7 @@ from src.models.schemas import ErrorCode
 from src.services.media.download_utils import (
     EXIT_ROTATION_BUDGET_S,
     is_exit_blocked,
+    record_blocked_exit,
     try_proxy_exits,
     ytdlp_proxy_exit_urls,
     ytdlp_proxy_url,
@@ -730,6 +731,11 @@ def _clean_subtitle_text(text: str) -> str:
     return text.strip()
 
 
+# yt-dlp's message for a video YouTube will not serve. Usually the video (private,
+# removed), but YouTube also sends it to some proxy exits it has flagged.
+_VIDEO_UNAVAILABLE_RE = re.compile(r"\bVideo unavailable\b", re.IGNORECASE)
+
+
 # Issue #15: Retry logic for transient yt-dlp failures
 @tenacity.retry(
     stop=tenacity.stop_after_attempt(3),
@@ -761,13 +767,31 @@ def _extract_info_via_exits(video_id: str) -> dict[str, Any] | None:
     exit_urls = ytdlp_proxy_exit_urls(video_id, limit=None)
     if len(exit_urls) <= 1:
         return _extract_with_retry(url, opts)
-    return try_proxy_exits(
-        exit_urls,
-        lambda proxy_url: _extract_with_retry(url, {**opts, "proxy": proxy_url}),
-        is_exit_blocked,
-        f"Metadata extract for {video_id}",
-        budget_s=EXIT_ROTATION_BUDGET_S,
-    )
+    try:
+        return try_proxy_exits(
+            exit_urls,
+            lambda proxy_url: _extract_with_retry(url, {**opts, "proxy": proxy_url}),
+            is_exit_blocked,
+            f"Metadata extract for {video_id}",
+            budget_s=EXIT_ROTATION_BUDGET_S,
+        )
+    except Exception as e:
+        primary = ytdlp_proxy_url()
+        if primary is None or exit_urls[0] == primary or not _VIDEO_UNAVAILABLE_RE.search(str(e)):
+            raise
+        # 2026-11-04 prod: YouTube answered sticky exits with a plain "Video
+        # unavailable" (no bot-check / rate-limit wording, so no rotation) while
+        # the configured exit served the same videos. Confirm on the configured
+        # exit before calling the video gone; when it works, the job's exit was
+        # the problem and moves behind the others for later rotations.
+        logger.warning(
+            "Metadata extract for %s: video unavailable on its round-robin exit, "
+            "confirming on the configured exit",
+            video_id,
+        )
+        info = _extract_with_retry(url, {**opts, "proxy": primary})
+        record_blocked_exit(exit_urls[0])
+        return info
 
 
 def _extract_video_info_sync(video_id: str) -> tuple[VideoData, SubtitleTrack | None]:
