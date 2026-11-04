@@ -36,6 +36,8 @@ export interface AssistantChatOptions {
   confirmToken?: string;
   /** Forwarded as `X-Request-ID` header so the assistant binds it on contextvars. */
   requestId?: string;
+  /** The api's per-request execution id, forwarded as `X-Execution-Id`: the assistant reports the request's LLM cost under it (token ledger). */
+  executionId?: string;
   /** Caller abort (e.g. the HTTP client disconnecting). Tears down both the
    *  connect and the returned SSE body stream — the internal 60s timeout only
    *  covers connect. */
@@ -50,6 +52,8 @@ export interface AssistantActionOptions {
   params?: Record<string, string | number | boolean>;
   /** Forwarded as `X-Request-ID` header so the assistant binds it on contextvars. */
   requestId?: string;
+  /** The api's per-request execution id, forwarded as `X-Execution-Id`: the assistant reports the request's LLM cost under it (token ledger). */
+  executionId?: string;
 }
 
 export interface AssistantActionResponse {
@@ -74,6 +78,8 @@ export interface AssistantLibraryChatOptions {
   confirmToken?: string;
   /** Forwarded as `X-Request-ID` header so the assistant binds it on contextvars. */
   requestId?: string;
+  /** The api's per-request execution id, forwarded as `X-Execution-Id`: the assistant reports the request's LLM cost under it (token ledger). */
+  executionId?: string;
   /** Caller abort (e.g. the HTTP client disconnecting). Tears down both the
    *  connect and the returned SSE body stream — the internal 60s timeout only
    *  covers connect. */
@@ -89,6 +95,23 @@ export interface AssistantLibrarySearchOptions {
   sources?: string[];
   /** Forwarded as `X-Request-ID` header so the assistant binds it on contextvars. */
   requestId?: string;
+}
+
+/**
+ * The headers every assistant call carries: the internal secret, the user
+ * (the assistant attributes its llm_usage rows to it), and — when the caller
+ * has them — the request id the assistant binds on its contextvars and the
+ * execution id it reports the request's cost under.
+ */
+function assistantHeaders(options: { userId: string; requestId?: string; executionId?: string }): Record<string, string> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'X-Internal-Secret': config.INTERNAL_SECRET,
+    'X-User-Id': options.userId,
+  };
+  if (options.requestId) headers['X-Request-ID'] = options.requestId;
+  if (options.executionId) headers['X-Execution-Id'] = options.executionId;
+  return headers;
 }
 
 /**
@@ -153,16 +176,7 @@ export class AssistantClient {
     const timeout = setTimeout(() => controller.abort(), ASSISTANT_TIMEOUT_MS);
     this.forwardAbort(options.signal, controller);
 
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      'X-Internal-Secret': config.INTERNAL_SECRET,
-      // Forwarded so the assistant attributes this RAG chat's llm_usage rows to
-      // the user (otherwise user_id lands null and admin can't bill the call).
-      'X-User-Id': options.userId,
-    };
-    if (options.requestId) {
-      headers['X-Request-ID'] = options.requestId;
-    }
+    const headers = assistantHeaders(options);
 
     try {
       const response = await fetch(url, {
@@ -215,14 +229,7 @@ export class AssistantClient {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), ACTION_TIMEOUT_MS);
 
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      'X-Internal-Secret': config.INTERNAL_SECRET,
-      'X-User-Id': options.userId,
-    };
-    if (options.requestId) {
-      headers['X-Request-ID'] = options.requestId;
-    }
+    const headers = assistantHeaders(options);
 
     const requestBody: Record<string, unknown> = {
       action: options.action,
@@ -283,14 +290,7 @@ export class AssistantClient {
     const timeout = setTimeout(() => controller.abort(), ASSISTANT_TIMEOUT_MS);
     this.forwardAbort(options.signal, controller);
 
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      'X-Internal-Secret': config.INTERNAL_SECRET,
-      'X-User-Id': options.userId,
-    };
-    if (options.requestId) {
-      headers['X-Request-ID'] = options.requestId;
-    }
+    const headers = assistantHeaders(options);
 
     try {
       const response = await fetch(url, {
@@ -344,14 +344,7 @@ export class AssistantClient {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), ACTION_TIMEOUT_MS);
 
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      'X-Internal-Secret': config.INTERNAL_SECRET,
-      'X-User-Id': options.userId,
-    };
-    if (options.requestId) {
-      headers['X-Request-ID'] = options.requestId;
-    }
+    const headers = assistantHeaders(options);
 
     const requestBody: Record<string, unknown> = {
       video_ids: options.youtubeIds,

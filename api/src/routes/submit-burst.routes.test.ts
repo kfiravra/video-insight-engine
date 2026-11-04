@@ -3,7 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Redis } from 'ioredis';
 import { buildTestApp, createMockContainer, type MockContainer } from '../test/helpers.js';
-import { SubmitBurstLimiter } from '../services/billing/burst-limit.js';
+import { ESTIMATE_LIMIT_PER_HOUR, SubmitBurstLimiter, estimateBurstKey } from '../services/billing/burst-limit.js';
 import { config } from '../config.js';
 
 const USER_ID = 'aaaaaaaaaaaaaaaaaaaaaaaa';
@@ -52,10 +52,14 @@ describe('submit burst limit on the submit routes', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    const limiter = new SubmitBurstLimiter(counterRedis(), LIMIT, silentLogger);
+    // One Redis behind both buckets, wired as container.ts does: only the keys keep them apart.
+    const redis = counterRedis();
+    const limiter = new SubmitBurstLimiter(redis, LIMIT, silentLogger);
+    const estimates = new SubmitBurstLimiter(redis, ESTIMATE_LIMIT_PER_HOUR, silentLogger, { key: estimateBurstKey, what: 'estimates' });
     mockContainer.submitBurstLimiter.consume.mockImplementation((userId: string) =>
       limiter.consume(userId),
     );
+    mockContainer.estimateBurstLimiter.consume.mockImplementation((userId: string) => estimates.consume(userId));
     mockContainer.videoService.createVideo.mockResolvedValue({
       video: { id: 'v1', youtubeId: 'dQw4w9WgXcQ', status: 'pending' },
       cached: false,
@@ -178,6 +182,44 @@ describe('submit burst limit on the submit routes', () => {
 
       expect(lastFree.statusCode).toBe(201);
       expect(overLimit.statusCode).toBe(429);
+    });
+  });
+  describe('GET /api/videos/estimate — its own bucket (A2)', () => {
+    const estimate = () => app.inject({
+      method: 'GET',
+      url: `/api/videos/estimate?url=${encodeURIComponent(YOUTUBE_URL)}`,
+      headers: { authorization: webHeaders.authorization },
+    });
+    const estimateTimes = async (times: number): Promise<void> => {
+      for (let i = 0; i < times; i += 1) {
+        expect((await estimate()).statusCode).toBe(200);
+      }
+    };
+
+    it('should answer 429 to the 61st estimate in an hour, naming what was counted', async () => {
+      await estimateTimes(60);
+
+      const response = await estimate();
+
+      expect(response.json()).toEqual({
+        error: 'RATE_LIMITED',
+        message: 'Too many estimates in the last hour. Try again in 45 min.',
+        statusCode: 429,
+        retryAfterSec: 2700,
+      });
+    });
+
+    it('should not consume the submit bucket: a submit still goes through after 60 estimates', async () => {
+      await estimateTimes(60);
+
+      expect((await submitFromWeb()).statusCode).toBe(201);
+      expect(mockContainer.submitBurstLimiter.consume).toHaveBeenCalledTimes(1);
+    });
+
+    it('should still estimate once the submit bucket is full', async () => {
+      await fillBucketAcrossBothRoutes();
+
+      expect((await estimate()).statusCode).toBe(200);
     });
   });
 });

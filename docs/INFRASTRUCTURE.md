@@ -284,11 +284,6 @@ DISPATCH_GUARD_TTL_SECONDS=900
 # generate route and playlist import. 0 = off. Fails open if Redis is down.
 SUBMIT_BURST_LIMIT_PER_HOUR=20
 
-# Chat fair use (Redis key vie:api:chat-fair-use:<userId>, rolling 24 h sorted set):
-# messages a FREE account may send, one allowance for both chat routes. Pro is
-# unlimited. 0 = off. Fails open if Redis is down.
-CHAT_FREE_MESSAGES_PER_DAY=50
-
 # Billing repair job (billing-roles P1.6), in vie-api, every interval behind the
 # Redis lock vie:api:billing-repair (SET NX EX, TTL = the interval):
 #   settle/release holds older than BILLING_HOLD_MAX_AGE_HOURS whose run is
@@ -297,8 +292,8 @@ CHAT_FREE_MESSAGES_PER_DAY=50
 #   changed accounts against the ledger (drift → warn + llm_alerts row
 #   `billing_drift`, once per account per 24 h); unset llm_usage.user_id,
 #   request_id and prompt_preview older than 90 days; run the GDPR hard-delete sweep. Unset = on (off under
-#   NODE_ENV=test); both composes default to true. The minutes ledger decides
-#   every submit (no switch, no dollar cap — P3.2), so Mongo must run as a
+#   NODE_ENV=test); both composes default to true. The token ledger decides
+#   every submit, chat turn and action (no switch, no dollar cap), so Mongo must run as a
 #   replica set before this code is deployed.
 BILLING_REPAIR_ENABLED=true
 BILLING_REPAIR_INTERVAL_SECONDS=300
@@ -438,7 +433,7 @@ The per-stage defaults are the pipeline-1min 4.0d model A/B picks, rounds 1 + 2 
 | `ENVIRONMENT` | prod only: `production` | `production` arms the default-`INTERNAL_SECRET` refusal and the SSE soft-fail and keeps `PROMPT_SOURCE=disk` off; dev keeps `config.py`'s `""` (a dev name) |
 | `LOG_FORMAT` | prod only: `json` | `json` = CloudWatch-parseable logs; dev keeps `console` |
 | `API_URL` | prod only: `http://vie-api:3000` | Target of the `/internal/status` callbacks (dev keeps the same `config.py` default) |
-| `MAX_VIDEO_DURATION_MINUTES` / `WHISPER_MAX_DURATION_MINUTES` | prod only: `600` / `600` | Longest accepted video, and longest video allowed onto the paid audio fallback. The server template sets `180` / `180` (D2): paid minutes cover videos up to 180 minutes, so a lower cap would let the minutes gate admit a video the summarizer then refuses after the hold. With no row, prod gets the compose default 600 (the summarizer's own default); the minutes gate still caps submits at 180 |
+| `MAX_VIDEO_DURATION_MINUTES` / `WHISPER_MAX_DURATION_MINUTES` | prod only: `600` / `600` | Longest accepted video, and longest video allowed onto the paid audio fallback. The server template sets `180` / `180` (D2): the token gate admits videos up to 180 minutes, so a lower cap would let it admit a video the summarizer then refuses after the hold. With no row, prod gets the compose default 600 (the summarizer's own default); the api still caps submits at 180 |
 | `STALL_SWEEP_ENABLED` / `STALL_SWEEP_INTERVAL_SECONDS` / `STALL_THRESHOLD_MINUTES` | `true` / `300` / `30` | Summarizer stall sweeper — fails `processing` rows with no progress + no live producer lock, alerts `pipeline_stalled` |
 
 **Service-level lines (not the anchor)**
@@ -587,8 +582,8 @@ The summarizer pipeline runs from a durable RabbitMQ queue (when `USE_QUEUE_PIPE
   "youtubeId": "11-char string",
   "url": "https://...",
   "userId": "ObjectId hex | null",
-  "plan": "free | paid",              // what the run's minutes hold paid with (billing-roles P3.4)
-  "priority": 1 | 5,                  // free=1 (the free video), paid=5 (any plan or credit minutes)
+  "plan": "free | paid",              // what the run's token hold paid with (billing-roles P3.4)
+  "priority": 1 | 5,                  // free=1 (a run that took no hold), paid=5 (plan or credit tokens)
   "providers": { "default": "...", "fast": "...", "fallback": "..." } | null,
   "bypassCache": false,
   "requestId": "uuid",
@@ -598,8 +593,8 @@ The summarizer pipeline runs from a durable RabbitMQ queue (when `USE_QUEUE_PIPE
 ```
 
 `plan` replaced `tier` in P3.4: the priority follows what pays for the run,
-not the account's plan (a Pro account's free video queues at 1, a free
-account's credit minutes at 5). The `x-plan` header carries it too, and the
+not the account's plan (a run that took no hold queues at 1, a free
+account's credit tokens at 5). The `x-plan` header carries it too, and the
 worker tags the job's Sentry transaction with `plan`. A message published
 before the deploy still carries `tier`; the worker ignores it (`plan` then
 reads `free` for the tag only — the message keeps its priority).

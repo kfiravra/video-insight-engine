@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { AppError, RunNotAllowedError } from '../utils/errors.js';
 import { submitOutcome } from './billing/run-stamp.js';
 import { refusalServesWithoutRun } from './billing/billing-errors.js';
-import { queuePlanOf, type QueuePlan } from './queue-topology.js';
+import type { QueuePlan } from './queue-topology.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { LedgerEnforcement } from './billing/ledger-enforcement.js';
 import type { ProviderConfig } from './summarizer-client.js';
@@ -109,8 +109,7 @@ export class LedgerItemImporter implements ItemImporter {
     const runId = randomUUID();
     let queuePlan: QueuePlan;
     try {
-      const hold = await this.enforcement.admit({ requestId: runId, userId: this.ctx.userId, youtubeId: item.video_id, durationSec });
-      queuePlan = queuePlanOf(hold.split);
+      ({ queuePlan } = await this.enforcement.admit({ requestId: runId, userId: this.ctx.userId, youtubeId: item.video_id, durationSec }));
     } catch (err) {
       if (!(err instanceof AppError)) throw err;
       const stops = STOPPING_CODES.has(err.code);

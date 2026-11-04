@@ -3,6 +3,7 @@ import { Db, ObjectId, Collection } from 'mongodb';
 /** The fields of the summarizer's `llm_usage` rows (Python schema) that vie-api reads. */
 interface LlmUsageDocument {
   _id: ObjectId;
+  feature?: string | null;
   request_id?: string | null;
   video_summary_id?: string | null;
   cost_usd?: number | null;
@@ -11,6 +12,18 @@ interface LlmUsageDocument {
   /** The first 200 characters of the prompt; "" where the service does not store it. */
   prompt_preview?: string | null;
   timestamp?: Date;
+}
+
+/** One assistant request's LLM spend, summed over its `llm_usage` rows. */
+export interface AssistantRequestCost {
+  requestId: string;
+  userId: string;
+  costUsd: number;
+  calls: number;
+  /** The request's newest row. */
+  lastAt: Date;
+  /** The ledger feature of its first row (`assistant:rag_chat`, `assistant:library_chat`, `assistant:action:<name>`, …). */
+  feature: string | null;
 }
 
 /** A preview that holds text; the Python services write "" when they keep none. */
@@ -46,6 +59,43 @@ export class LlmUsageRepository {
       ])
       .toArray();
     return row?.total ?? 0;
+  }
+
+  /**
+   * The assistant's requests with rows since `since` whose newest row is
+   * older than `quietBefore` (finished), with a cost, oldest first: Σ
+   * `cost_usd` per `request_id`. The repair job debits the ones the usage
+   * callback never reached. Served by vie-admin's `timestamp` index.
+   */
+  async listAssistantRequestCosts(since: Date, quietBefore: Date, limit: number): Promise<AssistantRequestCost[]> {
+    const rows = await this.collection
+      .aggregate<{ _id: string; userId: string; costUsd: number; calls: number; lastAt: Date; feature: string | null }>([
+        {
+          $match: {
+            service: 'assistant',
+            timestamp: { $gte: since },
+            request_id: { $type: 'string' },
+            user_id: { $type: 'string' },
+          },
+        },
+        // Oldest first, so `$first` is the endpoint's own feature, not a later tool's.
+        { $sort: { timestamp: 1 } },
+        {
+          $group: {
+            _id: '$request_id',
+            userId: { $first: '$user_id' },
+            costUsd: { $sum: { $ifNull: ['$cost_usd', 0] } },
+            calls: { $sum: 1 },
+            lastAt: { $max: '$timestamp' },
+            feature: { $first: '$feature' },
+          },
+        },
+        { $match: { costUsd: { $gt: 0 }, lastAt: { $lt: quietBefore } } },
+        { $sort: { lastAt: 1 } },
+        { $limit: limit },
+      ])
+      .toArray();
+    return rows.map(({ _id, ...row }) => ({ requestId: _id, ...row }));
   }
 
   /**

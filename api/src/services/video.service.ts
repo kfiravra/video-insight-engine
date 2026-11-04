@@ -18,7 +18,7 @@ export interface CreateVideoOptions {
   folderId?: string;
   bypassCache?: boolean;
   providers?: ProviderConfig;
-  /** What pays for a run this call dispatches (`paid` = plan / credit minutes): the queue priority. */
+  /** The queue priority of a run this call dispatches (`paid` = a Pro account's run). */
   queuePlan: QueuePlan;
   /**
    * Originating Fastify `request.id`. Flows into the queue payload (as the
@@ -26,7 +26,7 @@ export interface CreateVideoOptions {
    * so the downstream pipeline binds the same id no matter which path runs.
    */
   requestId?: string;
-  /** The minutes ledger's run id (P3.1), stamped beside `requestId` on the dispatched row. */
+  /** The token ledger's run id (P3.1), stamped beside `requestId` on the dispatched row. */
   billingRunId?: string;
   /**
    * P3.1: the ledger refused to pay for a run, so only serve what costs

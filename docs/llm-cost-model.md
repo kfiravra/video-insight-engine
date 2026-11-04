@@ -80,9 +80,9 @@ as `compute_cache_savings_usd`.
 
 **Billing policy:** transcription cost is **counted in the run's margin** — it
 is real spend. Because the rows carry `cost_usd` + `request_id`, they flow into
-the ledger's per-run `costUsd` (see [Per-user spend](#per-user-spend-minutes-not-dollars))
-with no extra wiring; no exclusion filter is applied. Users are never charged
-dollars: they pay the video's minutes. (NB: only processes that register a `MongoDBUsageCallback` emit these
+the run's total (see [Per-user spend](#per-user-spend-tokens-not-dollars))
+with no extra wiring; no exclusion filter is applied. Users are never shown
+dollars: they pay tokens priced from this cost. (NB: only processes that register a `MongoDBUsageCallback` emit these
 rows — both the FastAPI summarizer and the RabbitMQ worker do, in `main.py` and
 `worker/__main__.py`.)
 
@@ -423,25 +423,52 @@ of plan calls minutes apart that would lift the prod hit rate) unless
       1h breakpoint stays — what replaces it below 50 % is Kfir's gate-2 decision
       (see the plan above).
 
-## Per-user spend: minutes, not dollars
+## Per-user spend: tokens, not dollars
 
 There is **no per-user dollar cap** anywhere (billing-roles brief §4.1; the
 daily `userCosts` reservation gate, its `DAILY_LIMIT_REACHED` refusal and the
-terminal-status reconcile were removed in P3.2). A user pays in video-minutes:
-every submit is quoted against the account's free video, plan minutes and
-credit lots and held before the run starts (`LedgerEnforcement`,
-[ERROR-HANDLING.md](./ERROR-HANDLING.md#minutes-gate)); a completed run debits
-the hold, a failed one releases it. Chat is never metered in minutes (free
-accounts have a message allowance instead).
+terminal-status reconcile were removed in P3.2). A user pays in **tokens**,
+priced from the real LLM cost of every execution they trigger
+(`api/src/services/billing/tokens.ts`, never shipped to the web):
 
-LLM dollars stay an **internal margin signal**: each run's
-`costUsd = Σ llm_usage.cost_usd` (every row of the run — refusals, re-sends and
-transcription included) is written on its ledger `debit` (or `release`) entries
-when it settles, see "Margin per run" below. Revenue per minute comes from the
-lot or plan that paid (credit lots: $5 = 150 minutes, Q4), so margin is a join
-of the two, never something shown to a user. The `userCosts` /
-`userCostAdjustments` collections are read-only history
-([DATA-MODELS.md](./DATA-MODELS.md#usercosts)).
+- **Price:** `tokens = ceil(cost_usd × COST_MARKUP × TOKENS_PER_USD)` =
+  `ceil(cost × 3 × 1000)`, at least 1 when anything was spent. 1 token =
+  $0.001 of retail value; the signup grant is 1,000 tokens, Pro 20,000 per
+  month for $20, a pack 5,000 for $5.
+- **A video** holds an estimate at submit, `tokensForUsd(ESTIMATE.fixedUsd +
+  ESTIMATE.perMinuteUsd × ceil(sec / 60))` = `tokensForUsd(0.22 + 0.006 × min)`
+  (5 min → 750, 20 → 1,020, 100 → 2,460, 180 → 3,900), and settles on its
+  real cost: the summarizer posts `POST /internal/run-cost {videoSummaryId,
+  billingRunId, costUsd, llmCalls}` once `pipeline.timing.costUsd` — the run's
+  total, written last, after the judge drain — is persisted, and the api
+  calls `settleActual`. The unused estimate goes back; an overrun is taken
+  from what is left and then becomes debt (the run already happened). A
+  `completed` status settles nothing; `failed` and a response-cache hit
+  release the hold in full (we absorb a failed run's spend). A run-cost
+  callback that never arrives is settled by the repair job after
+  `BILLING_HOLD_MAX_AGE_HOURS` from `Σ llm_usage.cost_usd` of the run (every
+  buffered row is flushed by then).
+- **A chat turn, library chat or action** needs a positive balance to start
+  and is debited after the reply: the api mints an `executionId` per request
+  and forwards it as `X-Execution-Id`; the assistant sums `completion_cost`
+  of every LLM response the request made (streamed ones rebuilt, tool calls
+  included) and posts `POST /internal/assistant/usage {executionId,
+  requestId, kind, costUsd, calls}`. A lost callback is backfilled by the
+  repair job from the assistant's `llm_usage` rows of the last 24 h, grouped
+  by `request_id` (rows older than 10 min, no ledger entry for that request
+  yet: `debit:exec:req:<requestId>`).
+
+The estimate constants are calibrated against observed runs (222 s →
+$0.2526 → 758 tokens against an estimate of 750; prod's 100-min v10 run $0.481
+→ 1,443 against 2,460) and move only in a commit; the dev smoke prints
+estimate vs actual.
+
+LLM dollars stay an **internal margin signal**: the cost a debit was priced
+from is written on its ledger entries as `costUsd` (split across the entry's
+slices by tokens), and a failed run's on its `release` entries. Margin is
+revenue per token (the pack or plan that paid) against that cost, never
+something shown to a user. The `userCosts` / `userCostAdjustments`
+collections are read-only history ([DATA-MODELS.md](./DATA-MODELS.md#usercosts)).
 
 There is no global request-blocking cap either. Global spend is an operator
 signal only: the vie-admin evaluator raises a `daily_global_cost` alert
@@ -470,19 +497,18 @@ vie-api's billing repair job unsets `user_id`, `request_id` and
 `prompt_preview` on every row whose `timestamp` is more than 90 days old
 (batched, at most 1,000 rows per run, re-runs match nothing), which is what
 `docs/PRIVACY.md` promises — `request_id` would otherwise still join to the
-minutes ledger's `source.ref`, whose rows name the user. vie-assistant never
+token ledger's `source.ref`, whose rows name the user. vie-assistant never
 stores `prompt_preview` (chat text) in the first place. Per-user and per-request cost views therefore cover the last 90
 days; totals and per-model numbers are unaffected.
 
-**Margin per run.** The minutes ledger records `costUsd = Σ cost_usd WHERE
-request_id = <the run's requestId> AND video_summary_id = <its cache row>` (the
-request id is the client's X-Request-ID, which a client may reuse across videos —
-review I4; the repair job falls back to the request id alone when no row was
-stamped) on the run's `debit` entries when it settles
-(and on `release` entries for failed runs), served by the `{request_id: 1,
-timestamp: -1}` index both vie-api and vie-admin build. A run settled late by the
-repair job (its completion relay was lost) gets the same sum. A translation's
-second "completed" settles nothing, so translation spend is not in `costUsd`.
+**Margin per run.** A video's debits carry the cost the summarizer reported
+on `POST /internal/run-cost` (`pipeline.timing.costUsd`, every LLM call of the
+run including judges and transcription). A run settled late by the repair job
+(its callback was lost) gets `Σ cost_usd WHERE request_id = <the run's
+requestId> AND video_summary_id = <its cache row>` instead, served by the
+`{request_id: 1, timestamp: -1}` index both vie-api and vie-admin build; a
+failed run's `release` entries get the same sum. A translation's second
+"completed" settles nothing, so translation spend is not in the run's cost.
 
 ## Alerting (implemented 2026-07-12)
 

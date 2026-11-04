@@ -86,7 +86,7 @@ export interface VideoSummaryCacheDocument {
    *  request runs the pipeline; `$unset` by the GDPR cascade. */
   userId?: string;
   requestId?: string;
-  /** The minutes ledger's run id for this dispatch (server-generated per
+  /** The token ledger's run id for this dispatch (server-generated per
    *  submission, P3.1): the terminal status settles / releases the hold keyed
    *  by it, while `requestId` keeps naming the run's llm_usage rows. */
   billingRunId?: string;

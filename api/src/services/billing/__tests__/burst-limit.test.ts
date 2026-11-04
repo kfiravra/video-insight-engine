@@ -2,7 +2,9 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Redis } from 'ioredis';
 import {
+  ESTIMATE_LIMIT_PER_HOUR,
   SubmitBurstLimiter,
+  estimateBurstKey,
   noOpSubmitBurstLimiter,
   submitBurstKey,
 } from '../burst-limit.js';
@@ -127,6 +129,38 @@ describe('SubmitBurstLimiter', () => {
         3600,
       );
       expect(submitBurstKey(USER_ID)).toBe(`vie:api:submit-burst:${USER_ID}`);
+    });
+  });
+
+  describe('the estimate bucket (GET /api/videos/estimate, D15)', () => {
+    const estimates = (redis: { eval: ReturnType<typeof vi.fn> }) =>
+      new SubmitBurstLimiter(redis as unknown as Redis, ESTIMATE_LIMIT_PER_HOUR, logger, { key: estimateBurstKey, what: 'estimates' });
+
+    it('should allow 60 estimates an hour and count them under their own key', async () => {
+      const redis = counterRedis(3600);
+      const limiter = estimates(redis);
+
+      await expect(consumeTimes(limiter, 60)).resolves.toBeUndefined();
+      expect(redis.eval).toHaveBeenLastCalledWith(expect.any(String), 1, `vie:api:estimate-burst:${USER_ID}`, 3600);
+      expect(ESTIMATE_LIMIT_PER_HOUR).toBe(60);
+    });
+
+    it('should name what it counted in the refusal', async () => {
+      const limiter = estimates(counterRedis(600));
+      await consumeTimes(limiter, 60);
+
+      await expect(limiter.consume(USER_ID)).rejects.toMatchObject({
+        code: 'RATE_LIMITED',
+        message: 'Too many estimates in the last hour. Try again in 10 min.',
+        retryAfterSec: 600,
+      });
+    });
+
+    it('should leave the submit bucket untouched on the same Redis', async () => {
+      const redis = counterRedis(3600);
+      await consumeTimes(estimates(redis), 60);
+
+      await expect(new SubmitBurstLimiter(redis as unknown as Redis, LIMIT, logger).consume(USER_ID)).resolves.toBeUndefined();
     });
   });
 

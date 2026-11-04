@@ -30,6 +30,7 @@ import { assistantLibraryRoutes } from './routes/assistant-library.routes.js';
 import { assistantActionRoutes } from './routes/assistant-action.routes.js';
 import { internalRoutes } from './routes/internal.routes.js';
 import { internalAssistantRoutes } from './routes/internal-assistant.routes.js';
+import { internalBillingRoutes } from './routes/internal-billing.routes.js';
 import { streamRoutes } from './routes/stream.routes.js';
 import { shareRoutes } from './routes/share.routes.js';
 import { ssrRoutes } from './routes/ssr.routes.js';
@@ -245,6 +246,7 @@ export async function buildApp(options?: BuildAppOptions): Promise<FastifyInstan
   await fastify.register(userMeRoutes, { prefix: '/api/users/me' });
   await fastify.register(internalRoutes, { prefix: '/internal' });
   await fastify.register(internalAssistantRoutes, { prefix: '/internal/assistant' });
+  await fastify.register(internalBillingRoutes, { prefix: '/internal' });
   await fastify.register(adminQueueRoutes, { prefix: '/api/admin/queue' });
   await fastify.register(adminUsersRoutes, { prefix: '/api/admin/users' });
   await fastify.register(adminVideosRoutes, { prefix: '/api/admin/videos' });

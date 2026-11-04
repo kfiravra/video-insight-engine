@@ -152,8 +152,20 @@ vie-web
 
 **Key files:**
 - `api/src/services/assistant-client.ts`
-- `services/assistant/src/main.py`
+- `services/assistant/src/server.py`
 - `docs/API-REFERENCE.md`
+
+### Token-ledger ids across services
+
+Who mints each id, who carries it, and who settles on it:
+
+| Id | Minted by | Carried as | Settled by |
+|---|---|---|---|
+| `billingRunId` (a video run) | vie-api `VideoSubmissionService` (UUID per submit; a playlist item's run id) | the cache row's dispatch stamp, read by the summarizer at run start | the summarizer's `POST /internal/run-cost {videoSummaryId, billingRunId, costUsd}` after `pipeline.timing` persists; a `failed` / cache-hit status releases it; the repair job settles a hold whose callback never came |
+| `requestId` | the Fastify request id (or a playlist item's run id) | `X-Request-ID`, `llm_usage.request_id` | the repair job's late settle (Σ `llm_usage` by it) and its assistant backfill |
+| `executionId` (a chat turn, library chat, action) | vie-api, per request (UUID) | `X-Execution-Id` to vie-assistant | the assistant's `POST /internal/assistant/usage {executionId, requestId, kind, costUsd}` when the request ends (`debit:exec:<executionId>:…`, once) |
+
+vie-api owns every token amount (`ceil(cost × 3 × 1000)`); the Python services only report dollars of real LLM cost.
 
 ---
 

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import { QueuePublisher } from '../queue-publisher.service.js';
-import { QUEUE_TOPOLOGY, PRIORITY_FREE, PRIORITY_PAID, queuePlanOf, videoJobPayloadSchema } from '../queue-topology.js';
+import { QUEUE_TOPOLOGY, PRIORITY_FREE, PRIORITY_PAID, queuePlanFor, videoJobPayloadSchema } from '../queue-topology.js';
 import { QueuePublishError } from '../../utils/errors.js';
 
 const mockLogger = {
@@ -171,16 +171,12 @@ describe('QueuePublisher', () => {
   });
 });
 
-describe('queuePlanOf', () => {
-  const split = (free: number, plan: number, credit: number) => ({ free, plan, credit, lots: [] });
-
+describe('queuePlanFor', () => {
   it.each([
-    ['plan minutes', split(0, 30, 0), 'paid'],
-    ['credit minutes', split(0, 0, 30), 'paid'],
-    ['the free video topped up with credits', split(10, 0, 5), 'paid'],
-    ['the free video alone', split(10, 0, 0), 'free'],
-  ])('should queue a run on %s as %s', (_label, holdSplit, plan) => {
-    expect(queuePlanOf(holdSplit)).toBe(plan);
+    ['pro', 'paid'],
+    ['free', 'free'],
+  ] as const)('should queue a run of a %s account as %s', (planId, plan) => {
+    expect(queuePlanFor(planId)).toBe(plan);
   });
 });
 

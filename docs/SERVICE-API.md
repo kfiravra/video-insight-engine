@@ -78,8 +78,8 @@ api/
     │   ├── assistant-client.ts   # HTTP client for assistant (RAG chat)
     │   ├── share.service.ts
     │   ├── og-image.service.ts
-    │   ├── video-submission.service.ts  # idempotency gate → minutes ledger → createVideo
-    │   └── billing/              # minutes ledger (BillingService, LedgerEnforcement, repair job), payment-provider.ts (noop until P4), burst-limit.ts
+    │   ├── video-submission.service.ts  # idempotency gate → token ledger → createVideo
+    │   └── billing/              # token ledger (BillingService, LedgerEnforcement, repair job), payment-provider.ts (noop until P4), burst-limit.ts
     │
     ├── templates/
     │   └── share-page.ts         # HTML template for /s/:slug (v1.4)
@@ -114,7 +114,7 @@ export interface Container {
   summarizerClient: SummarizerClient;
   shareService: ShareService;            // v1.4
   ogImageService: OgImageService;        // v1.4
-  billingService: BillingService;        // minutes ledger (billing-roles)
+  billingService: BillingService;        // token ledger (billing-tokens)
   billingEnforcement: LedgerEnforcement; // quote + hold on every submit
 }
 
@@ -382,8 +382,6 @@ INTERNAL_SECRET=dev-internal-secret-change-me   # Shared secret for /internal/as
 # Submit burst guard: submissions per user per hour, one bucket for POST /api/videos,
 # the assistant's generate route and playlist import (0 = off)
 SUBMIT_BURST_LIMIT_PER_HOUR=20
-# Chat messages a free account may send per rolling 24 h, both chat routes (0 = off)
-CHAT_FREE_MESSAGES_PER_DAY=50
 # Billing repair job: stale holds, lot expiry, recurring grants, drift check,
 # llm_usage.user_id after 90 days, GDPR hard-delete sweep (needs the replica set)
 BILLING_REPAIR_ENABLED=true

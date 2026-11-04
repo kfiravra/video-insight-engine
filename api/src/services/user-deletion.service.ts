@@ -61,7 +61,7 @@ type UserScopedCollection =
  *   - Qdrant `transcript_chunks` (shared, video-scoped)
  *   - S3 objects (shared, video-scoped — no user prefix today)
  *   - `llm_usage` (no TTL; kept for cost reporting)
- *   - the minutes ledger (`billingAccounts`, `ledgerEntries`, `creditLots`,
+ *   - the token ledger (`billingAccounts`, `ledgerEntries`, `creditLots`,
  *     `recurringGrants`): pseudonymised, not deleted — see
  *     BillingErasureRepository (brief Q12)
  */
@@ -252,7 +252,7 @@ export class UserDeletionService {
       videoCacheRowsUnstamped = await this.clearVideoCacheDispatchContext(userId);
     }, warnings);
 
-    // The minutes ledger keeps its amounts; only the link to the user goes (Q12).
+    // The token ledger keeps its amounts; only the link to the user goes (Q12).
     await this.runStep('billing', traceId, async () => {
       billingErased = await this.billingErasure.eraseUser(userId, this.clock());
     }, warnings);

@@ -51,6 +51,53 @@ describe('auth routes', () => {
       expect(body).toHaveProperty('user', mockUser);
     });
 
+    it('should open the token account with its signup grant for the new user (the tile shows it at once)', async () => {
+      mockContainer.authService.register.mockResolvedValue({ id: '507f1f77bcf86cd799439011', email: 'grant@example.com' });
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/auth/register',
+        // Own IP so this call does not share the register route's 5/hour counter
+        remoteAddress: '203.0.113.21',
+        headers: { 'content-type': 'application/json' },
+        payload: { email: 'grant@example.com', password: 'SecurePass123', name: 'Grant' },
+      });
+
+      expect(response.statusCode).toBe(201);
+      expect(mockContainer.billingService.ensureAccount).toHaveBeenCalledWith('507f1f77bcf86cd799439011');
+    });
+
+    it('should still register, and log it, when the billing write fails (the first billing read opens the account)', async () => {
+      mockContainer.authService.register.mockResolvedValue({ id: '507f1f77bcf86cd799439012', email: 'nobill@example.com' });
+      mockContainer.billingService.ensureAccount.mockRejectedValueOnce(new Error('mongo: write conflict'));
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/auth/register',
+        remoteAddress: '203.0.113.22',
+        headers: { 'content-type': 'application/json' },
+        payload: { email: 'nobill@example.com', password: 'SecurePass123', name: 'No Bill' },
+      });
+
+      expect(response.statusCode).toBe(201);
+      expect(response.json()).toMatchObject({ accessToken: expect.any(String), user: { id: '507f1f77bcf86cd799439012' } });
+    });
+
+    it('should open no billing account when the registration itself fails', async () => {
+      const { EmailExistsError } = await import('../utils/errors.js');
+      mockContainer.authService.register.mockRejectedValueOnce(new EmailExistsError());
+
+      await app.inject({
+        method: 'POST',
+        url: '/api/auth/register',
+        remoteAddress: '203.0.113.23',
+        headers: { 'content-type': 'application/json' },
+        payload: { email: 'taken@example.com', password: 'SecurePass123', name: 'Taken' },
+      });
+
+      expect(mockContainer.billingService.ensureAccount).not.toHaveBeenCalled();
+    });
+
     it('should return 400 for invalid email', async () => {
       const response = await app.inject({
         method: 'POST',

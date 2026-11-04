@@ -8,7 +8,7 @@ import { RunNotAllowedError } from '../utils/errors.js';
 import { submitOutcome } from './billing/run-stamp.js';
 import { updateOffer } from './library-update.js';
 import { refusalServesWithoutRun } from './billing/billing-errors.js';
-import { queuePlanOf, type QueuePlan } from './queue-topology.js';
+import type { QueuePlan } from './queue-topology.js';
 import type { ProviderConfig } from './summarizer-client.js';
 import type { GateSubmission } from './billing/billing-gate.js';
 import type { LedgerEnforcement } from './billing/ledger-enforcement.js';
@@ -65,13 +65,13 @@ type IdempotencyGateResult =
 type ReplayGate = Exclude<IdempotencyGateResult, { kind: 'proceed' }>;
 
 /**
- * Where a submission stands with the minutes ledger. `run` is the ledger's run
+ * Where a submission stands with the token ledger. `run` is the ledger's run
  * (its `requestId` is a server id generated per submission, P3.1 — never the
  * client's X-Request-ID); null without a video id.
  */
 interface SubmitBilling {
   run: GateSubmission | null;
-  /** What the hold paid with, for the queue priority (P3.4); `free` without a hold. */
+  /** The account's queue plan (Pro → `paid`, D18); `free` without a hold. */
   queuePlan: QueuePlan;
   /**
    * The ledger refused to pay for a run, but the refusal still lets a cached
@@ -82,7 +82,7 @@ interface SubmitBilling {
 }
 
 /**
- * Full video-submission flow: idempotency gate → minutes ledger (quote +
+ * Full video-submission flow: idempotency gate → token ledger (quote +
  * hold) → createVideo → give-back / hash unwind on failure. Extracted from
  * the POST /api/videos handler so EVERY submission path — user-facing and the
  * assistant's internal `/internal/assistant/generate` — runs the same gates.
@@ -128,8 +128,8 @@ export class VideoSubmissionService {
     const run = await this.billingRun(input);
     if (!run) return { run, queuePlan: 'free' };
     try {
-      const hold = await this.billing.admit(run);
-      return { run, queuePlan: queuePlanOf(hold.split) };
+      const { queuePlan } = await this.billing.admit(run);
+      return { run, queuePlan };
     } catch (err) {
       // Serve-only never dispatches, so its plan is never read.
       if (refusalServesWithoutRun(err)) return { run, queuePlan: 'free', servingOnly: err };

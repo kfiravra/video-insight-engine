@@ -39,10 +39,20 @@ describe('LedgerEnforcement', () => {
 
   describe('admit', () => {
     it('should hold the estimate of the video\'s length (a 10-minute video: 840 tokens)', async () => {
-      const hold = await makeEnforcement(getTestDb(), h).admit({ requestId: 'run-1', userId, youtubeId: 'dQw4w9WgXcQ' });
+      const { hold } = await makeEnforcement(getTestDb(), h).admit({ requestId: 'run-1', userId, youtubeId: 'dQw4w9WgXcQ' });
 
       expect(hold).toMatchObject({ requestId: 'run-1', tokens: 840, durationSec: 600 });
       expect(h.metadata.getVideoMetadata).toHaveBeenCalledWith('dQw4w9WgXcQ');
+    });
+
+    it('should queue a free account\'s run as free and a Pro account\'s as paid (D18)', async () => {
+      const enforcement = makeEnforcement(getTestDb(), h);
+      const free = await enforcement.admit({ requestId: 'run-1', userId, youtubeId: 'dQw4w9WgXcQ', durationSec: 60 });
+      await h.billing.setPlan(userId, { planId: 'pro' }, adminCtx());
+
+      const pro = await enforcement.admit({ requestId: 'run-2', userId, youtubeId: 'dQw4w9WgXcQ', durationSec: 60 });
+
+      expect([free.queuePlan, pro.queuePlan]).toEqual(['free', 'paid']);
     });
 
     it('should throw the refusal when the balance does not cover the estimate', async () => {
@@ -53,7 +63,9 @@ describe('LedgerEnforcement', () => {
     });
   });
 
-  describe('runFinished', () => {
+  describe('a dispatched run', () => {
+    const stamped = { findCacheById: async () => stamp };
+
     beforeEach(async () => {
       await h.gate.admit({ requestId: 'run-1', userId, youtubeId: 'dQw4w9WgXcQ', durationSec: 600 });
       await getTestDb().collection('llm_usage').insertMany([
@@ -64,48 +76,141 @@ describe('LedgerEnforcement', () => {
       ]);
     });
 
-    it('should settle a completed run on the llm_usage cost of its dispatch request id', async () => {
-      const enforcement = makeEnforcement(getTestDb(), h, { findCacheById: async () => stamp });
+    describe('runFinished', () => {
+      it('should settle nothing on "completed": the hold waits for the run cost (or the repair job)', async () => {
+        const findCacheById = vi.fn(async () => stamp);
+        const enforcement = makeEnforcement(getTestDb(), h, { findCacheById });
 
-      await enforcement.runFinished('vs-1', 'completed');
+        await enforcement.runFinished('vs-1', 'completed');
 
-      const debits = await ledger({ type: 'debit' });
-      expect(debits.map((d) => [d.source.ref, d.tokens, d.costUsd, d.mirrorsHold])).toEqual([['run-1', -750, 0.25, true]]);
-      expect(await h.billing.summary(userId)).toMatchObject({ balance: 250, holds: [] });
+        expect(await ledger({ type: { $in: ['debit', 'release'] } })).toEqual([]);
+        expect((await h.billing.summary(userId)).holds).toEqual([{ youtubeId: 'dQw4w9WgXcQ', tokens: 840 }]);
+        expect(findCacheById).not.toHaveBeenCalled();
+      });
+
+      it('should release a failed run in full', async () => {
+        const enforcement = makeEnforcement(getTestDb(), h, stamped);
+
+        await enforcement.runFinished('vs-1', 'failed');
+
+        expect(await ledger({ type: 'debit' })).toEqual([]);
+        expect(await h.billing.summary(userId)).toMatchObject({ balance: 1000, holds: [] });
+      });
+
+      it('should release a run the summarizer answered from its response cache, with no debit (I3)', async () => {
+        const enforcement = makeEnforcement(getTestDb(), h, stamped);
+
+        await enforcement.runFinished('vs-1', 'cached');
+
+        const entries = await ledger({ 'source.ref': 'run-1' });
+        expect(entries.map((e) => e.type)).toEqual(['hold', 'release']);
+        expect((await h.billing.summary(userId)).balance).toBe(1000);
+      });
+
+      it('should do nothing for a row no dispatch stamped', async () => {
+        const enforcement = makeEnforcement(getTestDb(), h, { findCacheById: async () => ({}) });
+
+        await enforcement.runFinished('vs-1', 'failed');
+
+        expect((await h.billing.summary(userId)).holds).toHaveLength(1);
+      });
+
+      it('should log instead of throwing when the ledger fails, so the status relay never fails', async () => {
+        const enforcement = makeEnforcement(getTestDb(), h, { findCacheById: async () => { throw new Error('mongo down'); } });
+
+        await expect(enforcement.runFinished('vs-1', 'failed')).resolves.toBeUndefined();
+        expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ videoSummaryId: 'vs-1' }), 'billing_run_finish_failed');
+      });
     });
 
-    it('should release a failed run in full', async () => {
-      const enforcement = makeEnforcement(getTestDb(), h, { findCacheById: async () => stamp });
+    describe('runCosted', () => {
+      it('should settle the stamped run on the reported cost, not on llm_usage, and give the unused estimate back', async () => {
+        const status = await makeEnforcement(getTestDb(), h, stamped).runCosted('vs-1', 'run-1', 0.25);
 
-      await enforcement.runFinished('vs-1', 'failed');
+        const debits = await ledger({ type: 'debit' });
+        expect(status).toBe('debited');
+        expect(debits.map((d) => [d.source.ref, d.tokens, d.costUsd, d.mirrorsHold])).toEqual([['run-1', -750, 0.25, true]]);
+        expect((await ledger({ type: 'release' })).map((e) => e.tokens)).toEqual([90]);
+        expect(await h.billing.summary(userId)).toMatchObject({ balance: 250, holds: [] });
+      });
 
-      expect(await ledger({ type: 'debit' })).toEqual([]);
-      expect(await h.billing.summary(userId)).toMatchObject({ balance: 1000, holds: [] });
+      it('should settle a row stamped before billingRunId existed when the callback names no run', async () => {
+        const enforcement = makeEnforcement(getTestDb(), h, { findCacheById: async () => ({ requestId: 'run-1' }) });
+
+        expect(await enforcement.runCosted('vs-1', null, 0.25)).toBe('debited');
+      });
+
+      it('should take an overrun past the hold from what is left, then into debt', async () => {
+        await makeEnforcement(getTestDb(), h, stamped).runCosted('vs-1', 'run-1', 0.5);
+
+        expect(await h.billing.summary(userId)).toMatchObject({ balance: -500, debt: 500 });
+        expect((await h.billing.verifyAccount(userId)).drift).toEqual([]);
+      });
+
+      it('should ignore a cost for a run the row no longer names, leaving the hold for the repair job', async () => {
+        const status = await makeEnforcement(getTestDb(), h, stamped).runCosted('vs-1', 'run-older', 0.25);
+
+        expect(status).toBe('ignored');
+        expect(await ledger({ type: 'debit' })).toEqual([]);
+        expect((await h.billing.summary(userId)).holds).toHaveLength(1);
+        expect(mockLogger.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ videoSummaryId: 'vs-1', billingRunId: 'run-older', stamped: 'run-1' }),
+          'billing_run_cost_stamp_mismatch',
+        );
+      });
+
+      it('should settle once however many times the cost arrives (already_debited)', async () => {
+        const enforcement = makeEnforcement(getTestDb(), h, stamped);
+
+        const statuses = [await enforcement.runCosted('vs-1', 'run-1', 0.25), await enforcement.runCosted('vs-1', 'run-1', 0.25)];
+
+        expect(statuses).toEqual(['debited', 'already_debited']);
+        expect(await ledger({ type: 'debit' })).toHaveLength(1);
+        expect((await h.billing.summary(userId)).balance).toBe(250);
+      });
+
+      it('should answer no_hold for a row no dispatch stamped', async () => {
+        const enforcement = makeEnforcement(getTestDb(), h, { findCacheById: async () => null });
+
+        expect(await enforcement.runCosted('vs-1', 'run-1', 0.25)).toBe('no_hold');
+      });
     });
 
-    it('should release a run the summarizer answered from its response cache, with no debit (I3)', async () => {
-      const enforcement = makeEnforcement(getTestDb(), h, { findCacheById: async () => stamp });
+    describe('videoBilling', () => {
+      it('should show the estimate held while the run is in flight', async () => {
+        expect(await makeEnforcement(getTestDb(), h, stamped).videoBilling(userId, 'vs-1'))
+          .toEqual({ state: 'held', estimatedTokens: 840, chargedTokens: null });
+      });
 
-      await enforcement.runFinished('vs-1', 'cached');
+      it.each([
+        ['within the estimate', 0.25, 750],
+        ['past the estimate', 0.5, 1500],
+      ])('should show what a settled run was charged %s', async (_label, costUsd, charged) => {
+        const enforcement = makeEnforcement(getTestDb(), h, stamped);
+        await enforcement.runCosted('vs-1', 'run-1', costUsd);
 
-      const entries = await ledger({ 'source.ref': 'run-1' });
-      expect(entries.map((e) => e.type)).toEqual(['hold', 'release']);
-      expect((await h.billing.summary(userId)).balance).toBe(1000);
-    });
+        expect(await enforcement.videoBilling(userId, 'vs-1')).toEqual({ state: 'charged', estimatedTokens: 840, chargedTokens: charged });
+      });
 
-    it('should do nothing for a row no dispatch stamped', async () => {
-      const enforcement = makeEnforcement(getTestDb(), h, { findCacheById: async () => ({}) });
+      it('should show a failed run as released, charged nothing', async () => {
+        const enforcement = makeEnforcement(getTestDb(), h, stamped);
+        await enforcement.runFinished('vs-1', 'failed');
 
-      await enforcement.runFinished('vs-1', 'completed');
+        expect(await enforcement.videoBilling(userId, 'vs-1')).toEqual({ state: 'released', estimatedTokens: 840, chargedTokens: 0 });
+      });
 
-      expect((await h.billing.summary(userId)).holds).toHaveLength(1);
-    });
+      it('should show free to a user with no hold on the stamped run (someone else\'s run)', async () => {
+        const other = await insertUser(getTestDb());
 
-    it('should log instead of throwing when the ledger fails, so the status relay never fails', async () => {
-      const enforcement = makeEnforcement(getTestDb(), h, { findCacheById: async () => { throw new Error('mongo down'); } });
+        expect(await makeEnforcement(getTestDb(), h, stamped).videoBilling(other, 'vs-1'))
+          .toEqual({ state: 'free', estimatedTokens: 0, chargedTokens: 0 });
+      });
 
-      await expect(enforcement.runFinished('vs-1', 'completed')).resolves.toBeUndefined();
-      expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ videoSummaryId: 'vs-1' }), 'billing_run_finish_failed');
+      it('should show free for a row no dispatch stamped', async () => {
+        const enforcement = makeEnforcement(getTestDb(), h, { findCacheById: async () => null });
+
+        expect((await enforcement.videoBilling(userId, 'vs-1')).state).toBe('free');
+      });
     });
   });
 

@@ -8,7 +8,7 @@ import type { FolderService, FolderResponse } from '../folder.service.js';
 import type { SummarizerClient } from '../summarizer-client.js';
 import type { LedgerEnforcement } from '../billing/ledger-enforcement.js';
 import {
-  InsufficientMinutesError,
+  InsufficientTokensError,
   InvalidPlaylistUrlError,
   RunNotAllowedError,
   PlaylistNotFoundError,
@@ -96,7 +96,7 @@ describe('PlaylistService', () => {
     delete: ReturnType<typeof vi.fn>;
   };
   let mockSummarizerClient: Record<string, unknown>;
-  /** The minutes ledger, admitting everything; playlist.enforce.test.ts runs the real one. */
+  /** The token ledger, admitting everything; playlist.enforce.test.ts runs the real one. */
   let mockEnforcement: {
     admit: ReturnType<typeof vi.fn>;
     submitResolved: ReturnType<typeof vi.fn>;
@@ -118,11 +118,11 @@ describe('PlaylistService', () => {
     mockSummarizerClient = {};
 
     mockEnforcement = {
-      admit: vi.fn().mockResolvedValue({ split: { free: 1, plan: 0, credit: 0, lots: [] } }),
+      admit: vi.fn().mockResolvedValue({ hold: { requestId: 'r', tokens: 750, split: { plan: 0, credit: 750, lots: [] } }, queuePlan: 'free' }),
       submitResolved: vi.fn().mockResolvedValue(undefined),
       submitFailed: vi.fn().mockResolvedValue(undefined),
       planPlaylist: vi.fn().mockImplementation(async (_userId: string, items: Array<{ durationSec: number | null }>) => ({
-        quote: { neededMinutes: 0, availableMinutes: 0, freeVideoAvailable: true, nextFreeAt: null, decisions: [] },
+        quote: { neededTokens: 0, availableTokens: 1000, decisions: [] },
         durationsSec: items.map((item) => item.durationSec),
       })),
     };
@@ -520,7 +520,7 @@ describe('PlaylistService', () => {
     });
   });
 
-  describe('import through the minutes ledger', () => {
+  describe('import through the token ledger', () => {
     const PLAYLIST_URL = 'https://www.youtube.com/playlist?list=PLtest123';
     let userId: string;
     /** The run id createVideo was given for call `n` (each item holds on its own). */
@@ -576,11 +576,11 @@ describe('PlaylistService', () => {
       });
     });
 
-    it('should stop at the first item the minutes cannot cover and mark every later one the same', async () => {
+    it('should stop at the first item the tokens cannot cover and mark every later one the same', async () => {
       useVideos(4);
       mockEnforcement.admit
-        .mockResolvedValueOnce({ split: { free: 2, plan: 0, credit: 0, lots: [] } })
-        .mockRejectedValueOnce(new InsufficientMinutesError(2, 0, null));
+        .mockResolvedValueOnce({ hold: { requestId: 'r', tokens: 750, split: { plan: 0, credit: 750, lots: [] } }, queuePlan: 'free' })
+        .mockRejectedValueOnce(new InsufficientTokensError(750, 250));
       mockVideoService.createVideo.mockImplementation(async (_user: string, _url: string, options: { serveOnly?: boolean }) => {
         if (options.serveOnly) throw new RunNotAllowedError();
         return createVideoCreateResult();
@@ -590,18 +590,18 @@ describe('PlaylistService', () => {
 
       expect(result.videos).toHaveLength(1);
       expect(result.failedVideos.map(failed => [failed.youtubeId, failed.error])).toEqual([
-        ['video2', 'INSUFFICIENT_MINUTES'],
-        ['video3', 'INSUFFICIENT_MINUTES'],
-        ['video4', 'INSUFFICIENT_MINUTES'],
+        ['video2', 'INSUFFICIENT_TOKENS'],
+        ['video3', 'INSUFFICIENT_TOKENS'],
+        ['video4', 'INSUFFICIENT_TOKENS'],
       ]);
       expect(mockEnforcement.admit).toHaveBeenCalledTimes(2);
     });
 
-    it('should queue an item paid with plan or credit minutes as paid and a free-video item as free', async () => {
+    it('should queue each item at the plan its admission names (a Pro account: paid)', async () => {
       useVideos(2);
       mockEnforcement.admit
-        .mockResolvedValueOnce({ split: { free: 2, plan: 0, credit: 0, lots: [] } })
-        .mockResolvedValueOnce({ split: { free: 0, plan: 2, credit: 0, lots: [] } });
+        .mockResolvedValueOnce({ hold: { requestId: 'r1', tokens: 750, split: { plan: 0, credit: 750, lots: [] } }, queuePlan: 'free' })
+        .mockResolvedValueOnce({ hold: { requestId: 'r2', tokens: 750, split: { plan: 750, credit: 0, lots: [] } }, queuePlan: 'paid' });
       mockVideoService.createVideo.mockResolvedValue(createVideoCreateResult());
 
       await playlistService.import(userId, PLAYLIST_URL);
@@ -648,7 +648,7 @@ describe('PlaylistService', () => {
 
       const result = await playlistService.import(userId, PLAYLIST_URL);
 
-      expect(result.billing).toEqual({ neededMinutes: 0, availableMinutes: 0, freeVideoAvailable: true });
+      expect(result.billing).toEqual({ neededTokens: 0, availableTokens: 1000 });
     });
   });
 

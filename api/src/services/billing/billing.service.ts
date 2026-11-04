@@ -23,7 +23,16 @@ import { checkProjection } from './projection.js';
 import { estimateTokens, tokensForUsd, videoMinutes } from './tokens.js';
 import { StaleAccountVersionError } from '../../repositories/billing.repository.js';
 import { toHoldView, toSnapshot, toUsageSummary } from './views.js';
-import type { AccountCaps, AccountDetail, AccountSnapshot, ExecutionKind, HoldView, PlanId, UsageSummary } from '@vie/types';
+import type {
+  AccountCaps,
+  AccountDetail,
+  AccountSnapshot,
+  ExecutionKind,
+  HoldView,
+  PlanId,
+  UsageSummary,
+  VideoBilling,
+} from '@vie/types';
 import type { AccountDraft } from './account-draft.js';
 import type { AllocationResult } from './allocation.js';
 import type { AccountDetailOptions, AdminMutationContext, MutationResult } from './billing-admin.js';
@@ -44,6 +53,8 @@ export interface Quote {
   /** The estimate the run would hold. */
   tokens: number;
   decision: AllocationResult;
+  /** The account's plan when quoted: decides the run's queue priority. */
+  planId: PlanId;
   quotedAt: Date;
 }
 
@@ -84,6 +95,8 @@ export interface ExecutionCost {
   /** The request id on the assistant's llm_usage rows. */
   requestId: string;
   costUsd: number;
+  /** Why it is debited outside the usage callback (`backfill`: the repair job). */
+  reason?: string;
 }
 
 export interface ExecutionOutcome {
@@ -156,7 +169,7 @@ export class BillingService {
     const tokens = estimateTokens(durationSec);
     const draft = await this.units.read(userId);
     const decision = this.allocateFor(draft, tokens, durationSec);
-    return { userId, youtubeId, durationSec, tokens, decision, quotedAt: draft.now };
+    return { userId, youtubeId, durationSec, tokens, decision, planId: draft.account.plan.id, quotedAt: draft.now };
   }
 
   /**
@@ -266,6 +279,28 @@ export class BillingService {
     return released ?? this.finishedOutcome(requestId, 'release');
   }
 
+  /**
+   * What `userId`'s run `runId` (a cache row's billing stamp) holds or cost:
+   * held while it runs, charged once settled, released when given back, free
+   * when this user has no hold on that run (cached, attached, someone else's).
+   */
+  async videoBilling(runId: string | null, userId: string): Promise<VideoBilling> {
+    const free: VideoBilling = { state: 'free', estimatedTokens: 0, chargedTokens: 0 };
+    if (!runId) return free;
+    const entries = (await this.repo.findLedgerBySourceRef(runId)).filter(
+      (entry) => entry.unit === 'tokens' && !entry.executionId && entry.userId.toHexString() === userId,
+    );
+    const sum = (type: string): number =>
+      entries.filter((entry) => entry.type === type).reduce((total, entry) => total - (entry.tokens ?? 0), 0);
+    const estimatedTokens = sum('hold');
+    if (estimatedTokens === 0) return free;
+    if (entries.some((entry) => entry.type === 'debit')) {
+      return { state: 'charged', estimatedTokens, chargedTokens: sum('debit') };
+    }
+    if (entries.some((entry) => entry.type === 'release')) return { state: 'released', estimatedTokens, chargedTokens: 0 };
+    return { state: 'held', estimatedTokens, chargedTokens: null };
+  }
+
   // ─── Executions (chat, library chat, actions) ───
 
   /**
@@ -287,20 +322,24 @@ export class BillingService {
    * nothing.
    */
   async debitExecution(cost: ExecutionCost): Promise<ExecutionOutcome> {
-    const { userId, executionId, kind, requestId, costUsd } = cost;
+    const { userId, executionId, kind, requestId, costUsd, reason } = cost;
     validateRequestId(executionId, 'executionId');
     validateRequestId(requestId);
     validateCost(costUsd);
     const tokens = tokensForUsd(costUsd);
     if (tokens === 0) return { executionId, status: 'free', tokens: 0 };
     const outcome = await this.units.write(userId, async ({ draft, session }) => {
+      // Its own key, or — for the callback of a turn the repair job already
+      // backfilled from llm_usage (`req:<requestId>`) — that backfill's.
       const prior = await this.repo.findExecutionDebits(executionId, session);
-      if (prior.length > 0) {
-        const charged = prior.reduce((sum, entry) => sum - (entry.tokens ?? 0), 0);
+      const backfilled = prior.length > 0 ? [] : await this.repo.findExecutionDebits(`req:${requestId}`, session);
+      if (prior.length > 0 || backfilled.length > 0) {
+        const debits = prior.length > 0 ? prior : backfilled;
+        const charged = debits.reduce((sum, entry) => sum - (entry.tokens ?? 0), 0);
         return { executionId, status: 'already_debited' as const, tokens: charged };
       }
       const ownerId = draft.original.ownerId;
-      applyExecutionCharge(draft, { executionId, kind, requestId, userId: ownerId, tokens, costUsd });
+      applyExecutionCharge(draft, { executionId, kind, requestId, userId: ownerId, tokens, costUsd, reason });
       return { executionId, status: 'debited' as const, tokens };
     });
     return outcome.value;
@@ -387,6 +426,22 @@ export class BillingService {
       this.logger.warn({ accountId: accountId.toHexString(), grantId: grantId.toHexString() }, 'recurring_grant_retired_owner_gone');
     }
     return false;
+  }
+
+  /**
+   * The repair job's backfill of an assistant request whose usage callback
+   * never arrived: debit its llm_usage total once (`debit:exec:req:<requestId>`)
+   * unless the request already has an execution entry (the callback landed) or
+   * its user is gone. Returns whether it debited.
+   */
+  async backfillExecution(request: { userId: string; requestId: string; kind: ExecutionKind; costUsd: number }): Promise<boolean> {
+    const { userId, requestId, kind, costUsd } = request;
+    const prior = await this.repo.findLedgerBySourceRef(requestId);
+    if (prior.some((entry) => entry.executionId !== undefined)) return false;
+    const owner = await this.userRepository.findById(userId);
+    if (!owner || owner.deletedAt) return false;
+    const outcome = await this.debitExecution({ userId, executionId: `req:${requestId}`, kind, requestId, costUsd, reason: 'backfill' });
+    return outcome.status === 'debited';
   }
 
   // ─── Admin (Contract 1) ───

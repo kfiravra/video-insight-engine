@@ -240,6 +240,94 @@ describe('BillingRepairService (P1.6, real Mongo replica set)', () => {
     });
   });
 
+  describe('unsettled assistant executions (usage callback lost)', () => {
+    const MINUTE_MS = 60 * 1000;
+    const usageRow = (fields: Record<string, unknown>) => ({
+      service: 'assistant', request_id: 'req-a', user_id: userId, cost_usd: 0.01, feature: 'assistant:rag_chat',
+      timestamp: new Date(clock.now().getTime() - 20 * MINUTE_MS), ...fields,
+    });
+    const insertUsage = (...rows: Array<Record<string, unknown>>) => db().collection('llm_usage').insertMany(rows.map(usageRow));
+    const execDebits = () => ledger({ type: 'debit', executionId: { $exists: true } });
+
+    it('should debit an unreported request its llm_usage total once, keyed debit:exec:req:<requestId>', async () => {
+      await insertUsage({ cost_usd: 0.01, timestamp: new Date(clock.now().getTime() - 30 * MINUTE_MS) }, { cost_usd: 0.02 });
+
+      const first = await run();
+      const second = await run();
+
+      const [debit, ...others] = await execDebits();
+      expect([first.executionsBackfilled, second.executionsBackfilled, others]).toEqual([1, 0, []]);
+      expect(debit).toMatchObject({
+        executionId: 'req:req-a', executionKind: 'chat', tokens: -90, costUsd: 0.03, reason: 'backfill',
+        source: { kind: 'run', ref: 'req-a' },
+      });
+      expect(debit.idempotencyKey).toMatch(/^debit:exec:req:req-a:lot:[0-9a-f]{24}$/);
+      expect((await billing.summary(userId)).balance).toBe(910);
+      await expectConsistent();
+    });
+
+    it.each([
+      ['assistant:library_chat', 'library_chat'],
+      ['assistant:action:save_note', 'action'],
+      ['assistant:rag_chat', 'chat'],
+    ])('should name a request tagged %s a %s execution', async (feature, kind) => {
+      await insertUsage({ feature });
+
+      await run();
+
+      expect((await execDebits()).map((d) => d.executionKind)).toEqual([kind]);
+    });
+
+    it('should skip a request whose usage callback landed', async () => {
+      await billing.debitExecution({ userId, executionId: 'exec-1', kind: 'chat', requestId: 'req-a', costUsd: 0.03 });
+      await insertUsage({ cost_usd: 0.03 });
+
+      const report = await run();
+
+      expect(report.executionsBackfilled).toBe(0);
+      expect((await execDebits()).map((d) => d.executionId)).toEqual(['exec-1']);
+    });
+
+    it('should wait until a request has been quiet for 10 minutes', async () => {
+      await insertUsage({ timestamp: new Date(clock.now().getTime() - 5 * MINUTE_MS) });
+
+      const early = await run();
+      clock.advance(6 * MINUTE_MS);
+      const later = await run();
+
+      expect([early.executionsBackfilled, later.executionsBackfilled]).toEqual([0, 1]);
+    });
+
+    it('should skip an erased user, opening no account for the id', async () => {
+      const erased = new ObjectId().toHexString();
+      await insertUsage({ user_id: erased });
+
+      const report = await run();
+
+      expect(report.executionsBackfilled).toBe(0);
+      expect(await db().collection('billingAccounts').countDocuments({ ownerId: new ObjectId(erased) })).toBe(0);
+    });
+
+    it('should skip a user whose deletion is pending', async () => {
+      await db().collection('users').updateOne({ _id: new ObjectId(userId) }, { $set: { deletedAt: clock.now() } });
+      await insertUsage({});
+
+      expect((await run()).executionsBackfilled).toBe(0);
+    });
+
+    it.each([
+      ['a free request (no cost)', { cost_usd: 0 }],
+      ['a pipeline row', { service: 'summarizer' }],
+      ['a request older than 24 h', { ageMs: 25 * HOUR_MS }],
+      ['a row with no request id', { request_id: null }],
+    ])('should leave %s alone', async (_label, { ageMs, ...fields }: Record<string, unknown>) => {
+      await insertUsage({ ...fields, ...(typeof ageMs === 'number' && { timestamp: new Date(clock.now().getTime() - ageMs) }) });
+
+      expect((await run()).executionsBackfilled).toBe(0);
+      expect(await execDebits()).toEqual([]);
+    });
+  });
+
   describe('projection drift', () => {
     it('should warn and write one llm_alerts row for an account that no longer equals its ledger', async () => {
       await billing.grantLot(userId, { tokens: 100 }, ctx());
@@ -358,7 +446,7 @@ describe('BillingRepairService (P1.6, real Mongo replica set)', () => {
       const report = await run();
 
       expect(report).toEqual({
-        holdsSettled: 0, holdsReleased: 0, lotTokensExpired: 0, recurringLots: 0,
+        holdsSettled: 0, holdsReleased: 0, lotTokensExpired: 0, recurringLots: 0, executionsBackfilled: 0,
         driftAccounts: 0, llmUsagePseudonymised: 0, deletionsProcessed: 0, failedSteps: [],
       });
       expect(await ledger({})).toEqual([]);

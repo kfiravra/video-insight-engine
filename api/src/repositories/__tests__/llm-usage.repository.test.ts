@@ -64,6 +64,58 @@ describe('LlmUsageRepository', () => {
     });
   });
 
+  describe('listAssistantRequestCosts', () => {
+    const NOW = new Date('2026-11-01T10:00:00Z');
+    const ago = (minutes: number) => new Date(NOW.getTime() - minutes * 60 * 1000);
+    const SINCE = ago(24 * 60);
+    const QUIET_BEFORE = ago(10);
+    const row = (fields: Record<string, unknown>) => ({
+      service: 'assistant', request_id: 'req-a', user_id: 'u-1', cost_usd: 0.01, feature: 'assistant:rag_chat', timestamp: ago(30), ...fields,
+    });
+
+    it('should sum each finished request\'s rows, oldest request first', async () => {
+      await rows().insertMany([
+        row({ cost_usd: 0.01, timestamp: ago(40) }),
+        row({ cost_usd: 0.02, timestamp: ago(35), feature: 'assistant:tool:search' }),
+        row({ request_id: 'req-b', user_id: 'u-2', cost_usd: 0.05, feature: 'assistant:library_chat', timestamp: ago(50) }),
+      ]);
+
+      const requests = await repo.listAssistantRequestCosts(SINCE, QUIET_BEFORE, 10);
+
+      expect(requests.map((r) => [r.requestId, r.userId, r.calls, r.lastAt])).toEqual([
+        ['req-b', 'u-2', 1, ago(50)],
+        ['req-a', 'u-1', 2, ago(35)],
+      ]);
+      expect(requests[1].costUsd).toBeCloseTo(0.03, 10);
+      expect(requests[0].feature).toBe('assistant:library_chat');
+    });
+
+    it('should leave out a request with a row inside the quiet window, the whole request', async () => {
+      await rows().insertMany([row({ timestamp: ago(30) }), row({ timestamp: ago(5) })]);
+
+      expect(await repo.listAssistantRequestCosts(SINCE, QUIET_BEFORE, 10)).toEqual([]);
+    });
+
+    it.each([
+      ['another service', { service: 'summarizer' }],
+      ['no cost', { cost_usd: 0 }],
+      ['a null cost', { cost_usd: null }],
+      ['no request id', { request_id: null }],
+      ['no user (scrubbed)', { user_id: null }],
+      ['rows older than the lookback', { timestamp: ago(25 * 60) }],
+    ])('should leave out %s', async (_label, fields) => {
+      await rows().insertOne(row(fields));
+
+      expect(await repo.listAssistantRequestCosts(SINCE, QUIET_BEFORE, 10)).toEqual([]);
+    });
+
+    it('should stop at the limit', async () => {
+      await rows().insertMany(['r1', 'r2', 'r3'].map((id, i) => row({ request_id: id, timestamp: ago(60 - i) })));
+
+      expect((await repo.listAssistantRequestCosts(SINCE, QUIET_BEFORE, 2)).map((r) => r.requestId)).toEqual(['r1', 'r2']);
+    });
+  });
+
   describe('countPromptPreviews', () => {
     it('should count only the service rows that hold prompt text', async () => {
       await rows().insertMany([

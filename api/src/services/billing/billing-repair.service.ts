@@ -1,5 +1,6 @@
 import { staleHoldAction } from './maintenance-ops.js';
 import type { FastifyBaseLogger } from 'fastify';
+import type { ExecutionKind } from '@vie/types';
 import type { BillingService } from './billing.service.js';
 import type { RepairLock } from './repair-lock.js';
 import type { BillingHoldDocument } from '../../repositories/billing.repository.js';
@@ -13,9 +14,11 @@ import type { UserDeletionService } from '../user-deletion.service.js';
 //      is terminal, missing, unstamped or stalled
 //   2. expire lots past their expiry (`expire` entries)
 //   3. apply due recurring grants (a lot that expires at the next run)
-//   4. rebuild changed accounts' projections from the ledger; drift → warn + llm_alerts
-//   5. drop llm_usage.user_id, request_id and prompt_preview on rows older than 90 days (docs/PRIVACY.md)
-//   6. the GDPR hard-delete sweep (docs/PRIVACY.md's 30-day promise)
+//   4. debit assistant requests whose usage callback never arrived (their
+//      llm_usage rows of the last 24 h, quiet for 10 min, with no ledger entry)
+//   5. rebuild changed accounts' projections from the ledger; drift → warn + llm_alerts
+//   6. drop llm_usage.user_id, request_id and prompt_preview on rows older than 90 days (docs/PRIVACY.md)
+//   7. the GDPR hard-delete sweep (docs/PRIVACY.md's 30-day promise)
 // Each step is idempotent and isolated: one failing step (or item) is logged
 // and the others still run.
 
@@ -24,6 +27,17 @@ const LLM_USAGE_BATCH = 1000;
 const PRIVACY_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
 const DRIFT_ALERT_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const FIRST_DRIFT_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+/** Assistant requests are backfilled from their last 24 h of llm_usage rows… */
+const BACKFILL_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+/** …once quiet this long, so the usage callback (retried for a few seconds) has had its chance. */
+const BACKFILL_QUIET_MS = 10 * 60 * 1000;
+
+/** The execution kind of an assistant request, from its llm_usage feature tag. */
+function executionKindOf(feature: string | null): ExecutionKind {
+  if (feature?.startsWith('assistant:library_chat')) return 'library_chat';
+  if (feature?.startsWith('assistant:action')) return 'action';
+  return 'chat';
+}
 
 export interface BillingRepairDeps {
   billing: BillingService;
@@ -44,6 +58,7 @@ export interface RepairReport {
   holdsReleased: number;
   lotTokensExpired: number;
   recurringLots: number;
+  executionsBackfilled: number;
   driftAccounts: number;
   llmUsagePseudonymised: number;
   deletionsProcessed: number;
@@ -66,13 +81,14 @@ export class BillingRepairService {
     if (!token) return 'locked';
     const now = this.now();
     const report: RepairReport = {
-      holdsSettled: 0, holdsReleased: 0, lotTokensExpired: 0, recurringLots: 0,
+      holdsSettled: 0, holdsReleased: 0, lotTokensExpired: 0, recurringLots: 0, executionsBackfilled: 0,
       driftAccounts: 0, llmUsagePseudonymised: 0, deletionsProcessed: 0, failedSteps: [],
     };
     try {
       await this.step('stale_holds', report, () => this.repairStaleHolds(now, report));
       await this.step('lot_expiry', report, () => this.expireLots(now, report));
       await this.step('recurring_grants', report, () => this.applyRecurringGrants(now, report));
+      await this.step('unsettled_assistant_executions', report, () => this.backfillAssistantExecutions(now, report));
       await this.step('drift', report, () => this.checkDrift(now, report));
       await this.step('llm_usage_privacy', report, () => this.pseudonymiseLlmUsage(now, report));
       await this.step('gdpr_deletions', report, () => this.runDeletions(now, report));
@@ -133,6 +149,17 @@ export class BillingRepairService {
     await this.eachItem(grants, 'recurring_grants', async (grant) => {
       const lot = await this.deps.billing.applyRecurringGrant(grant.accountId, grant._id, this.deps.recurringLotGraceMs ?? 0);
       if (lot) report.recurringLots++;
+    });
+  }
+
+  private async backfillAssistantExecutions(now: Date, report: RepairReport): Promise<void> {
+    const since = new Date(now.getTime() - BACKFILL_LOOKBACK_MS);
+    const quietBefore = new Date(now.getTime() - BACKFILL_QUIET_MS);
+    const requests = await this.deps.llmUsage.listAssistantRequestCosts(since, quietBefore, BATCH);
+    await this.eachItem(requests, 'unsettled_assistant_executions', async (request) => {
+      const { userId, requestId, costUsd, feature } = request;
+      const debited = await this.deps.billing.backfillExecution({ userId, requestId, costUsd, kind: executionKindOf(feature) });
+      if (debited) report.executionsBackfilled++;
     });
   }
 

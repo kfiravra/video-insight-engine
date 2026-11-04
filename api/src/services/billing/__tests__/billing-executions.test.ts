@@ -94,6 +94,16 @@ describe('BillingService executions, debt and plan cycles (real Mongo replica se
       await expectConsistent();
     });
 
+    it('should not charge a late callback for a turn the repair job already backfilled', async () => {
+      expect(await service.backfillExecution({ userId, requestId: 'req-chat-1', kind: 'chat', costUsd: 0.04 })).toBe(true);
+
+      const late = await service.debitExecution(chat({ costUsd: 0.04 }));
+
+      expect(late).toEqual({ executionId: 'ex-1', status: 'already_debited', tokens: 120 });
+      expect(await ledger({ type: 'debit' })).toHaveLength(1);
+      expect((await service.summary(userId)).balance).toBe(880);
+    });
+
     it.each(['library_chat', 'action'] as const)('should record a %s execution', async (kind) => {
       await service.debitExecution(chat({ kind }));
 

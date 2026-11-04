@@ -206,7 +206,7 @@ The account is identified **by user id, not by the JWT `email` claim**. The clai
 | `GET /s/:slug`        | 60    | 1 min    | IP    |
 | `GET /s/:slug/og-image.png` | 30 | 1 min | IP    |
 | `POST /videos`, `POST /internal/assistant/generate`, `POST /playlists/import` | 20 (`SUBMIT_BURST_LIMIT_PER_HOUR`) | 1 hour, fixed | User, one shared bucket (see below) |
-| `POST /videos/:id/chat`, `POST /assistant/library/chat` | 50 (`CHAT_FREE_MESSAGES_PER_DAY`), free accounts only | rolling 24 hours | User, one shared allowance (see [SERVICE-ASSISTANT.md](./SERVICE-ASSISTANT.md#free-account-chat-fair-use)) |
+| `GET /videos/estimate` | 60 | 1 hour, fixed | User, its own bucket (`vie:api:estimate-burst:<userId>`), apart from the submit bucket |
 | `* (default)`         | 100   | 1 min    | User  |
 
 Demo logins (`POST /auth/login` with `{ "demo": true }`, see [DEPLOY.md](./DEPLOY.md#demo-mode)) are ordinary requests to the login route and share its 10 / 15 min per-IP limit. The demo account's credentials stay in vie-api's environment and are never sent to the browser. Because every visitor holds a token for that one account, it cannot schedule its own deletion: `DELETE /users/me` returns 403 `DEMO_RESTRICTED`. The rest of its read-mostly restrictions are listed under [Demo Account (Read-Mostly)](#demo-account-read-mostly).
@@ -524,7 +524,7 @@ until the billing migration unsets the legacy field. Demoting writes
 | `billing:read` | read an account, its lots, holds and ledger | yes | yes |
 | `audit:read` | read the `adminAudit` log | yes | yes |
 | `queue:read` | `GET /api/admin/queue/stats`, `/dlq` | yes | yes |
-| `billing:grant` | grant credit minutes, adjust balances, recurring grants | yes | no |
+| `billing:grant` | grant tokens, adjust balances, recurring grants | yes | no |
 | `plan:set` | set a manual plan | yes | no |
 | `caps:set` | per-account caps and block | yes | no |
 | `users:delete` | `DELETE /api/admin/users/:id` | yes | no |
@@ -651,6 +651,16 @@ X-User-Id: <userId>             # scopes all work; a body-supplied userId is nev
 - **User scoping** — the preHandler binds `req.user.userId` from `X-User-Id`;
   routes scope every folder/video operation to that user, so the assistant can
   never act outside the authenticated caller's library.
+- **Token-ledger callbacks** — `POST /internal/run-cost` (vie-summarizer; checks
+  the secret like `/internal/status`) and `POST /internal/assistant/usage`
+  (vie-assistant; `authenticateInternal`, the user from `X-User-Id`) write
+  ledger debits. Both are idempotent (per run, per `executionId`), so a retried
+  or replayed callback cannot charge twice; anyone holding `INTERNAL_SECRET`
+  could charge any user, which is why the secret never leaves the services.
+- **Chat spends tokens** — there is no free-account message allowance any more
+  (`CHAT_FREE_MESSAGES_PER_DAY` is gone): a chat turn or action needs a positive
+  token balance and is charged its real cost. The assistant's 30 / min limit
+  and the api's global limiter stay as abuse guards.
 
 ---
 

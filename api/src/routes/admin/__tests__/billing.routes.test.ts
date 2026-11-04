@@ -3,7 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { ObjectId } from 'mongodb';
 
 import { config } from '../../../config.js';
-import { addMonthsUtc } from '../../../services/billing/minutes.js';
+import { addMonthsUtc } from '../../../services/billing/tokens.js';
 import { TEST_ADMIN_USER_ID } from '../../../test/helpers.js';
 import { getTestDb } from '../../../test/setup.js';
 import { BASE, useBillingRoutesApp } from './billing-routes.harness.js';
@@ -21,12 +21,12 @@ const GRANT_ID = new ObjectId().toHexString();
 
 const MUTATIONS: MutationRoute[] = [
   { name: 'plan', method: 'POST', permission: 'plan:set', path: (u) => `/accounts/${u}/plan`, body: { planId: 'pro', reason: 'comp' } },
-  { name: 'credits', method: 'POST', permission: 'billing:grant', path: (u) => `/accounts/${u}/credits`, body: { minutes: 30, reason: 'comp' } },
+  { name: 'credits', method: 'POST', permission: 'billing:grant', path: (u) => `/accounts/${u}/credits`, body: { tokens: 30, reason: 'comp' } },
   { name: 'caps', method: 'POST', permission: 'caps:set', path: (u) => `/accounts/${u}/caps`, body: { blocked: true, reason: 'abuse' } },
-  { name: 'adjust', method: 'POST', permission: 'billing:grant', path: (u) => `/accounts/${u}/adjust`, body: { bucket: 'credit', minutes: 5, reason: 'fix' } },
+  { name: 'adjust', method: 'POST', permission: 'billing:grant', path: (u) => `/accounts/${u}/adjust`, body: { bucket: 'credit', tokens: 5, reason: 'fix' } },
   {
     name: 'recurring-grants (create)', method: 'POST', permission: 'billing:grant',
-    path: (u) => `/accounts/${u}/recurring-grants`, body: { minutes: 300, every: 'month', active: true, reason: 'demo' },
+    path: (u) => `/accounts/${u}/recurring-grants`, body: { tokens: 10_000, every: 'month', active: true, reason: 'demo' },
   },
   {
     name: 'recurring-grants (delete)', method: 'DELETE', permission: 'billing:grant',
@@ -134,16 +134,17 @@ describe('admin billing routes', () => {
       expect(res.statusCode).toBe(403);
     });
 
-    it('should return the account, lots, holds, ledger and recurring grants', async () => {
-      await post(`/accounts/${userId}/credits`, { minutes: 40, reason: 'comp' });
+    it('should return the account in tokens, its lots, holds, ledger and recurring grants', async () => {
+      await post(`/accounts/${userId}/credits`, { tokens: 40, reason: 'comp' });
 
       const res = await send('GET', `/accounts/${userId}`);
 
       expect(res.statusCode).toBe(200);
       const detail = res.json();
-      expect(detail.account.credits.available).toBe(40);
-      expect(detail.lots).toHaveLength(1);
-      expect(detail.ledger[0]).toMatchObject({ type: 'grant', bucket: 'credit', minutes: 40, reason: 'comp' });
+      // The signup grant (1,000) and the admin's 40.
+      expect(detail.account).toMatchObject({ credits: { available: 1040 }, debt: 0, balance: 1040 });
+      expect(detail.lots.map((lot: { tokensGranted: number }) => lot.tokensGranted)).toEqual([40, 1000]);
+      expect(detail.ledger[0]).toMatchObject({ type: 'grant', bucket: 'credit', unit: 'tokens', amount: 40, reason: 'comp' });
       expect(detail.recurringGrants).toEqual([]);
     });
 
@@ -158,8 +159,8 @@ describe('admin billing routes', () => {
     });
 
     it('should page the ledger', async () => {
-      await post(`/accounts/${userId}/credits`, { minutes: 10, reason: 'one' });
-      await post(`/accounts/${userId}/credits`, { minutes: 20, reason: 'two' });
+      await post(`/accounts/${userId}/credits`, { tokens: 10, reason: 'one' });
+      await post(`/accounts/${userId}/credits`, { tokens: 20, reason: 'two' });
 
       const res = await send('GET', `/accounts/${userId}?ledgerLimit=1`);
 
@@ -180,14 +181,15 @@ describe('admin billing routes', () => {
   });
 
   describe('POST /accounts/:userId/plan', () => {
-    it('should start a manual Pro plan with 600 minutes for the term\'s first cycle', async () => {
+    it('should start a manual Pro plan with 20,000 tokens for the term\'s first cycle', async () => {
       const res = await post(`/accounts/${userId}/plan`, { planId: 'pro', reason: 'comp' });
 
       expect(res.statusCode).toBe(200);
       const { before, after } = res.json();
       expect(before.plan.id).toBe('free');
       expect(after.plan).toMatchObject({ id: 'pro', status: 'active', source: 'manual' });
-      expect(after.planMinutes).toMatchObject({ granted: 600, used: 0, remaining: 600 });
+      expect(after.planTokens).toMatchObject({ granted: 20_000, used: 0, remaining: 20_000 });
+      expect(after.balance).toBe(21_000);
     });
 
     it('should set a 12-month term unless the admin gives an end date', async () => {
@@ -205,12 +207,12 @@ describe('admin billing routes', () => {
       expect(res.json().after.plan.periodEnd).toBe(periodEnd);
     });
 
-    it('should stop plan minutes when set back to free', async () => {
+    it('should stop plan tokens when set back to free', async () => {
       await post(`/accounts/${userId}/plan`, { planId: 'pro', reason: 'comp' });
 
       const res = await post(`/accounts/${userId}/plan`, { planId: 'free', reason: 'ended' });
 
-      expect(res.json().after).toMatchObject({ plan: { id: 'free' }, planMinutes: { remaining: 0 } });
+      expect(res.json().after).toMatchObject({ plan: { id: 'free' }, planTokens: { remaining: 0 }, balance: 1000 });
     });
 
     it('should reject a periodEnd in the past with 400', async () => {
@@ -237,7 +239,7 @@ describe('admin billing routes', () => {
         targetId: userId,
         reason: 'comp for outage',
         before: { plan: { id: 'free' } },
-        after: { plan: { id: 'pro' }, planMinutes: { granted: 600 } },
+        after: { plan: { id: 'pro' }, planTokens: { granted: 20_000 } },
       });
     });
 
@@ -245,50 +247,53 @@ describe('admin billing routes', () => {
       const res = await post(`/accounts/${userId}/plan`, { planId: 'pro', reason: 'comp' });
 
       const entries = await ledgerFor(res.json().auditId);
-      expect(entries).toEqual([expect.objectContaining({ type: 'grant', bucket: 'plan', minutes: 600, actorId: TEST_ADMIN_USER_ID, reason: 'comp' })]);
+      expect(entries).toEqual([
+        expect.objectContaining({ type: 'grant', bucket: 'plan', unit: 'tokens', tokens: 20_000, actorId: TEST_ADMIN_USER_ID, reason: 'comp' }),
+      ]);
     });
   });
 
   describe('POST /accounts/:userId/credits', () => {
     it('should create a credit lot and return its id', async () => {
-      const res = await post(`/accounts/${userId}/credits`, { minutes: 150, reason: 'goodwill' });
+      const res = await post(`/accounts/${userId}/credits`, { tokens: 5000, reason: 'goodwill' });
 
       expect(res.statusCode).toBe(200);
       const { lotId, after } = res.json();
-      expect(after.credits.available).toBe(150);
-      expect(await getTestDb().collection('creditLots').findOne({ _id: new ObjectId(lotId) })).toMatchObject({ minutesGranted: 150, expiresAt: null });
+      expect(after.credits.available).toBe(6000);
+      expect(await getTestDb().collection('creditLots').findOne({ _id: new ObjectId(lotId) }))
+        .toMatchObject({ tokensGranted: 5000, tokensRemaining: 5000, expiresAt: null });
     });
 
     it('should keep an optional expiry', async () => {
       const expiresAt = addMonthsUtc(new Date(), 6).toISOString();
 
-      const res = await post(`/accounts/${userId}/credits`, { minutes: 60, expiresAt, reason: 'promo' });
+      const res = await post(`/accounts/${userId}/credits`, { tokens: 60, expiresAt, reason: 'promo' });
 
       const lot = await getTestDb().collection('creditLots').findOne({ _id: new ObjectId(res.json().lotId) });
       expect(lot?.expiresAt).toEqual(new Date(expiresAt));
     });
 
     it('should reject an expiry in the past with 400', async () => {
-      const res = await post(`/accounts/${userId}/credits`, { minutes: 60, expiresAt: '2020-01-01T00:00:00Z', reason: 'x' });
+      const res = await post(`/accounts/${userId}/credits`, { tokens: 60, expiresAt: '2020-01-01T00:00:00Z', reason: 'x' });
 
       expect(res.statusCode).toBe(400);
     });
 
-    it.each([0, -5, 1.5, 100_001])('should reject %s minutes with 400', async (minutes) => {
-      const res = await post(`/accounts/${userId}/credits`, { minutes, reason: 'x' });
+    it.each([0, -5, 1.5, 1_000_001])('should reject %s tokens with 400', async (tokens) => {
+      const res = await post(`/accounts/${userId}/credits`, { tokens, reason: 'x' });
 
       expect(res.statusCode).toBe(400);
     });
 
     it('should write an audit row naming the lot', async () => {
-      const res = await post(`/accounts/${userId}/credits`, { minutes: 30, reason: 'comp' });
+      const res = await post(`/accounts/${userId}/credits`, { tokens: 30, reason: 'comp' });
 
       const [row] = await auditRows();
       expect(row).toMatchObject({
         action: 'billing.credits.grant',
         actorId: TEST_ADMIN_USER_ID,
         targetId: userId,
-        after: { lotId: res.json().lotId, minutes: 30, credits: { available: 30 } },
+        after: { lotId: res.json().lotId, tokens: 30, credits: { available: 1030 } },
       });
     });
   });
@@ -323,49 +328,61 @@ describe('admin billing routes', () => {
   });
 
   describe('POST /accounts/:userId/adjust', () => {
-    it('should add credit minutes as a new lot', async () => {
-      const res = await post(`/accounts/${userId}/adjust`, { bucket: 'credit', minutes: 25, reason: 'correction' });
+    it('should add credit tokens as a new lot', async () => {
+      const res = await post(`/accounts/${userId}/adjust`, { bucket: 'credit', tokens: 25, reason: 'correction' });
 
-      expect(res.json().after.credits.available).toBe(25);
+      expect(res.json().after.credits.available).toBe(1025);
     });
 
-    it('should take credit minutes back', async () => {
-      await post(`/accounts/${userId}/credits`, { minutes: 50, reason: 'comp' });
+    it('should take credit tokens back', async () => {
+      await post(`/accounts/${userId}/credits`, { tokens: 50, reason: 'comp' });
 
-      const res = await post(`/accounts/${userId}/adjust`, { bucket: 'credit', minutes: -20, reason: 'clawback' });
+      const res = await post(`/accounts/${userId}/adjust`, { bucket: 'credit', tokens: -20, reason: 'clawback' });
 
-      expect(res.json().after.credits.available).toBe(30);
+      expect(res.json().after.credits.available).toBe(1030);
     });
 
     it('should refuse an adjustment that would go below zero', async () => {
-      const res = await post(`/accounts/${userId}/adjust`, { bucket: 'credit', minutes: -5, reason: 'x' });
+      const res = await post(`/accounts/${userId}/adjust`, { bucket: 'credit', tokens: -1001, reason: 'x' });
 
       expect(res.statusCode).toBe(400);
     });
 
-    it('should reject 0 minutes', async () => {
-      const res = await post(`/accounts/${userId}/adjust`, { bucket: 'credit', minutes: 0, reason: 'x' });
+    it('should refuse a plan adjustment on an account without a plan cycle', async () => {
+      const res = await post(`/accounts/${userId}/adjust`, { bucket: 'plan', tokens: 100, reason: 'x' });
 
       expect(res.statusCode).toBe(400);
     });
 
-    it('should audit the adjustment with its bucket and minutes', async () => {
-      await post(`/accounts/${userId}/adjust`, { bucket: 'credit', minutes: 25, reason: 'correction' });
+    it('should reject 0 tokens', async () => {
+      const res = await post(`/accounts/${userId}/adjust`, { bucket: 'credit', tokens: 0, reason: 'x' });
+
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('should reject the minutes field of the old ledger', async () => {
+      const res = await post(`/accounts/${userId}/adjust`, { bucket: 'credit', minutes: 25, reason: 'x' });
+
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('should audit the adjustment with its bucket and tokens', async () => {
+      await post(`/accounts/${userId}/adjust`, { bucket: 'credit', tokens: 25, reason: 'correction' });
 
       const [row] = await auditRows();
-      expect(row).toMatchObject({ action: 'billing.adjust', after: { bucket: 'credit', minutes: 25 } });
+      expect(row).toMatchObject({ action: 'billing.adjust', after: { bucket: 'credit', tokens: 25 } });
     });
   });
 
   describe('recurring grants', () => {
-    const create = () => post(`/accounts/${userId}/recurring-grants`, { minutes: 300, every: 'month', active: true, reason: 'demo budget' });
+    const create = () => post(`/accounts/${userId}/recurring-grants`, { tokens: 10_000, every: 'month', active: true, reason: 'demo budget' });
 
     it('should create the grant row with the next run time', async () => {
       const res = await create();
 
       expect(res.statusCode).toBe(200);
       const row = await getTestDb().collection('recurringGrants').findOne({ _id: new ObjectId(res.json().grantId) });
-      expect(row).toMatchObject({ minutes: 300, every: 'month', active: true, lastRunAt: null, actorId: TEST_ADMIN_USER_ID });
+      expect(row).toMatchObject({ tokens: 10_000, every: 'month', active: true, lastRunAt: null, actorId: TEST_ADMIN_USER_ID });
       expect(row?.nextRunAt).toBeInstanceOf(Date);
     });
 
@@ -374,11 +391,11 @@ describe('admin billing routes', () => {
 
       const res = await send('GET', `/accounts/${userId}`);
 
-      expect(res.json().recurringGrants).toEqual([expect.objectContaining({ grantId, minutes: 300 })]);
+      expect(res.json().recurringGrants).toEqual([expect.objectContaining({ grantId, tokens: 10_000 })]);
     });
 
     it('should reject a period other than month', async () => {
-      const res = await post(`/accounts/${userId}/recurring-grants`, { minutes: 300, every: 'week', active: true, reason: 'x' });
+      const res = await post(`/accounts/${userId}/recurring-grants`, { tokens: 10_000, every: 'week', active: true, reason: 'x' });
 
       expect(res.statusCode).toBe(400);
     });
@@ -389,7 +406,7 @@ describe('admin billing routes', () => {
       const [row] = await auditRows();
       expect(row).toMatchObject({
         action: 'billing.recurring.create',
-        after: { grantId, grant: { minutes: 300, every: 'month', active: true } },
+        after: { grantId, grant: { tokens: 10_000, every: 'month', active: true } },
       });
     });
 

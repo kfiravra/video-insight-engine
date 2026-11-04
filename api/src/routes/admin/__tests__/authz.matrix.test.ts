@@ -258,7 +258,7 @@ describe('admin authorization matrix', () => {
     it('should answer 401 when the body is changed after signing, on every mutation', async () => {
       const swapped = (route: AdminRoute) => ({
         headers: signedAdmin(route).headers,
-        payload: JSON.stringify({ minutes: 99999, reason: 'swapped' }),
+        payload: JSON.stringify({ tokens: 99999, reason: 'swapped' }),
       });
 
       expect(await violations(swapped, (status) => status === 401, isMutation)).toEqual([]);
@@ -267,7 +267,7 @@ describe('admin authorization matrix', () => {
     it('should answer 401 when a body is added to a request signed without one', async () => {
       const added = (route: AdminRoute) => ({
         headers: { ...adminActorRequest(route.method, route.url).headers, 'content-type': 'application/json' },
-        payload: JSON.stringify({ minutes: 99999 }),
+        payload: JSON.stringify({ tokens: 99999 }),
       });
 
       expect(await violations(added, (status) => status === 401, isMutation)).toEqual([]);
@@ -299,7 +299,7 @@ describe('admin authorization matrix', () => {
     it.each(OBFUSCATED_ADMIN_PREFIXES)('should never authorise a body on a mutation sent to %s with an empty-body signature', async (prefix) => {
       const smuggled = (route: AdminRoute) => {
         const url = spelled(route, prefix);
-        return { url, headers: emptyBodyHeaders(route.method, url), payload: JSON.stringify({ minutes: 99999 }) };
+        return { url, headers: emptyBodyHeaders(route.method, url), payload: JSON.stringify({ tokens: 99999 }) };
       };
 
       const failures = await violations(smuggled, (status) => status === 401 || status === 404, isMutation);
@@ -328,7 +328,7 @@ describe('admin authorization matrix', () => {
         const failures: string[] = [];
         for (const route of routes.filter(isMutation)) {
           const target = `http://127.0.0.1:${port}${route.url}`;
-          const body = JSON.stringify({ minutes: 99999 });
+          const body = JSON.stringify({ tokens: 99999 });
 
           const status = await rawStatus(port, `${route.method} ${target} HTTP/1.1`, emptyBodyHeaders(route.method, target), body);
 

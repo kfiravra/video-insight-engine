@@ -51,6 +51,8 @@ export interface ExecutionCharge {
   userId: ObjectId;
   tokens: number;
   costUsd: number;
+  /** Why the debit was written outside the usage callback (`backfill`: the repair job). */
+  reason?: string;
 }
 
 interface HoldSlice {
@@ -243,9 +245,9 @@ function returnSlice(draft: AccountDraft, hold: BillingHoldDocument, slice: Hold
 
 /** Charge a chat turn / library chat / action its real cost: plan, then lots FIFO, then debt. */
 export function applyExecutionCharge(draft: AccountDraft, charge: ExecutionCharge): ChargeSplit {
-  const { executionId, kind, requestId, userId, tokens, costUsd } = charge;
+  const { executionId, kind, requestId, userId, tokens, costUsd, reason } = charge;
   const split = chargeSplit(tokens, spendableState(draft));
-  const fields = { source: { kind: 'run' as const, ref: requestId }, userId, executionKind: kind, executionId };
+  const fields = { source: { kind: 'run' as const, ref: requestId }, userId, executionKind: kind, executionId, ...(reason && { reason }) };
   applyChargeSplit(draft, split, `debit:exec:${executionId}`, fields, costUsd);
   return split;
 }

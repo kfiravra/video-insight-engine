@@ -38,11 +38,14 @@ import { AlertConfigService } from './services/alert-config.service.js';
 import { AdminSeedService } from './services/admin-seed.service.js';
 import { BillingService } from './services/billing/billing.service.js';
 import { BillingGate } from './services/billing/billing-gate.js';
+import { VideoEstimateService } from './services/video-estimate.service.js';
 import { BillingRepairService } from './services/billing/billing-repair.service.js';
 import { LedgerEnforcement } from './services/billing/ledger-enforcement.js';
 import { RedisRepairLock, singleProcessRepairLock } from './services/billing/repair-lock.js';
 import {
+  ESTIMATE_LIMIT_PER_HOUR,
   SubmitBurstLimiter,
+  estimateBurstKey,
   noOpSubmitBurstLimiter,
   type ISubmitBurstLimiter,
 } from './services/billing/burst-limit.js';
@@ -74,6 +77,9 @@ export interface Container {
   idempotencyService: IdempotencyService;
   dispatchGuardService: IDispatchGuard;
   submitBurstLimiter: ISubmitBurstLimiter;
+  /** GET /api/videos/estimate's own hourly bucket (60/h), apart from the submit bucket. */
+  estimateBurstLimiter: ISubmitBurstLimiter;
+  videoEstimateService: VideoEstimateService;
   userDeletionService: UserDeletionService;
   videoCascadeService: VideoCascadeService;
   auditService: AuditService;
@@ -82,7 +88,7 @@ export interface Container {
   adminSeedService: AdminSeedService;
   billingService: BillingService;
   billingRepairService: BillingRepairService;
-  /** The minutes ledger: decides every submit (video, playlist item, assistant generate). */
+  /** The token ledger: decides every submit (video, playlist item, assistant generate) and settles each run on its real cost. */
   billingEnforcement: LedgerEnforcement;
 }
 
@@ -141,6 +147,9 @@ export function createContainer(
   const submitBurstLimiter: ISubmitBurstLimiter = options.redisClient
     ? new SubmitBurstLimiter(options.redisClient, config.SUBMIT_BURST_LIMIT_PER_HOUR, logger)
     : noOpSubmitBurstLimiter;
+  const estimateBurstLimiter: ISubmitBurstLimiter = options.redisClient
+    ? new SubmitBurstLimiter(options.redisClient, ESTIMATE_LIMIT_PER_HOUR, logger, { key: estimateBurstKey, what: 'estimates' })
+    : noOpSubmitBurstLimiter;
   const authService = new AuthService(userRepository, logger);
   const videoService = new VideoService(
     videoRepository,
@@ -155,6 +164,7 @@ export function createContainer(
   const billingService = new BillingService(billingRepository, userRepository, logger);
   const llmUsageRepository = new LlmUsageRepository(db);
   const billingGate = new BillingGate(billingService, summarizerClient);
+  const videoEstimateService = new VideoEstimateService(videoRepository, idempotencyService, userRepository, billingGate);
   // The token ledger is the only gate (P3.2): no per-user dollar cap anywhere.
   const billingEnforcement = new LedgerEnforcement({
     billing: billingService, gate: billingGate, llmUsage: llmUsageRepository, dispatchStamps: videoRepository, logger,
@@ -228,6 +238,8 @@ export function createContainer(
     idempotencyService,
     dispatchGuardService,
     submitBurstLimiter,
+    estimateBurstLimiter,
+    videoEstimateService,
     userDeletionService,
     videoCascadeService,
     auditService,

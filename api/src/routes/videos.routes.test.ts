@@ -128,17 +128,17 @@ describe('videos routes', () => {
   });
 
   describe('GET /api/videos/:id', () => {
-    it('should return a single video', async () => {
+    it('should return a single video with what the user\'s run of it holds or cost', async () => {
       const mockVideo = {
-        video: {
-          id: 'v1',
-          youtubeId: 'abc123',
-          title: 'Test Video',
-          status: 'completed',
-        },
-        summary: { sections: [] },
+        id: 'v1',
+        videoSummaryId: '507f191e810c19729de860ea',
+        youtubeId: 'abc123',
+        title: 'Test Video',
+        status: 'completed',
       };
+      const billing = { state: 'charged', estimatedTokens: 840, chargedTokens: 750 };
       mockContainer.videoService.getVideo.mockResolvedValue(mockVideo);
+      mockContainer.billingEnforcement.videoBilling.mockResolvedValueOnce(billing);
 
       const response = await app.inject({
         method: 'GET',
@@ -151,7 +151,8 @@ describe('videos routes', () => {
         'test-user-id',
         '507f1f77bcf86cd799439011'
       );
-      expect(response.json()).toEqual(mockVideo);
+      expect(mockContainer.billingEnforcement.videoBilling).toHaveBeenCalledWith('test-user-id', '507f191e810c19729de860ea');
+      expect(response.json()).toEqual({ ...mockVideo, billing });
     });
 
     it('should return 404 when video not found', async () => {
@@ -165,6 +166,87 @@ describe('videos routes', () => {
       });
 
       expect(response.statusCode).toBe(404);
+    });
+  });
+
+  describe('GET /api/videos/estimate', () => {
+    const URL = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+    const estimate = (query = `?url=${encodeURIComponent(URL)}`, headers: Record<string, string> = { authorization: authHeader }) =>
+      app.inject({ method: 'GET', url: `/api/videos/estimate${query}`, headers });
+
+    it('should require a signed-in user', async () => {
+      const response = await estimate(undefined, {});
+
+      expect(response.statusCode).toBe(401);
+      expect(mockContainer.videoEstimateService.estimate).not.toHaveBeenCalled();
+    });
+
+    it('should answer what a submit would hold, for this user', async () => {
+      mockContainer.videoEstimateService.estimate.mockResolvedValueOnce({ youtubeId: 'dQw4w9WgXcQ', durationSec: 600, tokens: 840, free: false });
+
+      const response = await estimate();
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({ youtubeId: 'dQw4w9WgXcQ', durationSec: 600, tokens: 840, free: false });
+      expect(mockContainer.videoEstimateService.estimate).toHaveBeenCalledWith('test-user-id', URL);
+    });
+
+    it('should answer 0 tokens for a video served free', async () => {
+      mockContainer.videoEstimateService.estimate.mockResolvedValueOnce({ youtubeId: 'dQw4w9WgXcQ', durationSec: 212, tokens: 0, free: true });
+
+      expect((await estimate()).json()).toMatchObject({ tokens: 0, free: true });
+    });
+
+    it('should count against its own hourly bucket, never the submit bucket', async () => {
+      await estimate();
+
+      expect(mockContainer.estimateBurstLimiter.consume).toHaveBeenCalledWith('test-user-id');
+      expect(mockContainer.submitBurstLimiter.consume).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['no url', ''],
+      ['a url that is not a URL', '?url=not-a-url'],
+    ])('should answer 400 for %s, without counting it', async (_label, query) => {
+      const response = await estimate(query);
+
+      expect([response.statusCode, response.json().error]).toEqual([400, 'VALIDATION_ERROR']);
+      expect(mockContainer.estimateBurstLimiter.consume).not.toHaveBeenCalled();
+    });
+
+    it('should answer 400 INVALID_YOUTUBE_URL for a link that is not a YouTube video', async () => {
+      const { InvalidYouTubeUrlError } = await import('../utils/errors.js');
+      mockContainer.videoEstimateService.estimate.mockRejectedValueOnce(new InvalidYouTubeUrlError());
+
+      const response = await estimate(`?url=${encodeURIComponent('https://example.com/video')}`);
+
+      expect([response.statusCode, response.json().error]).toEqual([400, 'INVALID_YOUTUBE_URL']);
+    });
+
+    it.each([
+      ['not_found', 404],
+      ['timeout', 503],
+      ['upstream', 503],
+      ['unsupported', 422],
+    ] as const)('should map METADATA_UNAVAILABLE (%s) as the submit does: %i', async (reason, status) => {
+      const { MetadataUnavailableError } = await import('../utils/errors.js');
+      mockContainer.videoEstimateService.estimate.mockRejectedValueOnce(new MetadataUnavailableError(reason));
+
+      const response = await estimate();
+
+      expect([response.statusCode, response.json().error]).toEqual([status, 'METADATA_UNAVAILABLE']);
+    });
+
+    it('should answer 429 RATE_LIMITED once the estimate bucket is spent, before looking anything up', async () => {
+      const { RateLimitedError } = await import('../utils/errors.js');
+      mockContainer.estimateBurstLimiter.consume.mockRejectedValueOnce(
+        new RateLimitedError('Too many estimates in the last hour. Try again in 12 min.', 700),
+      );
+
+      const response = await estimate();
+
+      expect([response.statusCode, response.json().error, response.json().retryAfterSec]).toEqual([429, 'RATE_LIMITED', 700]);
+      expect(mockContainer.videoEstimateService.estimate).not.toHaveBeenCalled();
     });
   });
 
@@ -282,9 +364,9 @@ describe('videos routes', () => {
       expect(response.statusCode).toBe(400);
     });
 
-    it('should answer 402 with the minutes when the ledger cannot pay and nothing is cached', async () => {
-      const { InsufficientMinutesError, RunNotAllowedError } = await import('../utils/errors.js');
-      mockContainer.billingEnforcement.admit.mockRejectedValueOnce(new InsufficientMinutesError(10, 0, '2026-05-15T00:00:00.000Z'));
+    it('should answer 402 with the tokens when the ledger cannot pay and nothing is cached', async () => {
+      const { InsufficientTokensError, RunNotAllowedError } = await import('../utils/errors.js');
+      mockContainer.billingEnforcement.admit.mockRejectedValueOnce(new InsufficientTokensError(840, 160));
       mockContainer.videoService.createVideo.mockRejectedValueOnce(new RunNotAllowedError());
 
       const response = await app.inject({
@@ -300,7 +382,9 @@ describe('videos routes', () => {
       });
 
       expect(response.statusCode).toBe(402);
-      expect(response.json()).toMatchObject({ error: 'INSUFFICIENT_MINUTES', needed: 10, available: 0, nextFreeAt: '2026-05-15T00:00:00.000Z' });
+      expect(response.json()).toEqual({
+        error: 'INSUFFICIENT_TOKENS', message: expect.any(String), statusCode: 402, needed: 840, available: 160,
+      });
       expect(mockContainer.videoService.createVideo.mock.calls[0][2]).toMatchObject({ serveOnly: true });
     });
 
@@ -330,8 +414,11 @@ describe('videos routes', () => {
       expect(mockContainer.billingEnforcement.submitResolved).toHaveBeenCalledWith(runId, 'created');
     });
 
-    it('should queue a run paid with plan or credit minutes as paid (P3.4)', async () => {
-      mockContainer.billingEnforcement.admit.mockResolvedValueOnce({ requestId: 'r', minutes: 20, split: { free: 0, plan: 0, credit: 20, lots: [] } });
+    it('should queue a Pro account\'s run as paid (D18)', async () => {
+      mockContainer.billingEnforcement.admit.mockResolvedValueOnce({
+        hold: { requestId: 'r', tokens: 840, split: { plan: 840, credit: 0, lots: [] } },
+        queuePlan: 'paid',
+      });
       mockContainer.videoService.createVideo.mockResolvedValue({ video: { id: 'v1', status: 'pending' }, cached: false });
 
       await app.inject({

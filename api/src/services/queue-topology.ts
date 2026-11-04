@@ -9,7 +9,7 @@
 
 import { z } from 'zod';
 import { PLANS } from '@vie/types';
-import type { BucketSplit } from '@vie/types';
+import type { PlanId } from '@vie/types';
 
 export const QUEUE_TOPOLOGY = {
   exchange: 'vie.pipeline',
@@ -20,7 +20,7 @@ export const QUEUE_TOPOLOGY = {
   dlqRoutingKey: 'video.process.dead',
 } as const;
 
-/** Within the server-side x-max-priority cap. A run paid with plan or credit minutes jumps ahead of a free one. */
+/** Within the server-side x-max-priority cap. A Pro account's run jumps ahead of a free account's. */
 export const PRIORITY_FREE = PLANS.free.queuePriority;
 export const PRIORITY_PAID = PLANS.pro.queuePriority;
 export const MAX_PRIORITY = 10;
@@ -38,10 +38,10 @@ export const queueArguments = {
 const providerSchema = z.enum(['anthropic', 'openai', 'gemini']);
 
 /**
- * What pays for the run, as the queue sees it (billing-roles P3.4): `paid`
- * when its minutes hold takes plan or credit minutes, `free` for the free
- * video (or a run that took no hold). Not the account's plan: a Pro account's
- * free video queues as `free`, a free account's credit minutes as `paid`.
+ * The queue plan of a run (billing-tokens D18): `paid` for a Pro account,
+ * `free` otherwise, and for a run that took no hold (serve-only). The wire
+ * values are unchanged since billing-roles P3.4, so the worker's topology and
+ * payload schema stay byte-identical.
  */
 export const QUEUE_PLANS = ['free', 'paid'] as const;
 export type QueuePlan = (typeof QUEUE_PLANS)[number];
@@ -77,9 +77,9 @@ export const videoJobPayloadSchema = z.object({
 
 export type VideoJobPayload = z.infer<typeof videoJobPayloadSchema>;
 
-/** The queue plan of a run from its hold's split: any plan or credit minutes make it `paid`. */
-export function queuePlanOf(split: Pick<BucketSplit, 'plan' | 'credit'>): QueuePlan {
-  return split.plan > 0 || split.credit > 0 ? 'paid' : 'free';
+/** The queue plan of a run from the account's plan: Pro accounts' runs queue as `paid`. */
+export function queuePlanFor(planId: PlanId): QueuePlan {
+  return planId === 'pro' ? 'paid' : 'free';
 }
 
 /** Pick priority by queue plan — keep this in one place so all publish sites agree. */

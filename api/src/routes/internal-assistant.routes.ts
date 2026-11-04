@@ -49,7 +49,7 @@ export async function internalAssistantRoutes(fastify: FastifyInstance): Promise
     submitBurstLimiter,
   } = fastify.container;
   // Same submission flow as POST /api/videos — the assistant must not be able
-  // to bypass the minutes ledger, the idempotency gate, or the hold unwind.
+  // to bypass the token ledger, the idempotency gate, or the hold unwind.
   const videoSubmissionService = new VideoSubmissionService(
     videoService,
     idempotencyService,

@@ -68,12 +68,17 @@ export interface MockContainer {
   };
   billingService: {
     summary: ReturnType<typeof vi.fn>;
+    ensureAccount: ReturnType<typeof vi.fn>;
+    admitExecution: ReturnType<typeof vi.fn>;
+    debitExecution: ReturnType<typeof vi.fn>;
   };
   billingEnforcement: {
     admit: ReturnType<typeof vi.fn>;
     submitResolved: ReturnType<typeof vi.fn>;
     submitFailed: ReturnType<typeof vi.fn>;
     runFinished: ReturnType<typeof vi.fn>;
+    runCosted: ReturnType<typeof vi.fn>;
+    videoBilling: ReturnType<typeof vi.fn>;
     planPlaylist: ReturnType<typeof vi.fn>;
     refuseIfBlocked: ReturnType<typeof vi.fn>;
   };
@@ -105,6 +110,12 @@ export interface MockContainer {
   };
   submitBurstLimiter: {
     consume: ReturnType<typeof vi.fn>;
+  };
+  estimateBurstLimiter: {
+    consume: ReturnType<typeof vi.fn>;
+  };
+  videoEstimateService: {
+    estimate: ReturnType<typeof vi.fn>;
   };
   idempotencyRepository: {
     findByHash: ReturnType<typeof vi.fn>;
@@ -222,19 +233,28 @@ export function createMockContainer(): MockContainer {
     ogImageService: {
       getOgImage: vi.fn(),
     },
-    // Route tests never touch the real ledger: every account is on free and
-    // every submit is admitted with a free-video hold. Ledger behaviour on the
-    // wire is billing-enforce.routes.test.ts, over a real LedgerEnforcement.
+    // Route tests never touch the real ledger: every account has tokens, every
+    // submit is admitted with an estimate hold and every chat turn is let
+    // through. Ledger behaviour on the wire is billing-enforce.routes.test.ts,
+    // over a real LedgerEnforcement.
     billingService: {
-      summary: vi.fn().mockResolvedValue({ plan: { id: 'free', periodEnd: null } }),
+      summary: vi.fn().mockResolvedValue({ plan: { id: 'free', periodEnd: null }, balance: 1000, debt: 0, blocked: false }),
+      ensureAccount: vi.fn().mockResolvedValue(undefined),
+      admitExecution: vi.fn().mockResolvedValue(1000),
+      debitExecution: vi.fn().mockImplementation(async ({ executionId }: { executionId: string }) => ({ executionId, status: 'debited', tokens: 1 })),
     },
     billingEnforcement: {
-      admit: vi.fn().mockResolvedValue({ requestId: 'test-run', minutes: 1, split: { free: 1, plan: 0, credit: 0, lots: [] } }),
+      admit: vi.fn().mockResolvedValue({
+        hold: { requestId: 'test-run', tokens: 750, split: { plan: 0, credit: 750, lots: [] } },
+        queuePlan: 'free',
+      }),
       submitResolved: vi.fn().mockResolvedValue(undefined),
       submitFailed: vi.fn().mockResolvedValue(undefined),
       runFinished: vi.fn().mockResolvedValue(undefined),
+      runCosted: vi.fn().mockResolvedValue('debited'),
+      videoBilling: vi.fn().mockResolvedValue({ state: 'free', estimatedTokens: 0, chargedTokens: 0 }),
       planPlaylist: vi.fn().mockImplementation(async (_userId: string, items: Array<{ durationSec: number | null }>) => ({
-        quote: { neededMinutes: 0, availableMinutes: 0, freeVideoAvailable: true, nextFreeAt: null, decisions: [] },
+        quote: { neededTokens: 0, availableTokens: 1000, decisions: [] },
         durationsSec: items.map((item) => item.durationSec),
       })),
       // Default: not blocked, so an idempotency replay is answered.
@@ -281,6 +301,12 @@ export function createMockContainer(): MockContainer {
     // Default: under the limit. Burst-limit route tests make `consume` reject.
     submitBurstLimiter: {
       consume: vi.fn().mockResolvedValue(undefined),
+    },
+    estimateBurstLimiter: {
+      consume: vi.fn().mockResolvedValue(undefined),
+    },
+    videoEstimateService: {
+      estimate: vi.fn().mockResolvedValue({ youtubeId: 'dQw4w9WgXcQ', durationSec: 300, tokens: 750, free: false }),
     },
     idempotencyRepository: {
       findByHash: vi.fn().mockResolvedValue(null),

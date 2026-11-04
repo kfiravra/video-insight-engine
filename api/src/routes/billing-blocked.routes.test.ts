@@ -3,8 +3,9 @@
  * a blocked account submits nothing of any kind — a video already in its
  * library, an idempotency replay, an update, a re-run, a playlist, the
  * assistant's generate — and is answered 403 ACCOUNT_BLOCKED without
- * createVideo running. Its library stays readable: the lists, the video, the
- * folders and a completed video's stream never consult the ledger.
+ * createVideo running. Its library stays readable: the lists, the folders and
+ * a completed video's stream never consult the ledger, and the video detail
+ * only reads what its run held or cost. (Chat turns and actions: chat-tokens.routes.test.ts.)
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { FastifyInstance } from 'fastify';
@@ -40,6 +41,8 @@ describe('a blocked account (D-BLOCK) — HTTP', () => {
     submitResolved: (id: string, o: never) => ledger().submitResolved(id, o),
     submitFailed: (id: string) => ledger().submitFailed(id),
     runFinished: (id: string, s: 'completed' | 'failed') => ledger().runFinished(id, s),
+    runCosted: (id: string, runId: string | null, costUsd: number) => ledger().runCosted(id, runId, costUsd),
+    videoBilling: (user: string, id: string) => ledger().videoBilling(user, id),
     planPlaylist: (user: string, items: PlaylistItemToPrice[]) => ledger().planPlaylist(user, items),
     refuseIfBlocked: (user: string) => ledger().refuseIfBlocked(user),
   } as unknown as LedgerEnforcement;
@@ -161,10 +164,12 @@ describe('a blocked account (D-BLOCK) — HTTP', () => {
       expect((await get('/api/videos')).statusCode).toBe(200);
     });
 
-    it('should open a video (GET /api/videos/:id)', async () => {
-      mockContainer.videoService.getVideo.mockResolvedValueOnce({ id: 'v1', status: 'completed' });
+    it('should open a video (GET /api/videos/:id), with what its run cost', async () => {
+      mockContainer.videoService.getVideo.mockResolvedValueOnce({ id: 'v1', videoSummaryId: new ObjectId().toHexString(), status: 'completed' });
 
-      expect((await get(`/api/videos/${new ObjectId().toHexString()}`)).statusCode).toBe(200);
+      const response = await get(`/api/videos/${new ObjectId().toHexString()}`);
+
+      expect([response.statusCode, response.json().billing?.state]).toEqual([200, 'free']);
     });
 
     it('should list the folders (GET /api/folders)', async () => {

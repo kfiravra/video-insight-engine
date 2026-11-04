@@ -20,7 +20,7 @@ export interface PublishVideoJobInput {
   youtubeId: string;
   url: string;
   userId: string | null;
-  /** What pays for the run (queue-topology.ts `queuePlanOf`); sets the message priority. */
+  /** The account's queue plan (queue-topology.ts `queuePlanFor`: Pro → `paid`); sets the message priority. */
   plan: QueuePlan;
   providers?: ProviderConfig;
   bypassCache?: boolean;
