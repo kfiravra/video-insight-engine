@@ -21,12 +21,23 @@ export function useVideos(folderId?: string, options?: { enabled?: boolean }) {
   });
 }
 
+// A finished run's cost settles a moment after its stream ends (the summarizer's
+// run-cost report), so a completed video can still read "held". Poll until it
+// settles; the cap counts every fetch of the query, so it never polls for long.
+export const SETTLE_POLL_MS = 5_000;
+export const SETTLE_POLL_LIMIT = 12;
+
 // Fetch single video
 export function useVideo(id: string) {
   return useQuery({
     queryKey: queryKeys.videos.detail(id),
     queryFn: () => videosApi.get(id),
     enabled: !!id,
+    refetchInterval: (query) => {
+      const video = query.state.data;
+      const settling = video?.status === "completed" && video.billing?.state === "held";
+      return settling && query.state.dataUpdateCount < SETTLE_POLL_LIMIT ? SETTLE_POLL_MS : false;
+    },
   });
 }
 

@@ -1,6 +1,7 @@
 import { Info } from "lucide-react";
 import { useBillingText } from "@/hooks/use-billing-text";
 import { cn } from "@/lib/utils";
+import { TeamContactLink } from "./TeamContactLink";
 
 interface PaymentsPlaceholderNoticeProps {
   /** Referenced by the button that opened it (`aria-controls`). */
@@ -8,7 +9,7 @@ interface PaymentsPlaceholderNoticeProps {
   className?: string;
 }
 
-/** What "Go Pro" and "Buy tokens" open until checkout exists: tokens come from the team for now. */
+/** What "Go Pro" and "Buy tokens" open until checkout exists: tokens come from the team for now, with its contact link when one is configured. */
 export function PaymentsPlaceholderNotice({ id, className }: PaymentsPlaceholderNoticeProps) {
   const { labels } = useBillingText();
 
@@ -22,7 +23,9 @@ export function PaymentsPlaceholderNotice({ id, className }: PaymentsPlaceholder
       )}
     >
       <Info className="mt-px h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-      <span>{labels.paymentsPlaceholder}</span>
+      <span>
+        {labels.paymentsPlaceholder} <TeamContactLink />
+      </span>
     </p>
   );
 }

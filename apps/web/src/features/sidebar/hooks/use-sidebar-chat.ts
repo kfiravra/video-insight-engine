@@ -45,6 +45,11 @@ const MUTATING_ACTIONS = new Set([
   "organize_library",
 ]);
 
+// The assistant reports a turn's cost in the background once the reply has
+// ended, so the balance read on `done` can predate the debit; read it again
+// after this long.
+export const CHAT_USAGE_SETTLE_MS = 3_000;
+
 const RATE_LIMITED_MESSAGE = "Too many messages. Please wait a moment and try again.";
 const CONNECT_FAILED_MESSAGE = "Failed to connect to assistant. Please try again.";
 
@@ -132,6 +137,7 @@ export function useSidebarChat(options: UseSidebarChatOptions = {}) {
   // Tracks whether the current turn triggered a library-mutating agent action,
   // so we refetch the folder/video trees once at the end (not per tool call).
   const didMutateRef = useRef(false);
+  const usageRecheckRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Reset on mount, clean up on unmount. Re-setting `true` here is essential:
   // React 19 StrictMode (dev) does mount → unmount → remount, and the cleanup
@@ -143,8 +149,20 @@ export function useSidebarChat(options: UseSidebarChatOptions = {}) {
     return () => {
       mountedRef.current = false;
       abortControllerRef.current?.abort();
+      if (usageRecheckRef.current) clearTimeout(usageRecheckRef.current);
     };
   }, []);
+
+  // Every turn is charged after its reply (and a generate_video holds a run's
+  // estimate): re-read the balance now and once more after the charge lands.
+  const refreshBalance = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: usageQueryKey });
+    if (usageRecheckRef.current) clearTimeout(usageRecheckRef.current);
+    usageRecheckRef.current = setTimeout(() => {
+      usageRecheckRef.current = null;
+      if (mountedRef.current) queryClient.invalidateQueries({ queryKey: usageQueryKey });
+    }, CHAT_USAGE_SETTLE_MS);
+  }, [queryClient]);
 
   // Stream a regular RAG chat turn (single-video or library mode). When
   // `confirmToken` is set, the request also redeems a pending server-side
@@ -294,11 +312,11 @@ export function useSidebarChat(options: UseSidebarChatOptions = {}) {
               queryClient.invalidateQueries({
                 queryKey: queryKeys.videos.lists(),
               });
+              // A generated video is in the library now: its cached "≈ N tokens" is stale.
+              queryClient.invalidateQueries({ queryKey: queryKeys.videoEstimates.all });
               didMutateRef.current = false;
             }
-            // Every turn is charged after its reply (and a generate_video holds
-            // a run's estimate), so the balance moves after each one.
-            queryClient.invalidateQueries({ queryKey: usageQueryKey });
+            refreshBalance();
             break;
         }
       };
@@ -334,7 +352,7 @@ export function useSidebarChat(options: UseSidebarChatOptions = {}) {
         if (failure.billing) queryClient.invalidateQueries({ queryKey: usageQueryKey });
       });
     },
-    [videoSummaryId, setMessages, setStatus, setPendingConfirmation, queryClient, billingText],
+    [videoSummaryId, setMessages, setStatus, setPendingConfirmation, queryClient, billingText, refreshBalance],
   );
 
   // Every message — single-video or library — now goes through the streaming

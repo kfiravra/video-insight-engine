@@ -15,12 +15,15 @@ ARG VITE_ENABLE_DEV_LOGIN=false
 # Sentry — empty DSN = SDK not initialized (see src/main.tsx)
 ARG VITE_SENTRY_DSN=
 ARG VITE_SENTRY_RELEASE=
+# Contact address on the billing page's "tokens are added by the team" notes; empty = no link
+ARG VITE_SUPPORT_EMAIL=
 
 ENV VITE_API_URL=$VITE_API_URL \
     VITE_WS_URL=$VITE_WS_URL \
     VITE_ENABLE_DEV_LOGIN=$VITE_ENABLE_DEV_LOGIN \
     VITE_SENTRY_DSN=$VITE_SENTRY_DSN \
-    VITE_SENTRY_RELEASE=$VITE_SENTRY_RELEASE
+    VITE_SENTRY_RELEASE=$VITE_SENTRY_RELEASE \
+    VITE_SUPPORT_EMAIL=$VITE_SUPPORT_EMAIL
 
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
 COPY packages/shared ./packages/shared

@@ -6,7 +6,8 @@ import type { ReactNode } from 'react';
 import { server } from '@/test/mocks/server';
 import { setAccessToken } from '@/api/client';
 import { EstimateHint } from '../EstimateHint';
-import { renderIn } from './usage-fixtures';
+import { debtSummary, renderIn, usageSummary } from './usage-fixtures';
+import type { UsageSummary } from '@vie/types';
 
 const API_URL = 'http://localhost:3000/api';
 const URL_A = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
@@ -19,6 +20,10 @@ function renderHint(url: string | null) {
     <QueryClientProvider client={client}>{children}</QueryClientProvider>
   );
   return render(<EstimateHint url={url} />, { wrapper });
+}
+
+function usage(summary: UsageSummary): void {
+  server.use(http.get(`${API_URL}/users/me/usage`, () => HttpResponse.json(summary)));
 }
 
 function estimates(tokensFor: (url: string) => number): { urls: string[] } {
@@ -39,11 +44,61 @@ describe('EstimateHint', () => {
   });
 
   it('should show "≈ N tokens" for a URL once it settles', async () => {
+    estimates(() => 840);
+
+    renderIn(<EstimateHint url={URL_A} />);
+
+    const hint = await screen.findByTestId('estimate-hint');
+    expect(hint).toHaveTextContent('≈ 840 tokens');
+    expect(hint).not.toHaveAttribute('data-short');
+  });
+
+  it('should group the digits of a large estimate', async () => {
     estimates(() => 1_020);
+    usage(usageSummary({ balance: 5_000 }));
 
     renderIn(<EstimateHint url={URL_A} />);
 
     expect(await screen.findByTestId('estimate-hint')).toHaveTextContent('≈ 1,020 tokens');
+  });
+
+  it('should say what the video needs and what is left when the balance cannot cover it', async () => {
+    estimates(() => 1_020);
+    usage(usageSummary({ balance: 300 }));
+
+    renderIn(<EstimateHint url={URL_A} />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId('estimate-hint')).toHaveTextContent('This video needs ≈ 1,020 tokens and you have 300 tokens.'),
+    );
+    expect(screen.getByTestId('estimate-hint')).toHaveAttribute('data-short', 'true');
+  });
+
+  it('should lead with the debt when the account owes tokens, whatever the estimate', async () => {
+    estimates(() => 40);
+    usage(debtSummary(120));
+
+    renderIn(<EstimateHint url={URL_A} />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId('estimate-hint')).toHaveTextContent("You're 120 tokens short — add tokens to continue."),
+    );
+    expect(screen.getByTestId('estimate-hint')).toHaveAttribute('data-short', 'true');
+  });
+
+  it('should never call a free video short, even in debt', async () => {
+    server.use(
+      http.get(`${API_URL}/videos/estimate`, () =>
+        HttpResponse.json({ youtubeId: 'x', durationSec: 600, tokens: 0, free: true }),
+      ),
+    );
+    usage(debtSummary(120));
+
+    renderIn(<EstimateHint url={URL_A} />);
+
+    const hint = await screen.findByTestId('estimate-hint');
+    expect(hint).toHaveTextContent('Already summarized — free');
+    expect(hint).not.toHaveAttribute('data-short');
   });
 
   it('should name the line for screen readers without a price', async () => {

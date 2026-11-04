@@ -583,6 +583,8 @@ services:
         VITE_ENABLE_DEV_LOGIN: "false"
         VITE_SENTRY_DSN: ${VITE_SENTRY_DSN:-}
         VITE_SENTRY_RELEASE: ${VITE_SENTRY_RELEASE:-}
+        # Billing page contact link (mailto); empty = no link
+        VITE_SUPPORT_EMAIL: ${VITE_SUPPORT_EMAIL:-}
     image: vie-web:prod
     container_name: vie-web
     restart: always

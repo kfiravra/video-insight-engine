@@ -115,8 +115,12 @@ export async function videosRoutes(fastify: FastifyInstance) {
   }, async (req) => {
     const { id } = idParamSchema.parse(req.params);
     const video = await videoService.getVideo(req.user.userId, id);
-    const billing = await billingEnforcement.videoBilling(req.user.userId, video.videoSummaryId);
-    return offerUnlessDemo(req, { ...video, billing });
+    // Non-blocking: a ledger read failure leaves `billing` out, never the video.
+    const billing = await billingEnforcement.videoBilling(req.user.userId, video.videoSummaryId).catch((err: unknown) => {
+      req.log.warn({ err, videoSummaryId: video.videoSummaryId }, 'video_billing_read_failed');
+      return undefined;
+    });
+    return offerUnlessDemo(req, billing ? { ...video, billing } : video);
   });
 
   // POST /api/videos — no per-route daily limit: the token ledger decides

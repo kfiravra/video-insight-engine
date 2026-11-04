@@ -64,6 +64,8 @@ export interface TokenMigrationResult {
   accountsConverted: number;
   accountsCreated: number;
   signupGrants: number;
+  /** Tokens repaid on accounts that came in owing (vie-api charged them before the migration ran). */
+  debtRepaid: number;
   recurringGrantsConverted: number;
   /** Accounts whose projection does not equal their ledger after the run (should be none). */
   drift: Array<{ accountId: string; fields: string[] }>;
@@ -294,21 +296,24 @@ export async function migrateBillingTokens(db: Db, options: TokenMigrateOptions)
   const constants = constantsOf(api);
   const plan = await buildTokenPlan(db, constants, now);
   const result: TokenMigrationResult = {
-    plan, accountsConverted: 0, accountsCreated: 0, signupGrants: 0, recurringGrantsConverted: 0, drift: [],
+    plan, accountsConverted: 0, accountsCreated: 0, signupGrants: 0, debtRepaid: 0, recurringGrantsConverted: 0, drift: [],
   };
   if (dryRun) return result;
   const openHolds = plan.accounts.reduce((sum, account) => sum + account.openMinuteHolds.length, 0);
   if (openHolds > 0) throw new OpenMinuteHoldsError(openHolds);
 
+  const billing = billingService(db, api, now);
   for (const account of plan.accounts) {
     if (account.done) continue;
     const converted = await convertAccount(db, account.accountId, constants, now);
     if (converted && !converted.done) {
       result.accountsConverted++;
       if (converted.signupGrant) result.signupGrants++;
+      // The converted lots and the signup grant are inflows: like any inflow
+      // they repay debt first (D7), through vie-api's own repay.
+      result.debtRepaid += await billing.repayDebtNow(account.accountId, convertKey(account.accountId, 'account'));
     }
   }
-  const billing = billingService(db, api, now);
   for (const { userId } of plan.newAccounts) {
     await billing.ensureAccount(userId);
     result.accountsCreated++;
@@ -368,7 +373,7 @@ export function formatReport(result: TokenMigrationResult, dryRun: boolean): str
   lines.push(`billingShadow rows dropped: ${plan.shadowRows}; minute lot indexes dropped: ${plan.minuteIndexes.join(', ') || 'none'}`);
   if (!dryRun) {
     lines.push(
-      `Converted ${result.accountsConverted} account(s), created ${result.accountsCreated}, wrote ${result.signupGrants} signup grant(s), converted ${result.recurringGrantsConverted} recurring grant(s).`,
+      `Converted ${result.accountsConverted} account(s), created ${result.accountsCreated}, wrote ${result.signupGrants} signup grant(s), repaid ${result.debtRepaid} owed token(s), converted ${result.recurringGrantsConverted} recurring grant(s).`,
     );
     lines.push(result.drift.length === 0 ? 'Drift check: every account equals its ledger.' : `DRIFT: ${JSON.stringify(result.drift)}`);
   }

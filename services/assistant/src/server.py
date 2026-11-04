@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hmac
+from typing import Any
 from uuid import uuid4
 
 from fastapi import FastAPI, Header, HTTPException, Request
@@ -49,80 +50,47 @@ configure_structlog(json_format=settings.LOG_FORMAT == "json")
 logger = get_logger(__name__)
 
 
+def _action_response(
+    action: str, trace_id: str, status_code: int, *, data: Any = None, error: str | None = None
+) -> JSONResponse:
+    """The `/action` envelope: success with `data`, or a failure with its message."""
+    content = ActionResponse(
+        success=error is None, action=action, data=data, error=error, trace_id=trace_id
+    ).model_dump()
+    return JSONResponse(status_code=status_code, content=content)
+
+
 async def _run_action(
     service: AssistantService, request: ActionRequest, user_id: str | None
 ) -> JSONResponse:
     """Dispatch one action inside its trace and map its outcome to the response."""
     trace_id = uuid4().hex[:12]
+    action = request.action
     async with chat_trace(
         video_id=request.video_id,
         user_id=user_id,
-        tags=["action", f"action:{request.action}"],
-        metadata={"action": request.action, "traceId": trace_id},
+        tags=["action", f"action:{action}"],
+        metadata={"action": action, "traceId": trace_id},
     ):
-        async with span(f"action:{request.action}"):
+        async with span(f"action:{action}"):
             try:
                 result = await service.dispatch_action(
-                    action=request.action,
+                    action=action,
                     video_id=request.video_id,
                     params=dict(request.params),
                     user_id=user_id,
                 )
             except ValidationError as exc:
                 logger.warning(
-                    "action_validation_failed",
-                    trace_id=trace_id,
-                    action=request.action,
-                    error=exc.message,
+                    "action_validation_failed", trace_id=trace_id, action=action, error=exc.message
                 )
-                return JSONResponse(
-                    status_code=exc.status_code,
-                    content=ActionResponse(
-                        success=False,
-                        action=request.action,
-                        data=None,
-                        error=exc.message,
-                        trace_id=trace_id,
-                    ).model_dump(),
-                )
+                return _action_response(action, trace_id, exc.status_code, error=exc.message)
             except NotFoundError as exc:
-                return JSONResponse(
-                    status_code=exc.status_code,
-                    content=ActionResponse(
-                        success=False,
-                        action=request.action,
-                        data=None,
-                        error=exc.message,
-                        trace_id=trace_id,
-                    ).model_dump(),
-                )
+                return _action_response(action, trace_id, exc.status_code, error=exc.message)
             except AppError as exc:
-                logger.exception(
-                    "action_app_error",
-                    trace_id=trace_id,
-                    action=request.action,
-                )
-                return JSONResponse(
-                    status_code=exc.status_code,
-                    content=ActionResponse(
-                        success=False,
-                        action=request.action,
-                        data=None,
-                        error=exc.message,
-                        trace_id=trace_id,
-                    ).model_dump(),
-                )
-
-            return JSONResponse(
-                status_code=200,
-                content=ActionResponse(
-                    success=True,
-                    action=request.action,
-                    data=result,
-                    error=None,
-                    trace_id=trace_id,
-                ).model_dump(),
-            )
+                logger.exception("action_app_error", trace_id=trace_id, action=action)
+                return _action_response(action, trace_id, exc.status_code, error=exc.message)
+            return _action_response(action, trace_id, 200, data=result)
 
 
 def create_app() -> FastAPI:

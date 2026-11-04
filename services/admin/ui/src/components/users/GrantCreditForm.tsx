@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { api, describeApiError } from '../../lib/api';
+import { formatTokens } from '../../lib/billing';
 import { MAX_ADMIN_TOKENS, MAX_REASON_LENGTH } from '../../lib/billing-forms';
 import { buildGrantRequest, type GrantFormValues } from '../../lib/grant-credit';
 import { useAttemptKey } from '../../hooks/use-attempt-key';
@@ -41,7 +42,7 @@ function useGrantCredit(userId: string) {
     },
     onSuccess: (request) => {
       reset();
-      setMessage({ kind: 'ok', text: `Granted ${request.tokens} tokens.` });
+      setMessage({ kind: 'ok', text: `Granted ${formatTokens(request.tokens)}.` });
       setValues(EMPTY_VALUES);
     },
     onError: (e: unknown) => setMessage({ kind: 'err', text: describeApiError(e) }),

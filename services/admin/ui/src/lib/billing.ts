@@ -126,7 +126,7 @@ export interface BillingRecurringGrant {
 }
 
 export interface BillingAccountDetail {
-  /** null = the user has no billing account yet (vie-api creates it on the first video). */
+  /** null = the user has no billing account yet (vie-api creates it at registration, or on an older user's first billing read). */
   account: BillingAccountSnapshot | null;
   lots: BillingCreditLot[];
   holds: BillingHold[];
@@ -144,22 +144,30 @@ export interface BillingAccountQuery {
 
 // --- Helpers ---
 
-/** "1,250 tokens". */
+/** "+" for a gain, a typographic minus for a loss, nothing for zero. */
+function signOf(amount: number): string {
+  if (amount > 0) return '+';
+  return amount < 0 ? '\u2212' : '';
+}
+
+function tokenNoun(tokens: number): string {
+  return Math.abs(tokens) === 1 ? 'token' : 'tokens';
+}
+
+/** "1,250 tokens", "1 token". */
 export function formatTokens(tokens: number): string {
-  return `${formatNumber(tokens)} ${Math.abs(tokens) === 1 ? 'token' : 'tokens'}`;
+  return `${formatNumber(tokens)} ${tokenNoun(tokens)}`;
 }
 
 /** "+1,500 tokens" / "−1,200 tokens": the sign is what tells a grant from a spend. */
 export function formatSignedTokens(tokens: number): string {
-  const sign = tokens > 0 ? '+' : tokens < 0 ? '\u2212' : '';
-  return `${sign}${formatNumber(Math.abs(tokens))} ${Math.abs(tokens) === 1 ? 'token' : 'tokens'}`;
+  return `${signOf(tokens)}${formatNumber(Math.abs(tokens))} ${tokenNoun(tokens)}`;
 }
 
 /** A ledger amount in its own unit: tokens, or minutes on history rows from before the migration. */
 export function formatSignedAmount(amount: number, unit: BillingLedgerUnit): string {
   if (unit === 'tokens') return formatSignedTokens(amount);
-  const sign = amount > 0 ? '+' : amount < 0 ? '\u2212' : '';
-  return `${sign}${formatNumber(Math.abs(amount))} min`;
+  return `${signOf(amount)}${formatNumber(Math.abs(amount))} min`;
 }
 
 /** The balance, with debt spelled out: "−120 tokens (owes 120)". */

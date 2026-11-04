@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { billingActions } from '../../lib/billing-actions';
+import { formatSignedTokens } from '../../lib/billing';
 import { buildAdjustRequest, MAX_ADMIN_TOKENS } from '../../lib/billing-forms';
+import { formatNumber } from '../../lib/format';
 import { ActionDialog, DialogField } from './ActionDialog';
 import { INPUT_CLASS } from './dialog-styles';
 
@@ -23,9 +25,7 @@ export function AdjustDialog({ userId, onClose, onDone }: AdjustDialogProps) {
       userId={userId}
       buildRequest={(reason) => buildAdjustRequest({ bucket, tokens, reason })}
       send={(request, key) => billingActions.adjust(userId, request, key)}
-      successMessage={(request) =>
-        `Adjusted ${request.bucket} tokens by ${request.tokens > 0 ? '+' : ''}${request.tokens}.`
-      }
+      successMessage={(request) => `Adjusted ${request.bucket} tokens by ${formatSignedTokens(request.tokens)}.`}
       onClose={onClose}
       onDone={onDone}
     >
@@ -41,7 +41,7 @@ export function AdjustDialog({ userId, onClose, onDone }: AdjustDialogProps) {
           <option value="plan">Plan</option>
         </select>
       </DialogField>
-      <DialogField label="Tokens (signed)" hint={`Whole tokens, not 0, at most ${MAX_ADMIN_TOKENS} either way. A positive adjustment repays debt first.`}>
+      <DialogField label="Tokens (signed)" hint={`Whole tokens, not 0, at most ${formatNumber(MAX_ADMIN_TOKENS)} either way. A positive adjustment repays debt first.`}>
         <input
           type="number"
           step="1"

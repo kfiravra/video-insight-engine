@@ -1,5 +1,6 @@
 import type { GrantCreditRequest } from './api';
 import { MAX_ADMIN_TOKENS, MAX_REASON_LENGTH } from './billing-forms';
+import { formatNumber } from './format';
 
 export interface GrantFormValues {
   tokens: string;
@@ -13,7 +14,7 @@ export function buildGrantRequest(values: GrantFormValues, now: Date = new Date(
   const tokens = Number(values.tokens);
   if (!Number.isInteger(tokens) || values.tokens.trim() === '') throw new Error('Enter a whole number of tokens');
   if (tokens < 1 || tokens > MAX_ADMIN_TOKENS) {
-    throw new Error(`Tokens must be between 1 and ${MAX_ADMIN_TOKENS}`);
+    throw new Error(`Tokens must be between 1 and ${formatNumber(MAX_ADMIN_TOKENS)}`);
   }
   const reason = values.reason.trim();
   if (!reason) throw new Error('Reason is required');

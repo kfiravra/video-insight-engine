@@ -46,6 +46,7 @@ const PRO = proSummary(
 describe('BillingPage', () => {
   afterEach(() => {
     usageSpy?.mockRestore();
+    vi.unstubAllEnvs();
   });
 
   describe('states', () => {
@@ -249,6 +250,27 @@ describe('BillingPage', () => {
       renderIn(<BillingPage />);
 
       expect(screen.getByTestId('billing-team-note')).toHaveTextContent('Tokens are added by the team for now.');
+    });
+
+    it('should offer the team contact link under the note when a support address is configured', () => {
+      vi.stubEnv('VITE_SUPPORT_EMAIL', 'support@vie.ad');
+      mockUsage(usageSummary());
+
+      renderIn(<BillingPage />);
+
+      const contact = within(screen.getByTestId('billing-team-note')).getByRole('link', {
+        name: 'Email the team: support@vie.ad',
+      });
+      expect(contact.getAttribute('href')).toMatch(/^mailto:support@vie\.ad\?subject=/);
+    });
+
+    it('should show the note without a link when no support address is configured', () => {
+      vi.stubEnv('VITE_SUPPORT_EMAIL', '');
+      mockUsage(usageSummary());
+
+      renderIn(<BillingPage />);
+
+      expect(within(screen.getByTestId('billing-team-note')).queryByRole('link')).toBeNull();
     });
 
     it('should print a dollar sign only on the Pro and pack cards', () => {

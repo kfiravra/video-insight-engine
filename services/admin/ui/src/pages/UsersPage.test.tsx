@@ -287,7 +287,7 @@ describe('User-360 drawer tabs', () => {
     fireEvent.submit(form);
 
     await waitFor(() => {
-      expect(screen.getByText('Tokens must be between 1 and 1000000')).toBeTruthy();
+      expect(screen.getByText('Tokens must be between 1 and 1,000,000')).toBeTruthy();
     });
     expect(mockGrantCredit).not.toHaveBeenCalled();
   });

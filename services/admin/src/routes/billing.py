@@ -62,9 +62,9 @@ async def get_billing_account(
 ) -> BillingAccountDetail:
     """A user's token account: plan, buckets, debt, caps, holds, lots, grants, ledger page.
 
-    ``account`` is null for a user with no billing row yet (vie-api creates it on
-    the first video). Page the ledger by passing the previous page's
-    ``ledgerNextBefore`` as ``before``.
+    ``account`` is null for a user with no billing row yet (vie-api creates it at
+    registration, or on the user's first billing read for an older user). Page the
+    ledger by passing the previous page's ``ledgerNextBefore`` as ``before``.
     """
     user_oid = _parse_user_id(user_id)
     cursor = _parse_before(before)

@@ -1,21 +1,14 @@
 import { InvalidYouTubeUrlError } from '../utils/errors.js';
 import { extractYoutubeId } from '../utils/youtube.js';
 import { estimateTokens } from './billing/tokens.js';
+import type { VideoEstimateResponse } from '@vie/types';
 import type { BillingGate } from './billing/billing-gate.js';
 import type { IdempotencyService } from './idempotency.service.js';
 import type { EvalUserReader } from './video.service.js';
 import type { VideoRepository } from '../repositories/video.repository.js';
 
-/** What a submit of `url` would hold before it runs (GET /api/videos/estimate). */
-export interface VideoEstimate {
-  youtubeId: string;
-  /** Seconds; 0 when the video is free and its length is not on record. */
-  durationSec: number;
-  /** The estimate a submit would hold; 0 when it is served free. */
-  tokens: number;
-  /** Already in the user's library, or completed for everyone: a submit runs nothing. */
-  free: boolean;
-}
+/** What a submit of `url` would hold before it runs (the shared GET /api/videos/estimate shape). */
+export type VideoEstimate = VideoEstimateResponse;
 
 /**
  * The "≈ N tokens" hint before a submit. Informational: the submit decides

@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import type {
   BillingCreditLot,
+  BillingExecutionKind,
   BillingHold,
   BillingLedgerEntry,
   BillingRecurringGrant,
@@ -207,13 +208,43 @@ function amountColor(amount: number): string {
   return amount < 0 ? 'var(--color-warning)' : 'var(--color-text-muted)';
 }
 
+const EXECUTION_KIND_LABELS: Record<BillingExecutionKind, string> = {
+  video: 'video',
+  chat: 'chat',
+  library_chat: 'library chat',
+  action: 'action',
+};
+
+/**
+ * What a row's type alone does not say: a debit that mirrors a hold moves no
+ * balance (the hold already took it), and a chat/action debit names its kind.
+ */
+function ledgerTag(entry: BillingLedgerEntry): { text: string; title?: string } | null {
+  if (entry.mirrorsHold) {
+    return { text: 'mirrors hold', title: 'Records what the hold paid for; the balance moved when the hold was taken' };
+  }
+  if (entry.executionKind) return { text: EXECUTION_KIND_LABELS[entry.executionKind] ?? entry.executionKind };
+  return null;
+}
+
 function LedgerRow({ entry }: { entry: BillingLedgerEntry }) {
+  const tag = ledgerTag(entry);
   return (
     <tr className={ROW} data-testid={`ledger-row-${entry.id}`}>
       <td className="p-2 text-[10px] whitespace-nowrap">{formatDateTime(entry.createdAt)}</td>
-      <td className="p-2">{entry.type}</td>
+      <td className="p-2">
+        {entry.type}
+        {tag && (
+          <div className="text-[9px] text-[var(--color-text-faint)]" title={tag.title} data-testid="ledger-tag">
+            {tag.text}
+          </div>
+        )}
+      </td>
       <td className="p-2">{entry.bucket}</td>
-      <td className="p-2 text-right font-mono font-medium" style={{ color: amountColor(entry.amount) }}>
+      <td
+        className="p-2 text-right font-mono font-medium"
+        style={{ color: entry.mirrorsHold ? 'var(--color-text-muted)' : amountColor(entry.amount) }}
+      >
         {formatSignedAmount(entry.amount, entry.unit)}
       </td>
       <td className="p-2 min-w-0">

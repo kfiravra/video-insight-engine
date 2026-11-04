@@ -15,7 +15,8 @@ import type { UserDeletionService } from '../user-deletion.service.js';
 //   2. expire lots past their expiry (`expire` entries)
 //   3. apply due recurring grants (a lot that expires at the next run)
 //   4. debit assistant requests whose usage callback never arrived (their
-//      llm_usage rows of the last 24 h, quiet for 10 min, with no ledger entry)
+//      llm_usage rows of the last 24 h, quiet for 10 min, with no ledger entry,
+//      made after the account entered the token ledger)
 //   5. rebuild changed accounts' projections from the ledger; drift → warn + llm_alerts
 //   6. drop llm_usage.user_id, request_id and prompt_preview on rows older than 90 days (docs/PRIVACY.md)
 //   7. the GDPR hard-delete sweep (docs/PRIVACY.md's 30-day promise)
@@ -157,8 +158,9 @@ export class BillingRepairService {
     const quietBefore = new Date(now.getTime() - BACKFILL_QUIET_MS);
     const requests = await this.deps.llmUsage.listAssistantRequestCosts(since, quietBefore, BATCH);
     await this.eachItem(requests, 'unsettled_assistant_executions', async (request) => {
-      const { userId, requestId, costUsd, feature } = request;
-      const debited = await this.deps.billing.backfillExecution({ userId, requestId, costUsd, kind: executionKindOf(feature) });
+      const { userId, requestId, costUsd, feature, lastAt } = request;
+      const kind = executionKindOf(feature);
+      const debited = await this.deps.billing.backfillExecution({ userId, requestId, costUsd, kind, lastAt });
       if (debited) report.executionsBackfilled++;
     });
   }

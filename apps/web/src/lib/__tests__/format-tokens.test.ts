@@ -65,6 +65,24 @@ describe('formatPlural', () => {
     ]);
   });
 
+  // The he/ar number formats put a left-to-right mark before the minus, so the
+  // expected text is built with formatNumber rather than typed.
+  it.each([
+    ['he', -1],
+    ['he', -2],
+    ['he', -120],
+    ['ar', -1],
+    ['ar', -2],
+  ])('should keep the sign of a %s balance in debt (%i), in the form that carries the number', (language, count) => {
+    const forms = getLabels(language).billing.tokens;
+
+    expect(formatPlural(count, language, forms)).toBe(forms.other.replace('{count}', formatNumber(count, language)));
+  });
+
+  it('should keep the singular for an English -1', () => {
+    expect(formatPlural(-1, 'en', getLabels('en').billing.tokens)).toBe('-1 token');
+  });
+
   it('should fall back to the other form when a category has no form', () => {
     expect(formatPlural(2, 'he', { other: '{count} x' })).toBe('2 x');
   });

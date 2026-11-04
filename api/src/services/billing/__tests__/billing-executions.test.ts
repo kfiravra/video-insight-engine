@@ -8,7 +8,7 @@ import { UserRepository } from '../../../repositories/user.repository.js';
 import { AccountBlockedError, InsufficientTokensError, ValidationError } from '../../../utils/errors.js';
 import { BillingService } from '../billing.service.js';
 import { adminCtx, DAY_MS, insertUser, makeClock } from './billing-fixtures.js';
-import type { ExecutionCost } from '../billing.service.js';
+import type { BackfillRequest, ExecutionCost } from '../billing.service.js';
 import type { TestClock } from './billing-fixtures.js';
 
 const YOUTUBE_ID = 'dQw4w9WgXcQ';
@@ -23,6 +23,9 @@ describe('BillingService executions, debt and plan cycles (real Mongo replica se
     service.hold(requestId, await service.quote(userId, YOUTUBE_ID, minutes * 60));
   const chat = (overrides: Partial<ExecutionCost> = {}): ExecutionCost => ({
     userId, executionId: 'ex-1', kind: 'chat', requestId: 'req-chat-1', costUsd: 0.01, ...overrides,
+  });
+  const backfill = (overrides: Partial<BackfillRequest> = {}): BackfillRequest => ({
+    userId, requestId: 'req-chat-1', kind: 'chat', costUsd: 0.04, lastAt: clock.now(), ...overrides,
   });
   const ledger = (filter: Record<string, unknown> = {}) => db().collection('ledgerEntries').find(filter).toArray();
   const ledgerCount = () => db().collection('ledgerEntries').countDocuments();
@@ -95,7 +98,8 @@ describe('BillingService executions, debt and plan cycles (real Mongo replica se
     });
 
     it('should not charge a late callback for a turn the repair job already backfilled', async () => {
-      expect(await service.backfillExecution({ userId, requestId: 'req-chat-1', kind: 'chat', costUsd: 0.04 })).toBe(true);
+      await service.summary(userId);
+      expect(await service.backfillExecution(backfill())).toBe(true);
 
       const late = await service.debitExecution(chat({ costUsd: 0.04 }));
 
@@ -154,6 +158,58 @@ describe('BillingService executions, debt and plan cycles (real Mongo replica se
       ['a negative cost', { costUsd: -1 }],
     ])('should reject %s', async (_label, overrides) => {
       await expect(service.debitExecution(chat(overrides))).rejects.toBeInstanceOf(ValidationError);
+    });
+  });
+
+  describe('backfillExecution (the repair job, for a callback that never came)', () => {
+    it('should debit a token-era request once, under the request id', async () => {
+      await service.summary(userId);
+
+      expect(await service.backfillExecution(backfill())).toBe(true);
+      expect(await service.backfillExecution(backfill())).toBe(false);
+
+      const debits = await ledger({ type: 'debit' });
+      expect(debits.map((e) => [e.executionId, e.tokens])).toEqual([['req:req-chat-1', -120]]);
+      await expectConsistent();
+    });
+
+    it('should not backfill a request whose callback already landed', async () => {
+      await service.debitExecution(chat({ costUsd: 0.04 }));
+
+      expect(await service.backfillExecution(backfill())).toBe(false);
+      expect(await ledger({ type: 'debit' })).toHaveLength(1);
+    });
+
+    it('should leave a chat from before the account entered the token ledger free', async () => {
+      await service.summary(userId);
+
+      const before = new Date(clock.now().getTime() - 60_000);
+      expect(await service.backfillExecution(backfill({ lastAt: before }))).toBe(false);
+      expect(await ledger({ type: 'debit' })).toHaveLength(0);
+    });
+
+    it('should not backfill an account with no signup grant date (a minute account the migration has not reached)', async () => {
+      await service.summary(userId);
+      await db().collection('billingAccounts').updateOne({ ownerId: new ObjectId(userId) }, { $unset: { signupGrantAt: '' } });
+
+      expect(await service.backfillExecution(backfill())).toBe(false);
+      expect(await ledger({ type: 'debit' })).toHaveLength(0);
+    });
+
+    it('should neither backfill nor create an account for a user who has none', async () => {
+      expect(await service.backfillExecution(backfill())).toBe(false);
+      expect(await db().collection('billingAccounts').countDocuments()).toBe(0);
+    });
+  });
+
+  describe('repayDebtNow', () => {
+    it('should write nothing and return 0 when nothing is owed', async () => {
+      await service.summary(userId);
+      const account = await db().collection('billingAccounts').findOne({ ownerId: new ObjectId(userId) });
+      const entries = await ledgerCount();
+
+      expect(await service.repayDebtNow(account!._id, 'convert:x:account')).toBe(0);
+      expect(await ledgerCount()).toBe(entries);
     });
   });
 

@@ -393,6 +393,27 @@ describe('AccountTab', () => {
       expect(screen.getByTestId(`ledger-row-${convert.id}`).textContent).toContain('convert');
     });
 
+    it('should mark a debit that mirrors a hold, and name the kind of an execution debit', async () => {
+      const hold = entry({ id: 'a'.repeat(24), type: 'hold', bucket: 'plan', amount: -840 });
+      const mirror = entry({ id: 'b'.repeat(24), type: 'debit', bucket: 'plan', amount: -758, mirrorsHold: true });
+      const chat = entry({
+        id: 'd'.repeat(24),
+        type: 'debit',
+        bucket: 'credit',
+        amount: -3,
+        executionKind: 'library_chat',
+        executionId: 'x1',
+      });
+      mockAccount.mockResolvedValue(detail({ ledger: [hold, mirror, chat] }));
+      renderTab();
+
+      const mirrorRow = await screen.findByTestId(`ledger-row-${mirror.id}`);
+
+      expect(within(mirrorRow).getByTestId('ledger-tag').textContent).toBe('mirrors hold');
+      expect(within(screen.getByTestId(`ledger-row-${chat.id}`)).getByTestId('ledger-tag').textContent).toBe('library chat');
+      expect(within(screen.getByTestId(`ledger-row-${hold.id}`)).queryByTestId('ledger-tag')).toBeNull();
+    });
+
     it('should show an empty message when the ledger has no entries', async () => {
       mockAccount.mockResolvedValue(detail());
       renderTab();
@@ -443,7 +464,7 @@ describe('AccountTab', () => {
       mockAccount.mockResolvedValue(detail({ account: null }));
       renderTab();
 
-      expect(await screen.findByTestId('account-none')).toBeTruthy();
+      expect((await screen.findByTestId('account-none')).textContent).toContain('at registration');
       expect(screen.queryByTestId('account-summary')).toBeNull();
     });
 

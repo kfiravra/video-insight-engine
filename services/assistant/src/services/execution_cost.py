@@ -13,7 +13,8 @@ written as before; this is a separate, in-process total.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
+from contextlib import aclosing
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Literal, Protocol
@@ -127,13 +128,20 @@ def report_in_background(meter: ExecutionCost | None, reporter: UsageReporter | 
 
 
 async def metered_stream(
-    events: AsyncIterator[str],
+    events: AsyncGenerator[str, None],
     meter: ExecutionCost | None,
     reporter: UsageReporter | None,
 ) -> AsyncIterator[str]:
-    """Pass a streamed response through and report its cost once it ends (or is cut off)."""
+    """Pass a streamed response through and report its cost once it ends (or is cut off).
+
+    The wrapped stream is closed before the report goes out, however this one
+    is closed (end, client disconnect, ``aclose()``, garbage collection), so
+    the cost its own cleanup records — a stream the reader left early — is in
+    the total.
+    """
     try:
-        async for event in events:
-            yield event
+        async with aclosing(events) as stream:
+            async for event in stream:
+                yield event
     finally:
         report_in_background(meter, reporter)

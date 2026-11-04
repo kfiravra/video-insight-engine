@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { billingActions } from '../../lib/billing-actions';
-import type { BillingRecurringGrant } from '../../lib/billing';
+import { formatTokens, type BillingRecurringGrant } from '../../lib/billing';
 import { buildDeleteGrantRequest, buildRecurringGrantRequest, MAX_ADMIN_TOKENS } from '../../lib/billing-forms';
+import { formatNumber } from '../../lib/format';
 import { ActionDialog, DialogField } from './ActionDialog';
 import { INPUT_CLASS, SECONDARY_BUTTON_CLASS } from './dialog-styles';
 
@@ -24,11 +25,11 @@ export function RecurringGrantDialog({ userId, onClose, onDone }: RecurringGrant
       userId={userId}
       buildRequest={(reason) => buildRecurringGrantRequest({ tokens, active, reason })}
       send={(request, key) => billingActions.createRecurringGrant(userId, request, key)}
-      successMessage={(request) => `Recurring grant of ${request.tokens} tokens a month added.`}
+      successMessage={(request) => `Recurring grant of ${formatTokens(request.tokens)} a month added.`}
       onClose={onClose}
       onDone={onDone}
     >
-      <DialogField label="Tokens per month" hint={`Whole tokens, 1 to ${MAX_ADMIN_TOKENS}.`}>
+      <DialogField label="Tokens per month" hint={`Whole tokens, 1 to ${formatNumber(MAX_ADMIN_TOKENS)}.`}>
         <input
           type="number"
           step="1"

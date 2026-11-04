@@ -106,6 +106,14 @@ describe('CapsDialog', () => {
     expect(mockSetCaps.mock.calls[0][1]).toEqual({ blocked: null, reason: 'resolved' });
   });
 
+  it('should say that a block stops chats and actions too, not only videos', () => {
+    setup();
+
+    expect(screen.getByTestId('cap-blocked').closest('label')?.textContent).toBe(
+      'Block this account (it cannot start new videos, chats or actions)',
+    );
+  });
+
   it('should reject a cap outside the allowed range before calling the server', async () => {
     setup();
     setField('cap-maxVideoMinutes', '500');

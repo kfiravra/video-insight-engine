@@ -6,6 +6,7 @@ import type {
   SetPlanRequest,
 } from './billing-actions';
 import type { BillingCaps } from './billing';
+import { formatNumber } from './format';
 
 // Form values -> request bodies for the Account actions. Each builder returns
 // the request or throws an Error whose message says what to fix; vie-api checks
@@ -125,7 +126,7 @@ export interface AdjustFormValues {
 export function buildAdjustRequest(values: AdjustFormValues): AdjustRequest {
   const tokens = wholeNumber(values.tokens, 'Tokens');
   if (tokens === 0) throw new Error('Tokens must not be 0');
-  if (Math.abs(tokens) > MAX_ADMIN_TOKENS) throw new Error(`Tokens must be between -${MAX_ADMIN_TOKENS} and ${MAX_ADMIN_TOKENS}`);
+  if (Math.abs(tokens) > MAX_ADMIN_TOKENS) throw new Error(`Tokens must be between \u2212${formatNumber(MAX_ADMIN_TOKENS)} and ${formatNumber(MAX_ADMIN_TOKENS)}`);
   return { bucket: values.bucket, tokens, reason: cleanReason(values.reason) };
 }
 
@@ -139,7 +140,7 @@ export interface RecurringGrantFormValues {
 
 export function buildRecurringGrantRequest(values: RecurringGrantFormValues): CreateRecurringGrantRequest {
   const tokens = wholeNumber(values.tokens, 'Tokens');
-  if (tokens < 1 || tokens > MAX_ADMIN_TOKENS) throw new Error(`Tokens must be between 1 and ${MAX_ADMIN_TOKENS}`);
+  if (tokens < 1 || tokens > MAX_ADMIN_TOKENS) throw new Error(`Tokens must be between 1 and ${formatNumber(MAX_ADMIN_TOKENS)}`);
   return { tokens, every: 'month', active: values.active, reason: cleanReason(values.reason) };
 }
 

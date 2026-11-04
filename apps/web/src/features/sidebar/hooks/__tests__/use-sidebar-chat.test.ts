@@ -3,7 +3,7 @@ import { renderHook, act } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-import { useSidebarChat } from "../use-sidebar-chat";
+import { CHAT_USAGE_SETTLE_MS, useSidebarChat } from "../use-sidebar-chat";
 import { useChatStore } from "@/stores/chat-store";
 import { ApiError } from "@/api/client";
 import { DirectionProvider } from "@/contexts/DirectionContext";
@@ -257,6 +257,52 @@ describe("useSidebarChat", () => {
       const invalidateSpy = runTurn([{ type: "text", content: "Still writing" }]);
 
       expect(usageRefreshes(invalidateSpy)).toBe(0);
+    });
+
+    it("should re-read the usage once more after the background charge has had time to land", () => {
+      vi.useFakeTimers();
+      try {
+        const invalidateSpy = runTurn([{ type: "done" }]);
+        expect(usageRefreshes(invalidateSpy)).toBe(1);
+
+        act(() => {
+          vi.advanceTimersByTime(CHAT_USAGE_SETTLE_MS);
+        });
+
+        expect(usageRefreshes(invalidateSpy)).toBe(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("should drop the delayed re-read once the chat unmounts", () => {
+      vi.useFakeTimers();
+      try {
+        const { queryClient, wrapper } = makeWrapper();
+        const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+        const { result, unmount } = renderHook(() => useSidebarChat(), { wrapper });
+        act(() => {
+          result.current.sendMessage("hi");
+        });
+        const handleEvent = mockedSendLibraryMessage.mock.calls[0][2] as (event: AssistantChatEvent) => void;
+        act(() => handleEvent({ type: "done" }));
+
+        unmount();
+        vi.advanceTimersByTime(CHAT_USAGE_SETTLE_MS);
+
+        expect(usageRefreshes(invalidateSpy)).toBe(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("should clear cached estimates when the agent starts a video", () => {
+      const invalidateSpy = runTurn([
+        { type: "tool", content: "Started", metadata: { status: "done", action: "generate_video" } },
+        { type: "done" },
+      ]);
+
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["video-estimate"] });
     });
   });
 

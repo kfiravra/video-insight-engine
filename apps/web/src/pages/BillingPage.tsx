@@ -4,6 +4,7 @@ import { ArrowLeft, Loader2, TriangleAlert } from "lucide-react";
 import { Layout } from "@/components/layout/Layout";
 import { PackCard } from "@/components/billing/PackCard";
 import { PlanCard } from "@/components/billing/PlanCard";
+import { TeamContactLink } from "@/components/billing/TeamContactLink";
 import { Button } from "@/components/ui/button";
 import { PlanPill } from "@/components/usage/PlanPill";
 import { UsageRows } from "@/components/usage/UsageRows";
@@ -152,7 +153,7 @@ function BillingBody({ summary }: BillingBodyProps) {
         className="rounded-xl border border-dashed border-border bg-muted/30 px-4 py-3 text-sm text-muted-foreground"
         data-testid="billing-team-note"
       >
-        {labels.teamNote}
+        {labels.teamNote} <TeamContactLink />
       </p>
     </div>
   );

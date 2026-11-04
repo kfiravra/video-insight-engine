@@ -111,7 +111,7 @@ describe('RecurringGrantDialog', () => {
 
     submitDialog();
 
-    await waitFor(() => expect(onDone).toHaveBeenCalledWith('Recurring grant of 3000 tokens a month added.'));
+    await waitFor(() => expect(onDone).toHaveBeenCalledWith('Recurring grant of 3,000 tokens a month added.'));
   });
 });
 

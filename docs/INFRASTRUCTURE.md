@@ -456,6 +456,7 @@ The per-stage defaults are the pipeline-1min 4.0d model A/B picks, rounds 1 + 2 
 |-----|---------|---------|
 | `EVAL_USER_EMAIL` / `EVAL_USER_PASSWORD` | `eval@vie.local` / none | Eval-runner local account — auto-registered on first run; no default password by design (also a CI secret) |
 | `VITE_SENTRY_DSN` / `VITE_SENTRY_RELEASE` | empty | Browser Sentry — compose **build args**, baked into the web bundle (rebuild `vie-web` after changing) |
+| `VITE_SUPPORT_EMAIL` | empty | Contact address on the billing page's "tokens are added by the team" notes (`mailto:` link); a compose **build arg** like the Sentry pair. Empty = no link |
 | `QDRANT_URL` (vie-admin) | `http://vie-qdrant:6333` | Admin health poller's Qdrant `/readyz` probe |
 | `BACKUP_KEEP` / `BACKUP_MAX_AGE_HOURS` | `14` / `26` | Backups retained by `scripts/backup.sh` / the `vie-backup-cron` sidecar; age past which vie-admin's `backup_stale` dead-man's switch trips |
 

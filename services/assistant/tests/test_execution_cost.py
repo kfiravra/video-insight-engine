@@ -110,6 +110,29 @@ class TestMeteredStream:
 
         reporter.report_execution_usage.assert_awaited_once()
 
+    async def test_should_report_the_cost_the_inner_stream_records_while_closing(self) -> None:
+        """An answer cut off mid-stream: the inner stream's own cleanup records its cost (as the
+        LLM provider does) and that cost is in the report, whatever closes the outer stream."""
+        meter = ec.start_execution(execution_id="e1", kind="chat", user_id="u1", request_id="r1")
+        reporter = MagicMock()
+        reporter.report_execution_usage = AsyncMock(return_value=True)
+
+        async def _answer():
+            try:
+                yield "partial"
+                yield "never read"
+            finally:
+                ec.record_llm_cost(0.05)
+
+        stream = ec.metered_stream(_answer(), meter, reporter)
+        assert await stream.__anext__() == "partial"
+        await stream.aclose()
+        await _drain_reports()
+
+        reporter.report_execution_usage.assert_awaited_once()
+        assert reporter.report_execution_usage.await_args is not None
+        assert reporter.report_execution_usage.await_args.kwargs["cost_usd"] == 0.05
+
     async def test_should_not_report_without_a_meter(self) -> None:
         reporter = MagicMock()
         reporter.report_execution_usage = AsyncMock()

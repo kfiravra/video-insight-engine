@@ -130,7 +130,13 @@ function billingSurfaceFiles(): string[] {
       name === 'lib/format-tokens.ts' ||
       name === 'hooks/use-billing-text.ts' ||
       name === 'hooks/use-video-estimate.ts' ||
-      name === 'api/usage.ts'
+      name === 'api/usage.ts' ||
+      // Where a refused stream or chat turn is worded.
+      name === 'features/video-output/lib/streaming/stream-error-messages.ts' ||
+      name === 'features/video-output/components/StreamingPlaceholder.tsx' ||
+      name === 'features/sidebar/hooks/use-sidebar-chat.ts' ||
+      name === 'components/rag/RAGChatPanel.tsx' ||
+      name === 'lib/support.ts'
     );
   };
   return sourceFiles(SRC_ROOT).filter(inScope);
@@ -184,6 +190,9 @@ describe('no money on the billing surfaces', () => {
         'lib/billing-errors.ts',
         'lib/billing-notice-text.ts',
         'lib/format-tokens.ts',
+        'features/video-output/lib/streaming/stream-error-messages.ts',
+        'features/sidebar/hooks/use-sidebar-chat.ts',
+        'components/rag/RAGChatPanel.tsx',
       ]),
     );
   });

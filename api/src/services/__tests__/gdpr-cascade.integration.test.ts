@@ -254,7 +254,7 @@ describe('GDPR cascade deletion — end-to-end integration', () => {
     await billing.settleActual('run-settled', 0.31);
     await billing.hold('run-open', await billing.quote(doomedId, 'aaaaaaaaaaa', 300));
     await billing.debitExecution({ userId: doomedId, executionId: 'exec-1', kind: 'chat', requestId: 'chat-req-1', costUsd: 0.004 });
-    await billing.backfillExecution({ userId: doomedId, requestId: 'chat-req-2', kind: 'chat', costUsd: 0.002 });
+    await billing.backfillExecution({ userId: doomedId, requestId: 'chat-req-2', kind: 'chat', costUsd: 0.002, lastAt: new Date() });
     // …and what they did as an admin to the witness's account.
     await billing.grantLot(witness._id.toString(), { tokens: 500 }, ctx(doomedId));
     const accountOf = (owner: ObjectId) => db.collection('billingAccounts').findOne({ ownerType: 'user', ownerId: owner });

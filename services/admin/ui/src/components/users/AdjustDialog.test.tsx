@@ -96,8 +96,8 @@ describe('AdjustDialog', () => {
   });
 
   it.each([
-    ['30', 'Adjusted credit tokens by +30.'],
-    ['-30', 'Adjusted credit tokens by -30.'],
+    ['30', 'Adjusted credit tokens by +30 tokens.'],
+    ['-30', 'Adjusted credit tokens by \u221230 tokens.'],
   ])('should report a %s token adjustment', async (tokens, message) => {
     mockAdjust.mockResolvedValue({ auditId: 'x' });
     const { onDone } = setup();

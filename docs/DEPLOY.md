@@ -383,7 +383,7 @@ What it does, per account, in one transaction each (re-planned from what is stor
 5. Recurring grants gain `tokens = round(minutes × 100/3)` (the demo's 300 → 10,000 a month, an eval account's 3,000 → 100,000); `minutes` stays for history.
 6. `billingShadow` is dropped, and so are the `creditLots` indexes partial on `minutesRemaining` (vie-api builds the token ones at boot).
 
-Minute ledger entries stay as history (no `unit`); vie-admin shows them in minutes. Every entry it writes carries actor `system:migration` and reason `migration: minutes to tokens`. After the run it drift-checks every account with vie-api's own `verifyAccountById` and exits 1 on any drift. It refuses (exit 1, nothing written, dry run included) on a standalone Mongo; `--run` refuses while a minute hold is open, and against this server's Mongo unless you pass `--yes-prod`. A second run changes nothing and prints zeros.
+Minute ledger entries stay as history (no `unit`); vie-admin shows them in minutes. Every `convert` entry it writes carries actor `system:migration` and reason `migration: minutes to tokens`; a signup grant it writes is the same entry vie-api writes at registration (`source: system/signup`, no actor). An account that came in owing (vie-api charged it in the window between the deploy and the migration) has the debt repaid from its converted tokens, through vie-api's own repay (`repay:convert:<accountId>:account`). After the run it drift-checks every account with vie-api's own `verifyAccountById` and exits 1 on any drift. It refuses (exit 1, nothing written, dry run included) on a standalone Mongo; `--run` refuses while a minute hold is open, and against this server's Mongo unless you pass `--yes-prod`. A second run changes nothing and prints zeros.
 
 **Set up.** Reuse the `vie-api-tools` image from "Create the first user", rebuilt after the deploy (the script imports the billing code from the checkout):
 
@@ -440,10 +440,13 @@ mongo_eval() {
      { $match: { timestamp: { $gte: since }, request_id: { $in: debits.map((d) => d._id.ref) } } },
      { $group: { _id: '$request_id', costUsd: { $sum: '$cost_usd' } } },
    ]).toArray();
-   printjson(debits.map((d) => ({ ...d, llmUsageUsd: (usage.find((u) => u._id === d._id.ref) || {}).costUsd, expectedTokens: Math.ceil((d.costUsd || 0) * 3000) })));
+   printjson(debits.map((d) => {
+     const llmUsageUsd = (usage.find((u) => u._id === d._id.ref) || {}).costUsd;
+     return { ...d, llmUsageUsd, tokensFromUsage: llmUsageUsd === undefined ? null : Math.ceil(llmUsageUsd * 3000) };
+   }));
    JS
    ```
-   Each row's `tokens` equals `expectedTokens` (give or take 1 from rounding the cost across slices). A video's ledger `source.ref` is its billing run id, so its `llmUsageUsd` is empty; compare the video's `costUsd` with `pipeline.timing.costUsd` on its cache row instead. A chat row's `llmUsageUsd` is within a few % of `costUsd`. Write the numbers into the gate notes.
+   For a **chat row** (`kind` chat / library_chat / action) `tokens` should equal `tokensFromUsage` — the turn's `llm_usage` total × 3,000, rounded up — within a few % (the assistant prices the final responses; `llm_usage` also holds failed attempts). For the **video row** the ledger `source.ref` is the billing run id, so `llmUsageUsd` is empty: compare its `tokens` with `ceil(pipeline.timing.costUsd × 3000)` on the video's cache row (`db.videoSummaryCache.findOne({ youtubeId: '<id>' }, { 'pipeline.timing.costUsd': 1 })`), and that `costUsd` with `Σ llm_usage.cost_usd` of the run's `request_id` (within a few %: judge and translation rows land seconds later). Write the numbers into the gate notes.
 
 **Rollback.** Revert the merge (`git revert -m 1 <merge sha>`, push, deploy). The old minute code cannot read token-shaped data, so before (or right after) the old vie-api starts, move the token data aside and give the accounts their minute shape back:
 
@@ -463,7 +466,7 @@ db.billingAccounts.updateMany({}, {
 JS
 ```
 
-Then re-grant from vie-admin, which is back on the minutes UI: the demo account **Set plan → Pro** (600 minutes for the cycle; its recurring grant still has `minutes: 300` and keeps running) and **Grant minutes** for its credit minutes from the dry-run table. Kfir's admin account needs nothing (free, no credit). The minute lots the migration closed stay closed; their minutes come back as the new lots.
+Then re-grant from vie-admin, which is back on the minutes UI: the demo account **Set plan → Pro** with **Term end = the demo's original `plan.periodEnd`** (read it before the rollback script: `db.billingAccounts.findOne({ ownerId: <demo id> }, { 'plan.periodEnd': 1 })`), so the 12-month term does not restart today (600 minutes for the cycle; its recurring grant still has `minutes: 300` and keeps running) and **Grant minutes** for its credit minutes from the dry-run table. Kfir's admin account needs nothing (free, no credit). The minute lots the migration closed stay closed; their minutes come back as the new lots.
 
 ### Demo mode
 

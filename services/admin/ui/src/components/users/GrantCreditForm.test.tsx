@@ -89,8 +89,8 @@ describe('GrantCreditForm', () => {
   });
 
   it.each([
-    ['5000000', 'Tokens must be between 1 and 1000000'],
-    ['0', 'Tokens must be between 1 and 1000000'],
+    ['5000000', 'Tokens must be between 1 and 1,000,000'],
+    ['0', 'Tokens must be between 1 and 1,000,000'],
     ['2.5', 'Enter a whole number of tokens'],
   ])('should show an error and not call the API for %s tokens', async (tokens, text) => {
     renderForm();
@@ -133,6 +133,19 @@ describe('GrantCreditForm', () => {
     expect((screen.getByTestId('grant-credit-tokens') as HTMLInputElement).value).toBe('');
     expect((screen.getByTestId('grant-credit-reason') as HTMLInputElement).value).toBe('');
     await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ['billing-account', USER_ID] }));
+  });
+
+  it.each([
+    ['1', 'Granted 1 token.'],
+    ['5000', 'Granted 5,000 tokens.'],
+  ])('should word a grant of %s tokens as "%s"', async (tokens, expected) => {
+    mockGrantCredit.mockResolvedValue({ lotId: 'l', auditId: 'a' });
+    renderForm();
+
+    fill(tokens, 'goodwill');
+    submit();
+
+    await waitFor(() => expect(screen.getByText(expected)).toBeTruthy());
   });
 
   it('should refresh the audit log after a grant, where the new row appears', async () => {

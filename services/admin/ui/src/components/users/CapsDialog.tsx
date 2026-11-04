@@ -21,13 +21,13 @@ interface CapsDialogProps {
 type CapFields = Omit<CapsFormValues, 'reason'>;
 
 const NUMERIC_FIELDS: Array<{ name: NumericCap; label: string; hint: string }> = [
-  { name: 'maxVideoMinutes', label: 'Max video length (minutes)', hint: 'Lowers the plan limit for this account.' },
+  { name: 'maxVideoMinutes', label: 'Max video length (minutes)', hint: 'Longest video this account may submit.' },
   { name: 'maxConcurrent', label: 'Runs at once', hint: 'Most videos this account may have in flight.' },
 ];
 
 /**
  * Per-account limits. A field left as it was is not sent, an emptied field clears
- * its cap, and a new number sets it. Caps only ever tighten what the plan allows.
+ * its cap, and a new number sets it. Caps only ever tighten the defaults every account has.
  */
 export function CapsDialog({ userId, currentCaps, onClose, onDone }: CapsDialogProps) {
   const [initial] = useState<CapFields>(() => capsToForm(currentCaps));
@@ -68,7 +68,7 @@ export function CapsDialog({ userId, currentCaps, onClose, onDone }: CapsDialogP
           onChange={(e) => setValues((current) => ({ ...current, blocked: e.target.checked }))}
           data-testid="cap-blocked"
         />
-        Block this account (it cannot start new videos)
+        Block this account (it cannot start new videos, chats or actions)
       </label>
     </ActionDialog>
   );

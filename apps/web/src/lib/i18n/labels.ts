@@ -116,6 +116,12 @@ export interface BillingLabels {
   holdsEmpty: string;
   holdVideoFallback: string;
   teamNote: string;
+  /** The mailto link after the team notes (shown only when VITE_SUPPORT_EMAIL is set). */
+  contactTeam: string;
+  /** The subject line that mailto link opens with. */
+  contactSubject: string;
+  /** The header chip while the account owes tokens; {tokens} is a tokens phrase ("120 tokens short"). */
+  headerDebt: string;
   // Playlist import result
   playlistResult: string;
   /** The up-front quote for the whole playlist; {needed} and {available} are tokens phrases. */

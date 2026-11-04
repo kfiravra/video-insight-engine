@@ -264,6 +264,35 @@ async def test_caps_leaves_absent_caps_out_of_the_forwarded_body(admin_session):
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    "caps",
+    [
+        {"maxVideoMinutes": 0},
+        {"maxVideoMinutes": 181},
+        {"maxConcurrent": 0},
+        {"maxConcurrent": 1001},
+    ],
+)
+async def test_caps_rejects_a_cap_outside_vie_apis_range(caps, admin_session):
+    body = {**caps, "reason": "x"}
+
+    assert (
+        await _call("POST", f"/billing/accounts/{USER_ID}/caps", admin_session, body)
+    ).status_code == 422
+
+
+@pytest.mark.anyio
+async def test_caps_forwards_the_range_edges(admin_session):
+    body = {"maxVideoMinutes": 180, "maxConcurrent": 1, "reason": "x"}
+
+    _, _, kwargs = await _forwarded(
+        "POST", f"/billing/accounts/{USER_ID}/caps", admin_session, body
+    )
+
+    assert json.loads(kwargs["content"]) == body
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize("tokens", [0, 1_000_001, 2.5])
 async def test_adjust_rejects_bad_tokens(tokens, admin_session):
     body = {"bucket": "credit", "tokens": tokens, "reason": "x"}

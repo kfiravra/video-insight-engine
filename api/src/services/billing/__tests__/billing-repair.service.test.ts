@@ -249,6 +249,28 @@ describe('BillingRepairService (P1.6, real Mongo replica set)', () => {
     const insertUsage = (...rows: Array<Record<string, unknown>>) => db().collection('llm_usage').insertMany(rows.map(usageRow));
     const execDebits = () => ledger({ type: 'debit', executionId: { $exists: true } });
 
+    // The account entered the token ledger (its signup grant) an hour ago, before every usage row below.
+    beforeEach(async () => {
+      clock.advance(-HOUR_MS);
+      await billing.summary(userId);
+      clock.advance(HOUR_MS);
+    });
+
+    it('should leave a chat from before the account entered the token ledger free (minutes billing did not charge it)', async () => {
+      await insertUsage({ timestamp: new Date(clock.now().getTime() - 2 * HOUR_MS) });
+
+      expect((await run()).executionsBackfilled).toBe(0);
+      expect(await execDebits()).toEqual([]);
+    });
+
+    it('should leave an account the token migration has not reached alone', async () => {
+      await db().collection('billingAccounts').updateOne({ ownerId: new ObjectId(userId) }, { $unset: { signupGrantAt: '' } });
+      await insertUsage({});
+
+      expect((await run()).executionsBackfilled).toBe(0);
+      expect(await execDebits()).toEqual([]);
+    });
+
     it('should debit an unreported request its llm_usage total once, keyed debit:exec:req:<requestId>', async () => {
       await insertUsage({ cost_usd: 0.01, timestamp: new Date(clock.now().getTime() - 30 * MINUTE_MS) }, { cost_usd: 0.02 });
 

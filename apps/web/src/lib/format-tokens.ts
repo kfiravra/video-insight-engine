@@ -24,11 +24,14 @@ export function formatNumber(count: number, language: string): string {
  * The noun phrase for `count` in the form its language needs: "840 tokens",
  * "1 token", Hebrew "שתי דקות", Arabic "دقيقتان". `{count}` in the form is
  * replaced by the formatted number; forms without it ("דקה אחת") are returned
- * as written. A category the table does not fill falls back to `other`.
+ * as written. A category the table does not fill falls back to `other`, and so
+ * does a negative count whose form has no `{count}` to carry the minus sign
+ * (Hebrew -1 reads "-1 טוקנים", never "טוקן אחד").
  */
 export function formatPlural(count: number, language: string, forms: PluralForms): string {
-  const category = new Intl.PluralRules(language).select(count);
-  const form = forms[category] ?? forms.other;
+  const category = new Intl.PluralRules(language).select(Math.abs(count));
+  const chosen = forms[category] ?? forms.other;
+  const form = count < 0 && !chosen.includes("{count}") ? forms.other : chosen;
   return form.replace("{count}", formatNumber(count, language));
 }
 

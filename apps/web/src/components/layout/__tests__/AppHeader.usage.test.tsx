@@ -7,7 +7,7 @@ import { ThemeProvider } from '@/components/theme-provider';
 import { AppHeader } from '../AppHeader';
 import { useAuthStore } from '@/stores/auth-store';
 import * as usageHook from '@/hooks/use-usage';
-import { usageSummary } from '@/components/usage/__tests__/usage-fixtures';
+import { debtSummary, usageSummary } from '@/components/usage/__tests__/usage-fixtures';
 
 function renderHeader() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -53,6 +53,27 @@ describe('AppHeader user menu', () => {
 
     expect(screen.getByRole('menuitem', { name: 'Tokens & plan' })).toBeInTheDocument();
     expect(screen.getByTestId('usage-tile')).toBeInTheDocument();
+  });
+
+  it('should show the debt in the header, without opening the menu, while the account owes tokens', () => {
+    usageSpy = vi.spyOn(usageHook, 'useUserUsage').mockReturnValue({
+      data: debtSummary(120),
+      isError: false,
+    } as unknown as ReturnType<typeof usageHook.useUserUsage>);
+    renderHeader();
+
+    const chip = screen.getByRole('link', { name: "You're 120 tokens short — add tokens to continue." });
+    expect(chip).toHaveAttribute('href', '/settings/billing');
+  });
+
+  it('should show no debt chip for an account with tokens left', () => {
+    usageSpy = vi.spyOn(usageHook, 'useUserUsage').mockReturnValue({
+      data: usageSummary(),
+      isError: false,
+    } as unknown as ReturnType<typeof usageHook.useUserUsage>);
+    renderHeader();
+
+    expect(screen.queryByTestId('header-debt')).toBeNull();
   });
 
   it('should keep the rest of the menu when the usage tile crashes', async () => {

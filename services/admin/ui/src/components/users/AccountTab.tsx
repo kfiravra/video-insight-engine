@@ -26,8 +26,8 @@ function ActionsSlot({ children }: { children: ReactNode }) {
 function NoAccount() {
   return (
     <p className="text-xs text-[var(--color-text-muted)] py-4 text-center" data-testid="account-none">
-      No billing account yet. vie-api creates it when this user first submits a video; until then the
-      free-plan defaults apply.
+      No billing account yet. vie-api creates it, with the signup grant, at registration or on an older
+      user&apos;s first visit; until then the free-plan defaults apply.
     </p>
   );
 }

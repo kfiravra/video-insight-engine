@@ -175,7 +175,7 @@ async def list_user_costs(
     """Users by effective cost over the trailing window.
 
     Cost is the user's attributed ``llm_usage`` spend; a user is listed with
-    spend in the range, a minutes account, or a sign-up in the range (see
+    spend in the range, a billing account, or a sign-up in the range (see
     ``src.services.user_costs``).
     """
     cache_key = f"user-costs:{days}:{limit}:{offset}"

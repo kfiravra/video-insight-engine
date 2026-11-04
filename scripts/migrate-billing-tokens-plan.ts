@@ -123,10 +123,17 @@ export function isMinuteHold(hold: Record<string, unknown>): boolean {
   return 'minutes' in hold || num(hold.tokens) === null;
 }
 
+/**
+ * The plan bucket's conversion, or null when it is already in tokens. A minute
+ * bucket vie-api wrote before the migration carries `tokensGranted: 0` next to
+ * its minutes (the read normalizes, the write keeps both): still a minute
+ * bucket. Only a real token cycle (vie-api rolled one: `tokensGranted > 0`)
+ * is left as it is.
+ */
 function planBucketConversion(account: RawDoc, constants: TokenConstants, now: Date): PlanBucketConversion | null {
   const bucket = record(record(account.buckets).plan);
   const minutesGranted = num(bucket.minutesGranted);
-  if (minutesGranted === null || num(bucket.tokensGranted) !== null) return null;
+  if (minutesGranted === null || (num(bucket.tokensGranted) ?? 0) > 0) return null;
   const minutesUsed = num(bucket.minutesUsed) ?? 0;
   const cycleEnd = date(bucket.cycleEnd);
   const running = record(account.plan).id === 'pro' && cycleEnd !== null && cycleEnd > now;

@@ -288,6 +288,28 @@ describe('migrate-billing-tokens', () => {
       expect(await getTestDb().collection('billingAccounts').findOne({ ownerId: fresh })).toEqual(before);
     });
 
+    it('should still convert a minute account vie-api wrote before the migration, and repay what it owes', async () => {
+      const ids = await seed();
+      // vie-api's normalize + write leaves tokensGranted 0 next to the minutes; a chat it charged left 120 owed.
+      await getTestDb().collection('billingAccounts').updateOne(
+        { _id: ids.demoAccount },
+        { $set: { 'buckets.plan.tokensGranted': 0, 'buckets.plan.tokensUsed': 0, 'buckets.credit.tokensAvailable': 0, 'buckets.debt': { tokens: 120 } } },
+      );
+      await getTestDb().collection('ledgerEntries').insertOne({
+        accountId: ids.demoAccount, userId: ids.demo, unit: 'tokens', type: 'debit', bucket: 'debt', tokens: -120,
+        source: { kind: 'run', ref: 'chat-before-migration' }, idempotencyKey: 'debit:exec:early:debt', executionId: 'early', createdAt: NOW,
+      });
+
+      const result = await run();
+
+      const account = await getTestDb().collection('billingAccounts').findOne({ _id: ids.demoAccount });
+      expect(account?.buckets.plan).toMatchObject({ tokensGranted: 20000, tokensUsed: 1500 + 120 });
+      expect(account?.buckets.debt).toEqual({ tokens: 0 });
+      expect(result.debtRepaid).toBe(120);
+      expect(result.drift).toEqual([]);
+      expect((await billing().summary(ids.demo.toHexString())).balance).toBe(18500 + 7000 - 120);
+    });
+
     it('should refuse while a minute hold is open and write nothing', async () => {
       const ids = await seed();
       await getTestDb().collection('billingAccounts').updateOne(

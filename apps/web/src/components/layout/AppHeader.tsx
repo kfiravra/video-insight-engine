@@ -20,6 +20,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { DebtIndicator } from "@/components/usage/DebtIndicator";
 import { UsageMenuItem } from "@/components/usage/UsageMenuItem";
 import { UsageTile } from "@/components/usage/UsageTile";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
@@ -129,6 +130,13 @@ export function AppHeader({ slotRef }: AppHeaderProps) {
               </kbd>
             </span>
           </button>
+
+          {/* Debt blocks every new video and chat, so it shows here, not only in the menu. */}
+          {isAuthenticated && user && (
+            <ErrorBoundary fallback={null}>
+              <DebtIndicator />
+            </ErrorBoundary>
+          )}
 
           <ThemeToggle />
 

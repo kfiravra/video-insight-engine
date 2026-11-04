@@ -32,6 +32,11 @@ from src.services.vie_api_client import (
 
 router = APIRouter(tags=["billing-actions"])
 
+# vie-api's cap ranges (MAX_VIDEO_MINUTES in @vie/types, billing-admin.ts), so a
+# bad cap fails here with a 422 instead of a round trip.
+MAX_VIDEO_MINUTES = 180
+MAX_CONCURRENT = 1000
+
 UserId = Annotated[str, Path(pattern=OBJECT_ID_PATTERN, description="users._id (24-character hex)")]
 GrantId = Annotated[str, Path(pattern=OBJECT_ID_PATTERN)]
 NamedAdmin = Annotated[AdminActor, Depends(current_user_actor)]
@@ -58,8 +63,8 @@ class SetPlanRequest(_Mutation):
 class SetCapsRequest(_Mutation):
     """A cap that is present is set; an explicit ``null`` clears it; an absent one is left alone."""
 
-    maxVideoMinutes: int | None = None
-    maxConcurrent: int | None = None
+    maxVideoMinutes: int | None = Field(None, ge=1, le=MAX_VIDEO_MINUTES)
+    maxConcurrent: int | None = Field(None, ge=1, le=MAX_CONCURRENT)
     blocked: bool | None = None
 
 
