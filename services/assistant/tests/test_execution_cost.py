@@ -299,6 +299,8 @@ def _chat_service() -> MagicMock:
     service.dispatch_action = AsyncMock(
         side_effect=lambda **_kw: (ec.record_llm_cost(0.007), {"ok": True})[1]
     )
+    # The action trace names the video's YouTube id (#43's chat_trace arguments).
+    service.youtube_id_of = AsyncMock(return_value=None)
     return service
 
 
@@ -314,7 +316,9 @@ def _reset_app_state():
 class TestEndpointsReportUsage:
     async def test_chat_should_report_its_cost_under_the_execution_id(self) -> None:
         api_client = _api_client()
-        headers = {"X-User-Id": "u1", "X-Request-ID": "r1", "X-Execution-Id": "e1"}
+        # A safe correlation id (8–128 chars); a shorter one is dropped and the
+        # report falls back to the execution id.
+        headers = {"X-User-Id": "u1", "X-Request-ID": "request-0001", "X-Execution-Id": "e1"}
         async with _client_with(_chat_service(), api_client) as client:
             response = await client.post(
                 "/chat", json={"video_id": "v1", "message": "hi"}, headers=headers
@@ -323,7 +327,12 @@ class TestEndpointsReportUsage:
         await _drain_reports()
 
         api_client.report_execution_usage.assert_awaited_once_with(
-            "u1", execution_id="e1", request_id="r1", kind="chat", cost_usd=0.03, calls=2
+            "u1",
+            execution_id="e1",
+            request_id="request-0001",
+            kind="chat",
+            cost_usd=0.03,
+            calls=2,
         )
 
     async def test_library_chat_should_report_with_its_kind(self) -> None:
