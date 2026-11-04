@@ -14,6 +14,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from src.auth import ApiKeyMiddleware
 from src.config import settings, validate_secrets
 from src.dependencies import close_mongo_client, get_database, init_mongo_client
+from src.logging_config import configure_admin_logging
 from src.routes.alerts import router as alerts_router
 from src.routes.auth import router as auth_router
 from src.routes.billing import router as billing_router
@@ -25,9 +26,12 @@ from src.routes.tiers import router as tiers_router
 from src.routes.usage import router as usage_router
 from src.routes.users import router as users_router
 from src.routes.videos import router as videos_router
+from src.sentry_scrub import scrub_event_payload
 from src.services.alert_evaluator import alert_evaluator_loop
 from src.services.health_checker import health_poller_loop
 
+# Before the first log line: JSON in prod, through stdlib so errors reach Sentry.
+configure_admin_logging()
 logger = structlog.get_logger(__name__)
 
 _health_task: asyncio.Task | None = None
@@ -53,6 +57,8 @@ def _init_sentry() -> bool:
             release=settings.SENTRY_RELEASE,
             traces_sample_rate=settings.SENTRY_TRACES_SAMPLE_RATE,
             send_default_pii=False,
+            # The shared PII scrub (vendored from llm-common, P-13).
+            before_send=scrub_event_payload,
         )
         sentry_sdk.set_tag("service", "vie-admin")
         return True

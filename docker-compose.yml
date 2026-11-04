@@ -564,6 +564,9 @@ services:
       - ./backups:/backups:ro
     environment:
       PYTHONUNBUFFERED: 1
+      # structlog through stdlib (src/logging_config.py): json in prod, console in dev
+      LOG_FORMAT: ${LOG_FORMAT:-console}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
       MONGODB_URI: mongodb://vie-mongodb:27017/video-insight-engine
       ADMIN_API_KEY: ${ADMIN_API_KEY:-dev-admin-key-change-me}
       # Signs admin login sessions and the X-Admin-Actor header sent to vie-api

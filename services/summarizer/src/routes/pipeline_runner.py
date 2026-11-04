@@ -43,10 +43,13 @@ from src.services.observability import run_trace
 from src.services.override_state import clear_override
 from src.services.pipeline.context import PipelineContext
 from src.services.pipeline.pipeline_helpers import PipelineTimer, sse_event
-from src.services.run_context import bind_run_id
+from src.services.run_context import bind_run_id, current_run_id
 from src.services.status_callback import send_video_status
 
 logger = logging.getLogger(__name__)
+# Structured run events (D12): one JSON line each, read by the Grafana Pipeline
+# dashboard and alerts (LogQL over `pipeline_run_started` / `pipeline_run_finished`).
+_events = structlog.get_logger("pipeline.events")
 
 
 def _persist_cache_hit(
@@ -214,6 +217,45 @@ async def _register_run(
     return run
 
 
+def _log_run_started(
+    run: RunIdentity, *, video_summary_id: str, youtube_id: str, run_path: str, bypass: bool
+) -> None:
+    """``pipeline_run_started``: the attempt registered and its trace is about to open."""
+    _events.info(
+        "pipeline_run_started",
+        run_id=run.run_id,
+        video_summary_id=video_summary_id,
+        youtube_id=youtube_id,
+        path=run_path,
+        attempt=run.attempt,
+        bypass=bypass,
+        retry_of=run.retry_of,
+    )
+
+
+def _log_run_finished(
+    status: str,
+    *,
+    video_summary_id: str,
+    youtube_id: str | None,
+    duration_s: float,
+    run_path: str,
+    error_code: str | None = None,
+) -> None:
+    """``pipeline_run_finished``: completed | failed | cache_hit | interrupted, and how long it took."""
+    _events.info(
+        "pipeline_run_finished",
+        run_id=current_run_id(),
+        video_summary_id=video_summary_id,
+        youtube_id=youtube_id,
+        path=run_path,
+        status=status,
+        cache_hit=status == "cache_hit",
+        duration_ms=int(duration_s * 1000),
+        error_code=error_code,
+    )
+
+
 async def _redis_payload(youtube_id: str) -> dict[str, Any] | None:
     """The completed Redis response for ``youtube_id``, or ``None`` (miss, invalid, Redis down)."""
     try:
@@ -355,9 +397,12 @@ async def stream_summarization(
     force_refresh = force_refresh or bool(entry.get("forceRefresh"))
     # A context reused across runs must never report the previous run's ids.
     _bind_run(None)
+    youtube_id: str | None = entry.get("youtubeId") or entry.get("youtube_id")
+    # The run event's outcome; None until a cache hit or a registered attempt.
+    outcome: str | None = None
+    error_code: str | None = None
 
     try:
-        youtube_id = entry.get("youtubeId") or entry.get("youtube_id")
         if not youtube_id:
             yield sse_event("error", {"message": "YouTube ID not found"})
             return
@@ -378,6 +423,7 @@ async def stream_summarization(
             logger.info("[pipeline] Redis cache HIT for youtube_id=%s", youtube_id)
             if entry.get("status") != ProcessingStatus.COMPLETED.value:
                 _spawn_cache_completion(repository, video_summary_id, cached)
+            outcome = "cache_hit"
             async for event in _stream_cached_structured(video_summary_id, cached):
                 yield event
             return
@@ -395,6 +441,14 @@ async def stream_summarization(
             bypass=force_refresh,
         )
         _bind_run(run, bypass=force_refresh)
+        _log_run_started(
+            run,
+            video_summary_id=video_summary_id,
+            youtube_id=youtube_id,
+            run_path=run_path,
+            bypass=force_refresh,
+        )
+        outcome = "interrupted"  # until the phases finish or raise
         trace_args = _run_trace_args(
             entry,
             youtube_id=youtube_id,
@@ -423,9 +477,12 @@ async def stream_summarization(
 
             async for event in run_pipeline_phases(ctx, repository, video_summary_id, timer):
                 yield event
+        outcome = "completed"
 
     except Exception as e:
         failure = classify_run_failure(e, video_summary_id, timer.elapsed())
+        if outcome is not None:
+            outcome, error_code = "failed", failure.code.value
         await asyncio.to_thread(
             repository.update_status,
             video_summary_id,
@@ -438,3 +495,12 @@ async def stream_summarization(
         yield sse_event("error", {"message": failure.user_message, "code": failure.code.value})
     finally:
         await asyncio.to_thread(clear_override, video_summary_id)
+        if outcome is not None:
+            _log_run_finished(
+                outcome,
+                video_summary_id=video_summary_id,
+                youtube_id=youtube_id,
+                duration_s=timer.elapsed(),
+                run_path=run_path,
+                error_code=error_code,
+            )

@@ -198,6 +198,7 @@ class WorkerRunner:
                 requestId=payload.request_id,
                 attempt=str(payload.attempt),
                 outcome="dlq",
+                runId=payload.run_id,
             )
             await message.reject(requeue=False)
             return JobOutcome.PERMANENT_FAILURE

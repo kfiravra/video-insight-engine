@@ -186,3 +186,101 @@ class TestRunIdsOnTheLedger:
         finally:
             pipeline_runner._bind_run(None)
         assert "session_id" not in structlog.contextvars.get_contextvars()
+
+
+class TestRunEvents:
+    """D12: one `pipeline_run_finished` line per attempt (and per cache hit) for Grafana."""
+
+    async def test_should_report_a_cache_hit_as_a_finished_cache_hit(self):
+        events = MagicMock()
+
+        async def fake_get_response(_youtube_id: str) -> dict:
+            return _CACHED
+
+        async def stream(_vsid: str, _cached: dict):
+            yield "data: {}\n\n"
+
+        with (
+            patch.object(pipeline_runner, "_events", events),
+            patch.object(pipeline_runner.response_cache, "get_response", new=fake_get_response),
+            patch.object(pipeline_runner, "_stream_cached_structured", new=stream),
+            patch.object(pipeline_runner.settings, "REDIS_ENABLED", True),
+        ):
+            _ = [
+                ev
+                async for ev in pipeline_runner.stream_summarization(
+                    "vsum_attr", _entry(currentRunId="run-hit-1"), MagicMock(), MagicMock()
+                )
+            ]
+
+        names = [c.args[0] for c in events.info.call_args_list]
+        assert names == ["pipeline_run_finished"]
+        fields = events.info.call_args.kwargs
+        assert (fields["status"], fields["cache_hit"], fields["run_id"]) == (
+            "cache_hit",
+            True,
+            "run-hit-1",
+        )
+        assert isinstance(fields["duration_ms"], int)
+
+    async def test_should_write_no_run_event_when_the_row_has_no_video(self):
+        events = MagicMock()
+        with patch.object(pipeline_runner, "_events", events):
+            _ = [
+                ev
+                async for ev in pipeline_runner.stream_summarization(
+                    "vsum_attr", {"status": "processing"}, MagicMock(), MagicMock()
+                )
+            ]
+
+        events.info.assert_not_called()
+
+    def test_should_name_the_attempt_when_the_run_starts(self):
+        from llm_common.observability import trace_id_for_run
+
+        from src.services.pipeline.run_registry import RunIdentity
+
+        events = MagicMock()
+        run = RunIdentity(
+            run_id="run-s1", trace_id=trace_id_for_run("run-s1"), attempt=2, retry_of="run-s0"
+        )
+        with patch.object(pipeline_runner, "_events", events):
+            pipeline_runner._log_run_started(
+                run, video_summary_id="vs-1", youtube_id="yt-1", run_path="worker", bypass=True
+            )
+
+        assert events.info.call_args.args == ("pipeline_run_started",)
+        assert events.info.call_args.kwargs == {
+            "run_id": "run-s1",
+            "video_summary_id": "vs-1",
+            "youtube_id": "yt-1",
+            "path": "worker",
+            "attempt": 2,
+            "bypass": True,
+            "retry_of": "run-s0",
+        }
+
+    def test_should_report_the_error_code_when_a_run_fails(self):
+        events = MagicMock()
+        with patch.object(pipeline_runner, "_events", events):
+            pipeline_runner._log_run_finished(
+                "failed",
+                video_summary_id="vs-1",
+                youtube_id="yt-1",
+                duration_s=12.3456,
+                run_path="sse",
+                error_code="TRANSCRIPT_UNAVAILABLE",
+            )
+
+        fields = events.info.call_args.kwargs
+        assert (
+            fields["status"],
+            fields["cache_hit"],
+            fields["duration_ms"],
+            fields["error_code"],
+        ) == (
+            "failed",
+            False,
+            12345,
+            "TRANSCRIPT_UNAVAILABLE",
+        )

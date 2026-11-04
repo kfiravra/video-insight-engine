@@ -350,6 +350,13 @@ ALERT_DAILY_COST_THRESHOLD_USD=20
 # LANGFUSE_PROJECT_ID is required for links: blank → /usage/by-run and /usage/by-session return null links.
 LANGFUSE_BASE_URL=https://cloud.langfuse.com
 LANGFUSE_PROJECT_ID=
+# Logging (src/logging_config.py): structlog through stdlib like the other Python
+# services — json in prod (compose default), console in dev; LOG_LEVEL is a stdlib level.
+LOG_FORMAT=console
+LOG_LEVEL=INFO
+# Sentry: empty DSN → no-op. Events pass the shared PII scrub (src/sentry_scrub.py, a
+# verbatim copy of llm-common's; tests/test_vendored_copies.py fails on drift).
+SENTRY_DSN=
 ```
 
 ## Testing

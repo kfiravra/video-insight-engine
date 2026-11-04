@@ -38,6 +38,8 @@ except ImportError:
     _SDK_AVAILABLE = False
 
 
+# ─── scrub: BEGIN (vendored verbatim into services/admin/src/sentry_scrub.py; the
+# admin's identity test fails on any drift, so change both in one commit) ───
 _SENSITIVE_HEADERS = frozenset(
     {
         "authorization",
@@ -204,10 +206,20 @@ def scrub_event_payload(
                 video_summary_id = bound.get("video_summary_id")
                 if isinstance(video_summary_id, str) and video_summary_id:
                     tags.setdefault("videoSummaryId", video_summary_id)
+                # D13: the pipeline attempt and the chat session, as vie-api tags them.
+                run_id = bound.get("run_id")
+                if isinstance(run_id, str) and run_id:
+                    tags.setdefault("runId", run_id)
+                session_id = bound.get("session_id")
+                if isinstance(session_id, str) and session_id:
+                    tags.setdefault("sessionId", session_id)
     except Exception as exc:  # noqa: BLE001 - never crash the SDK pipeline
         logger.debug("sentry_before_send_scrub_failed: %s", exc)
 
     return event
+
+
+# ─── scrub: END ───
 
 
 def init_sentry(
@@ -389,6 +401,11 @@ def capture_exception_with_context(exc: BaseException, **tags: str | None) -> No
                 rid = bound.get("request_id")
                 if isinstance(rid, str):
                     scope.set_tag("requestId", rid)
+                # The attempt the runner resolved wins over a caller's message id.
+                for bound_key, tag in (("run_id", "runId"), ("session_id", "sessionId")):
+                    value = bound.get(bound_key)
+                    if isinstance(value, str) and value:
+                        scope.set_tag(tag, value)
             sentry_sdk.capture_exception(exc)
     except Exception as scope_exc:  # noqa: BLE001
         logger.debug("sentry_capture_failed: %s", scope_exc)

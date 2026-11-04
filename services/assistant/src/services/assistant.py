@@ -30,6 +30,7 @@ from src.services.llm_provider import LLMProvider
 from src.services.observability import chat_trace, chat_turn
 from src.services.rag import RAGService
 from src.services.tool_router import ActionDispatcher, ToolRouter
+from src.services.turn_events import observe_turn
 from src.tools.base import BaseTool
 from src.utils.language_detect import detect_language
 
@@ -189,23 +190,27 @@ class AssistantService:
             history_len=len(history),
         )
 
+        turn = chat_turn(history)
         async with chat_trace(
             video_summary_id=video_id,
             youtube_id=video_ctx.youtube_id,
             user_id=user_id,
             session_id=session_id,
             request_id=request_id,
-            turn=chat_turn(history),
+            turn=turn,
             metadata={"historyLen": len(history), "messageLen": len(message)},
         ):
             # RAG-powered chat (also exposes library action tools)
-            async for sse in self._rag_chat(
+            rag_turn = self._rag_chat(
                 video_id,
                 message,
                 history,
                 video_ctx,
                 user_id=user_id,
                 confirm_token=confirm_token,
+            )
+            async for sse in observe_turn(
+                rag_turn, surface="video", session_id=session_id, turn=turn
             ):
                 yield sse
 
@@ -246,12 +251,13 @@ class AssistantService:
             history_len=len(history),
         )
 
+        turn = chat_turn(history)
         async with chat_trace(
             video_summary_id=None,
             user_id=user_id,
             session_id=session_id,
             request_id=request_id,
-            turn=chat_turn(history),
+            turn=turn,
             tags=["library"],
             metadata={
                 "videoCount": len(video_ids),
@@ -259,57 +265,73 @@ class AssistantService:
                 "messageLen": len(message),
             },
         ):
-            user_language = detect_language(message)
-            search_query = await self._translate_query(message, user_language)
-
-            rag_sources = await self._rag.search_library(
-                query=search_query,
-                video_ids=video_ids,
-                top_k=self._settings.MAX_CONTEXT_CHUNKS,
+            library_turn = self._library_turn(
+                video_ids, message, history, user_id, inventory, confirm_token
             )
+            async for sse in observe_turn(
+                library_turn, surface="library", session_id=session_id, turn=turn
+            ):
+                yield sse
 
-            # Label each source with its video title so the answer + source chips
-            # name videos instead of leaking raw ids.
-            title_by_id = {
-                v.get("video_id"): v.get("title", "")
-                for v in (inventory or [])
-                if v.get("video_id")
-            }
-            for src in rag_sources:
-                src.title = title_by_id.get(src.video_id) or src.title
+    async def _library_turn(
+        self,
+        video_ids: list[str],
+        message: str,
+        history: list[ChatMessage],
+        user_id: str | None,
+        inventory: list[dict] | None,
+        confirm_token: str | None,
+    ) -> AsyncGenerator[str, None]:
+        """One library turn: search the owned videos, then the agentic loop (in the turn's trace)."""
+        user_language = detect_language(message)
+        search_query = await self._translate_query(message, user_language)
 
-            if rag_sources:
-                yield self._format_sse(ChatEvent(type="source", sources=rag_sources))
-            else:
-                logger.info("assistant_library_chat_no_context")
+        rag_sources = await self._rag.search_library(
+            query=search_query,
+            video_ids=video_ids,
+            top_k=self._settings.MAX_CONTEXT_CHUNKS,
+        )
 
-            system_prompt = self._build_library_system_prompt(
-                rag_sources, user_language, inventory, user_id=user_id
-            )
-            messages = self._build_messages(system_prompt, history, message)
+        # Label each source with its video title so the answer + source chips
+        # name videos instead of leaking raw ids.
+        title_by_id = {
+            v.get("video_id"): v.get("title", "") for v in (inventory or []) if v.get("video_id")
+        }
+        for src in rag_sources:
+            src.title = title_by_id.get(src.video_id) or src.title
 
-            try:
-                async for sse in self._run_agentic_loop(
-                    messages,
-                    user_id,
-                    confirm_token=confirm_token,
-                ):
-                    yield sse
-            except Exception as exc:
-                logger.error("assistant_library_chat_llm_error", error=str(exc))
-                yield self._format_sse(
-                    ChatEvent(
-                        type="error",
-                        content="Failed to generate response. Please try again.",
-                    )
-                )
+        if rag_sources:
+            yield self._format_sse(ChatEvent(type="source", sources=rag_sources))
+        else:
+            logger.info("assistant_library_chat_no_context")
 
+        system_prompt = self._build_library_system_prompt(
+            rag_sources, user_language, inventory, user_id=user_id
+        )
+        messages = self._build_messages(system_prompt, history, message)
+
+        try:
+            async for sse in self._run_agentic_loop(
+                messages,
+                user_id,
+                confirm_token=confirm_token,
+            ):
+                yield sse
+        except Exception as exc:
+            logger.error("assistant_library_chat_llm_error", error=str(exc))
             yield self._format_sse(
                 ChatEvent(
-                    type="done",
-                    metadata={"sources_count": len(rag_sources)},
+                    type="error",
+                    content="Failed to generate response. Please try again.",
                 )
             )
+
+        yield self._format_sse(
+            ChatEvent(
+                type="done",
+                metadata={"sources_count": len(rag_sources)},
+            )
+        )
 
     def _build_library_system_prompt(
         self,

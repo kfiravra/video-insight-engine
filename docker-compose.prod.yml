@@ -534,6 +534,9 @@ services:
       - ./backups:/backups:ro
     environment:
       PYTHONUNBUFFERED: 1
+      # structlog through stdlib (src/logging_config.py): json in prod, console in dev
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
       # Arms validate_secrets(): dev-default or shared admin secrets refuse startup.
       ENVIRONMENT: ${ENVIRONMENT:-production}
       MONGODB_URI: *mongodb-uri

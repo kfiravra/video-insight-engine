@@ -21,6 +21,7 @@ from llm_common.sentry_init import capture_exception_with_context
 
 from src.exceptions import TranscriptError
 from src.models.schemas import ErrorCode
+from src.services.run_context import current_run_id
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,7 @@ def report_unexpected_failure(exc: Exception, video_summary_id: str, elapsed: fl
         outcome="pipeline_failed",
         path="worker" if attempt is not None else "sse-direct",
         attempt=str(attempt) if attempt is not None else None,
+        runId=current_run_id(),
     )
     return error_ref
 

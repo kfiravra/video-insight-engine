@@ -35,14 +35,14 @@ def _isolate_structlog():
 
 
 def _emit_and_capture(service_name: str, msg: str, **bound) -> dict:
-    configure_structlog(json_format=True, service_name=service_name)
-    logger = get_logger("test")
-
-    if bound:
-        structlog.contextvars.bind_contextvars(**bound)
-
+    # structlog lines go through the root handler (D13), which binds sys.stdout
+    # when it is installed: configure inside the capture, like the stdlib lines.
     buffer = io.StringIO()
     with redirect_stdout(buffer):
+        configure_structlog(json_format=True, service_name=service_name)
+        logger = get_logger("test")
+        if bound:
+            structlog.contextvars.bind_contextvars(**bound)
         logger.info(msg)
         sys.stdout.flush()
     line = buffer.getvalue().strip().splitlines()[-1]
@@ -84,10 +84,10 @@ def test_log_line_has_iso_timestamp_and_level():
 def test_log_line_explicit_service_field_is_not_overwritten():
     # If a caller passes `service=...` in the log call, structlog should keep
     # the caller's value — the processor uses setdefault to avoid clobbering.
-    configure_structlog(json_format=True, service_name="vie-summarizer-test")
-    logger = get_logger("test")
     buffer = io.StringIO()
     with redirect_stdout(buffer):
+        configure_structlog(json_format=True, service_name="vie-summarizer-test")
+        logger = get_logger("test")
         logger.info("ping", service="custom-service")
         sys.stdout.flush()
     payload = json.loads(buffer.getvalue().strip().splitlines()[-1])
@@ -193,3 +193,50 @@ def test_reconfiguring_does_not_stack_root_handlers():
     configure_structlog(json_format=True, service_name="vie-summarizer")
 
     assert len(logging.getLogger().handlers) == first
+
+
+# ─── structlog through stdlib (observability D13) ───
+
+
+class _Records(logging.Handler):
+    """Collects the records the root logger sees (what Sentry's logging integration sees)."""
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.DEBUG)
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
+
+
+def test_structlog_error_reaches_stdlib_with_the_event_as_message_and_the_exception():
+    records = _Records()
+    buffer = io.StringIO()
+    with redirect_stdout(buffer):
+        configure_structlog(json_format=True, service_name="vie-summarizer")
+        logging.getLogger().addHandler(records)
+        try:
+            raise RuntimeError("provider down")
+        except RuntimeError:
+            get_logger("src.test").exception("pipeline_phase_failed", phase="plan")
+
+    record = records.records[-1]
+    assert (record.levelno, record.getMessage()) == (logging.ERROR, "pipeline_phase_failed")
+    assert record.exc_info is not None and record.exc_info[0] is RuntimeError
+    payload = json.loads(buffer.getvalue().strip().splitlines()[-1])
+    assert (payload["event"], payload["phase"], payload["level"]) == (
+        "pipeline_phase_failed",
+        "plan",
+        "error",
+    )
+    assert "RuntimeError: provider down" in payload["exception"]
+
+
+def test_structlog_line_is_written_once():
+    buffer = io.StringIO()
+    with redirect_stdout(buffer):
+        configure_structlog(json_format=True, service_name="vie-summarizer")
+        get_logger("src.test").info("once")
+
+    assert [line for line in buffer.getvalue().splitlines() if '"once"' in line] != []
+    assert len([line for line in buffer.getvalue().splitlines() if '"once"' in line]) == 1
