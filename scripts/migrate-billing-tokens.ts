@@ -23,7 +23,9 @@
  * Usage (production: docs/DEPLOY.md "Migrate to the token ledger"; the scripts
  * are mounted into /app/api in a one-off container):
  *   npx tsx migrate-billing-tokens.ts (--dry-run | --run) [--yes-prod]
- *   Local: pnpm --filter @vie/api exec tsx ../scripts/migrate-billing-tokens.ts --dry-run
+ *   Local (from the repo root): copy both files into api/ the same way, since
+ *   @vie/types and ../api/src resolve from there and not from scripts/:
+ *     cp scripts/migrate-billing-tokens{,-plan}.ts api/ && (cd api && npx tsx migrate-billing-tokens.ts --dry-run); rm api/migrate-billing-tokens{,-plan}.ts
  *
  * Env: MONGODB_URI (default mongodb://localhost:27017/video-insight-engine?directConnection=true).
  */
