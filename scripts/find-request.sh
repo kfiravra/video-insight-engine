@@ -86,4 +86,4 @@ done
 echo
 echo "Tip: in Langfuse, a run id is the tag 'run:${id}', a request id the tag 'requestId:${id}',"
 echo "     a pipeline session 'pipeline-<videoSummaryId>' and a chat session 'chat-${id}'."
-echo "Tip: in Sentry, filter events by tag 'requestId:${id}' (vie-api also tags 'sessionId:${id}')."
+echo "Tip: in Sentry, filter events by tag 'requestId:${id}', 'runId:${id}' or 'sessionId:${id}'."

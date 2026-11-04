@@ -1,0 +1,11 @@
+{
+  "uid": "vie-telegram",
+  "name": "vie-telegram",
+  "type": "telegram",
+  "settings": {
+    "bottoken": "__TELEGRAM_BOT_TOKEN__",
+    "chatid": "__TELEGRAM_CHAT_ID__",
+    "parse_mode": "None"
+  },
+  "disableResolveMessage": false
+}
