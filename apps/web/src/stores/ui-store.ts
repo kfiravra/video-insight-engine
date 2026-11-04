@@ -155,7 +155,26 @@ interface UIState {
   setItemOrder: (items: string[]) => void;
   handleVideoSelection: (videoId: string, shiftKey: boolean, ctrlKey: boolean) => void;
   handleFolderSelection: (folderId: string, shiftKey: boolean, ctrlKey: boolean) => void;
+
+  /** Forget everything that names the signed-in user's folders and videos
+   *  (sign-out). Layout preferences stay. */
+  resetUserScope: () => void;
 }
+
+/** The slice of the UI store that refers to one user's library. */
+const USER_SCOPE_INITIAL = {
+  selectedFolderId: null,
+  expandedFolderIds: [],
+  favoriteVideoIds: [],
+  selectionMode: false,
+  selectedVideoIds: [],
+  selectedFolderIds: [],
+  lastClickedItemId: null,
+  itemOrder: [],
+  sidebarSearchQuery: "",
+  pendingSidebarSearch: false,
+  showNewFolderInput: false,
+} satisfies Partial<UIState>;
 
 /**
  * Build selection updates for both videos and folders.
@@ -364,6 +383,8 @@ export const useUIStore = create<UIState>()(
       handleFolderSelection: (folderId, shiftKey, ctrlKey) => {
         set(buildSelectionUpdate(get(), folderId, "folder", shiftKey, ctrlKey));
       },
+
+      resetUserScope: () => set({ ...USER_SCOPE_INITIAL }),
     }),
     {
       name: "vie-ui-store",

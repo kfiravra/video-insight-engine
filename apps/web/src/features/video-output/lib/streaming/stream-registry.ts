@@ -12,7 +12,7 @@
  * unmount/remount (StrictMode, route transition) doesn't drop events.
  */
 
-import { refreshToken, getAccessToken } from "@/api/client";
+import { refreshToken, getAccessToken, getSessionEpoch, isSessionCurrent } from "@/api/client";
 import { useAuthStore } from "@/stores/auth-store";
 import { sseLogger } from "@/features/video-output/lib/streaming/sse-logger";
 import { incrementTelemetryCounter } from "@/features/video-output/lib/telemetry";
@@ -120,6 +120,7 @@ async function startFetch(
   entry: StreamEntry,
   refreshed: boolean = false,
 ): Promise<void> {
+  const epoch = getSessionEpoch();
   try {
     const response = await fetch(`${API_URL}/videos/${videoSummaryId}/stream`, {
       headers: {
@@ -130,10 +131,14 @@ async function startFetch(
     });
 
     if (response.status === 401 && !refreshed) {
+      // The stream was opened under a session that is gone: say nothing to
+      // the session that replaced it.
+      if (!isSessionCurrent(epoch)) return;
       const newToken = await attemptTokenRefresh();
       if (newToken) {
         return startFetch(videoSummaryId, newToken, entry, true);
       }
+      if (!isSessionCurrent(epoch)) return;
       useAuthStore.getState().forceLogout("Session expired. Please log in again.");
       broadcast(entry, { event: "error", message: "Session expired. Please log in again." });
       return;

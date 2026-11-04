@@ -1,4 +1,4 @@
-import { useState, useMemo, type FormEvent } from "react";
+import { useState, useMemo, useRef, useEffect, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Loader2, AlertCircle, Check } from "lucide-react";
 import { useAuthStore } from "@/stores/auth-store";
@@ -75,19 +75,30 @@ export function RegisterPage() {
 
   const canSubmit = Object.keys(errors).length === 0 && !loading;
 
+  // One request per click; see LoginPage for why a ref and not `loading`.
+  const submittingRef = useRef(false);
+
+  // Warm the board's chunk so the post-signup transition is instant.
+  useEffect(() => {
+    void import("@/pages/BoardPage");
+  }, []);
+
   const handleSubmit = async (e: FormEvent): Promise<void> => {
     e.preventDefault();
+    if (submittingRef.current) return;
     setTouched({ name: true, email: true, password: true });
     if (Object.keys(errors).length > 0) return;
+    submittingRef.current = true;
     setSubmitError("");
     setLoading(true);
     try {
       await register(values.email, values.password, values.name.trim());
+      // Stay pending until the board replaces this page (see LoginPage).
       navigate("/board");
     } catch (err) {
       setSubmitError(translateAuthError(err, "register"));
-    } finally {
       setLoading(false);
+      submittingRef.current = false;
     }
   };
 

@@ -1,9 +1,13 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/mocks/server";
 import { createMockUser } from "@/test/mocks/handlers";
-import { useAuthStore } from "../auth-store";
+import { useAuthStore, pendingLogoutRequest } from "../auth-store";
 import { useChatStore } from "../chat-store";
+import { useUIStore } from "../ui-store";
+import { useProcessingStore } from "@/features/video-output/stores/processing-store";
+import { registerChatStream } from "@/lib/chat-streams";
+import { queryClient } from "@/lib/query-client";
 import { setAccessToken, getAccessToken } from "@/api/client";
 
 const API_URL = "http://localhost:3000/api";
@@ -82,6 +86,12 @@ describe("authStore", () => {
 
   describe("loginDemo", () => {
     it("should authenticate as the demo user", async () => {
+      server.use(
+        http.get(`${API_URL}/auth/me`, () =>
+          HttpResponse.json(createMockUser({ id: "demo-user", email: "demo@example.com" })),
+        ),
+      );
+
       await useAuthStore.getState().loginDemo();
 
       const state = useAuthStore.getState();
@@ -115,6 +125,11 @@ describe("authStore", () => {
 
   describe("register", () => {
     it("should set user and token on successful registration", async () => {
+      server.use(
+        http.get(`${API_URL}/auth/me`, () =>
+          HttpResponse.json(createMockUser({ email: "newuser@example.com", name: "New User" })),
+        ),
+      );
       const { register } = useAuthStore.getState();
 
       await register("newuser@example.com", "password123", "New User");
@@ -158,6 +173,115 @@ describe("authStore", () => {
     });
   });
 
+  describe("session establishment", () => {
+    it("should take the user from /auth/me, not from the login body", async () => {
+      server.use(
+        http.get(`${API_URL}/auth/me`, () =>
+          HttpResponse.json(createMockUser({ id: "from-me", email: "me@example.com" })),
+        ),
+      );
+
+      await useAuthStore.getState().login("test@example.com", "password123");
+
+      expect(useAuthStore.getState().user).toMatchObject({ id: "from-me", email: "me@example.com" });
+      expect(useAuthStore.getState().isLoading).toBe(false);
+    });
+
+    it("should stay unauthenticated until /auth/me has answered", async () => {
+      let answer!: () => void;
+      server.use(
+        http.get(`${API_URL}/auth/me`, async () => {
+          await new Promise<void>((r) => { answer = r; });
+          return HttpResponse.json(createMockUser());
+        }),
+      );
+
+      const pending = useAuthStore.getState().login("test@example.com", "password123");
+      await vi.waitFor(() => expect(getAccessToken()).toBe(mockAccessToken));
+      expect(useAuthStore.getState().isAuthenticated).toBe(false);
+
+      answer();
+      await pending;
+
+      expect(useAuthStore.getState().isAuthenticated).toBe(true);
+    });
+
+    it("should reject and keep no token when /auth/me fails", async () => {
+      server.use(
+        http.get(`${API_URL}/auth/me`, () =>
+          HttpResponse.json({ message: "Server error" }, { status: 500 }),
+        ),
+      );
+
+      await expect(
+        useAuthStore.getState().login("test@example.com", "password123"),
+      ).rejects.toThrow();
+
+      expect(getAccessToken()).toBeNull();
+      expect(useAuthStore.getState()).toMatchObject({
+        user: null,
+        accessToken: null,
+        isAuthenticated: false,
+        isLoading: false,
+      });
+    });
+
+    it("should send the login only after a pending sign-out has landed", async () => {
+      const order: string[] = [];
+      let releaseLogout!: () => void;
+      server.use(
+        http.post(`${API_URL}/auth/logout`, async () => {
+          await new Promise<void>((r) => { releaseLogout = r; });
+          order.push("logout");
+          return new HttpResponse(null, { status: 204 });
+        }),
+        http.post(`${API_URL}/auth/login`, () => {
+          order.push("login");
+          return HttpResponse.json({ user: createMockUser(), accessToken: mockAccessToken });
+        }),
+      );
+      await useAuthStore.getState().login("test@example.com", "password123");
+      order.length = 0;
+      useAuthStore.getState().logout();
+
+      const next = useAuthStore.getState().login("other@example.com", "password123");
+      await new Promise((r) => setTimeout(r, 20));
+      expect(order).toEqual([]);
+
+      releaseLogout();
+      await next;
+
+      expect(order).toEqual(["logout", "login"]);
+    });
+
+    it("should let a login win over a checkAuth still in flight for an old token", async () => {
+      server.use(
+        http.get(`${API_URL}/auth/me`, async ({ request }) => {
+          const auth = request.headers.get("Authorization");
+          if (auth === "Bearer stale-token") {
+            await new Promise((r) => setTimeout(r, 30));
+            return HttpResponse.json({ message: "Unauthorized" }, { status: 401 });
+          }
+          return HttpResponse.json(createMockUser({ id: "fresh", email: "fresh@example.com" }));
+        }),
+        http.post(`${API_URL}/auth/refresh`, () => new HttpResponse(null, { status: 401 })),
+      );
+      useAuthStore.setState({ accessToken: "stale-token" });
+      setAccessToken("stale-token");
+
+      const check = useAuthStore.getState().checkAuth();
+      await useAuthStore.getState().login("fresh@example.com", "password123");
+      await check;
+
+      expect(useAuthStore.getState()).toMatchObject({
+        isAuthenticated: true,
+        user: { id: "fresh" },
+        accessToken: mockAccessToken,
+      });
+      expect(getAccessToken()).toBe(mockAccessToken);
+    });
+  });
+
   describe("logout", () => {
     it("should clear user and token on logout", async () => {
       // First login
@@ -190,6 +314,57 @@ describe("authStore", () => {
       logout();
 
       expect(useChatStore.getState().sessionIds).toEqual({});
+    });
+
+    it("should empty the query cache so the next user never sees this user's library", async () => {
+      const { login, logout } = useAuthStore.getState();
+      await login("test@example.com", "password123");
+      queryClient.setQueryData(["videos", "list", { folderId: undefined }], { videos: ["mine"] });
+      queryClient.setQueryData(["folders", "list"], [{ id: "f1" }]);
+
+      logout();
+
+      expect(queryClient.getQueryCache().getAll()).toHaveLength(0);
+    });
+
+    it("should forget the user's folder state while keeping layout preferences", async () => {
+      const { login, logout } = useAuthStore.getState();
+      await login("test@example.com", "password123");
+      useUIStore.getState().expandFolder("f1");
+      useUIStore.getState().toggleFavorite("v1");
+      useUIStore.getState().setSidebarWidth(444);
+
+      logout();
+
+      expect(useUIStore.getState().expandedFolderIds).toEqual([]);
+      expect(useUIStore.getState().favoriteVideoIds).toEqual([]);
+      expect(useUIStore.getState().sidebarWidth).toBe(444);
+    });
+
+    it("should abort the open chat and pipeline streams", async () => {
+      const { login, logout } = useAuthStore.getState();
+      await login("test@example.com", "password123");
+      const chatTurn = new AbortController();
+      registerChatStream(chatTurn);
+      useProcessingStore.getState().setStreamState("vs-1", { phase: "connecting", metadata: null, error: null });
+
+      logout();
+
+      expect(chatTurn.signal.aborted).toBe(true);
+      expect(useProcessingStore.getState().streams.size).toBe(0);
+    });
+
+    it("should expose the sign-out call so a login can wait for it", async () => {
+      const { login, logout } = useAuthStore.getState();
+      await login("test@example.com", "password123");
+
+      logout();
+
+      const pending = pendingLogoutRequest();
+      expect(pending).not.toBeNull();
+      await pending;
+      await new Promise((r) => setTimeout(r, 0));
+      expect(pendingLogoutRequest()).toBeNull();
     });
 
     it("should not throw even if logout API fails", async () => {
@@ -239,6 +414,18 @@ describe("authStore", () => {
       forceLogout("Session expired");
 
       expect(useChatStore.getState().sessionIds).toEqual({});
+    });
+
+    it("should empty the query cache and the user's folder state", async () => {
+      const { login, forceLogout } = useAuthStore.getState();
+      await login("test@example.com", "password123");
+      queryClient.setQueryData(["folders", "list"], [{ id: "f1" }]);
+      useUIStore.getState().expandFolder("f1");
+
+      forceLogout("Session expired");
+
+      expect(queryClient.getQueryCache().getAll()).toHaveLength(0);
+      expect(useUIStore.getState().expandedFolderIds).toEqual([]);
     });
 
     it("should set null reason when none provided", async () => {

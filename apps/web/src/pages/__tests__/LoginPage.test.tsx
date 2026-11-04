@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { http, HttpResponse } from "msw";
 import { renderWithProviders, screen, userEvent, waitFor } from "../../test/test-utils";
 import { server } from "../../test/mocks/server";
 import { useAuthStore } from "../../stores/auth-store";
 import { setAccessToken } from "../../api/client";
+import { createMockUser } from "../../test/mocks/handlers";
 import { Navigate, useLocation } from "react-router-dom";
 import { LoginPage } from "../LoginPage";
 
@@ -139,6 +140,97 @@ describe("LoginPage", () => {
       expect(
         await screen.findByText("The demo isn't available right now. Please try again later."),
       ).toBeInTheDocument();
+    });
+  });
+
+  describe("sign-in submit", () => {
+    async function fillCredentials(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+      await user.type(await screen.findByLabelText(/email/i), "user@example.com");
+      await user.type(screen.getByLabelText(/^password/i), "password123");
+    }
+
+    it("should send one login for a double click", async () => {
+      let loginCalls = 0;
+      mockRegistrationStatus({ open: false });
+      server.use(
+        http.post(`${API_URL}/auth/login`, async () => {
+          loginCalls += 1;
+          await new Promise((r) => setTimeout(r, 30));
+          return HttpResponse.json({ user: createMockUser(), accessToken: "t1" });
+        }),
+      );
+      const user = userEvent.setup();
+      renderWithProviders(<LoginPage />, { route: "/login" });
+      await fillCredentials(user);
+
+      await user.dblClick(screen.getByRole("button", { name: "Sign in" }));
+
+      await waitFor(() => expect(window.location.pathname).toBe("/board"));
+      expect(loginCalls).toBe(1);
+    });
+
+    it("should keep the button disabled from the click until the board takes over", async () => {
+      mockRegistrationStatus({ open: false });
+      server.use(
+        http.post(`${API_URL}/auth/login`, async () => {
+          await new Promise((r) => setTimeout(r, 30));
+          return HttpResponse.json({ user: createMockUser(), accessToken: "t1" });
+        }),
+      );
+      const user = userEvent.setup();
+      renderWithProviders(<LoginPage />, { route: "/login" });
+      await fillCredentials(user);
+
+      await user.click(screen.getByRole("button", { name: "Sign in" }));
+
+      expect(screen.getByRole("button", { name: /signing in/i })).toBeDisabled();
+      await waitFor(() => expect(window.location.pathname).toBe("/board"));
+      // Still pending after the 200: the page unmounts when the board renders,
+      // so there is never a window for a second click.
+      expect(screen.getByRole("button", { name: /signing in/i })).toBeDisabled();
+    });
+
+    it("should re-enable the button when the login fails", async () => {
+      mockRegistrationStatus({ open: false });
+      server.use(
+        http.post(`${API_URL}/auth/login`, () =>
+          HttpResponse.json({ message: "Invalid credentials" }, { status: 401 }),
+        ),
+      );
+      const user = userEvent.setup();
+      renderWithProviders(<LoginPage />, { route: "/login" });
+      await fillCredentials(user);
+
+      await user.click(screen.getByRole("button", { name: "Sign in" }));
+
+      expect(await screen.findByText(/email or password is incorrect/i)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Sign in" })).toBeEnabled();
+    });
+
+    it("should navigate only once /auth/me has vouched for the session", async () => {
+      let answerMe!: () => void;
+      mockRegistrationStatus({ open: false });
+      server.use(
+        http.get(`${API_URL}/auth/me`, async () => {
+          await new Promise<void>((r) => { answerMe = r; });
+          return HttpResponse.json(createMockUser());
+        }),
+      );
+      const user = userEvent.setup();
+      renderWithProviders(<LoginPage />, { route: "/login" });
+      await fillCredentials(user);
+
+      await user.click(screen.getByRole("button", { name: "Sign in" }));
+
+      await vi.waitFor(() => expect(answerMe).toBeDefined());
+      await new Promise((r) => setTimeout(r, 20));
+      expect(window.location.pathname).toBe("/login");
+      expect(useAuthStore.getState().isAuthenticated).toBe(false);
+
+      answerMe();
+
+      await waitFor(() => expect(window.location.pathname).toBe("/board"));
+      expect(useAuthStore.getState().isAuthenticated).toBe(true);
     });
   });
 
