@@ -3,6 +3,7 @@ import { http, HttpResponse } from "msw";
 import { server } from "@/test/mocks/server";
 import { createMockUser } from "@/test/mocks/handlers";
 import { useAuthStore } from "../auth-store";
+import { useChatStore } from "../chat-store";
 import { setAccessToken, getAccessToken } from "@/api/client";
 
 const API_URL = "http://localhost:3000/api";
@@ -181,6 +182,16 @@ describe("authStore", () => {
       expect(getAccessToken()).toBeNull();
     });
 
+    it("should drop every chat session id so the next user starts new sessions", async () => {
+      const { login, logout } = useAuthStore.getState();
+      await login("test@example.com", "password123");
+      useChatStore.getState().ensureSessionId("vid-1");
+
+      logout();
+
+      expect(useChatStore.getState().sessionIds).toEqual({});
+    });
+
     it("should not throw even if logout API fails", async () => {
       // Override logout to fail
       server.use(
@@ -218,6 +229,16 @@ describe("authStore", () => {
       expect(state.accessToken).toBeNull();
       expect(state.isAuthenticated).toBe(false);
       expect(state.logoutReason).toBe("Session expired");
+    });
+
+    it("should drop every chat session id", async () => {
+      const { login, forceLogout } = useAuthStore.getState();
+      await login("test@example.com", "password123");
+      useChatStore.getState().ensureSessionId("library");
+
+      forceLogout("Session expired");
+
+      expect(useChatStore.getState().sessionIds).toEqual({});
     });
 
     it("should set null reason when none provided", async () => {

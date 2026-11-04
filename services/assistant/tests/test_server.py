@@ -286,6 +286,7 @@ class TestActionTrace:
 
         spy = AsyncMock()
         spy.dispatch_action = AsyncMock(return_value={"done": True})
+        spy.youtube_id_of = AsyncMock(return_value=None)
         app.state.assistant_service = spy
         try:
             async with AsyncClient(
@@ -307,6 +308,30 @@ class TestActionTrace:
         trace = langfuse_capture.named("chat:library")
         assert trace.attributes["session.id"] == "chat-chat-session-1"
         assert "requestId:req-action-1234" in trace.attributes["langfuse.trace.tags"]
+
+    async def test_should_tag_a_video_action_with_its_youtube_id(self, langfuse_capture):
+        from httpx import ASGITransport, AsyncClient
+        from src.server import app
+
+        spy = AsyncMock()
+        spy.dispatch_action = AsyncMock(return_value={"done": True})
+        spy.youtube_id_of = AsyncMock(return_value="yt-action-1")
+        app.state.assistant_service = spy
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+                headers={"X-Internal-Secret": "dev-internal-secret-change-me"},
+            ) as client:
+                resp = await client.post(
+                    "/action", json={"action": "quiz_me", "video_id": "vsum-action", "params": {}}
+                )
+                assert resp.status_code == 200
+        finally:
+            app.state.assistant_service = None
+
+        tags = langfuse_capture.named("chat:vsum-action").attributes["langfuse.trace.tags"]
+        assert {"videoSummaryId:vsum-action", "youtubeId:yt-action-1"} <= set(tags)
 
 
 class TestLibraryChatEndpoint:

@@ -69,14 +69,10 @@ interface PersistedChatState {
   sessionIds: Record<string, string>;
 }
 
-/** v0 stored only `messages`; v1 adds `sessionIds`. */
+/** v0 stored only `messages`; v1 adds `sessionIds`, which a v0 transcript never had. */
 function migrateChatState(persisted: unknown): PersistedChatState {
-  const state = (persisted ?? {}) as Partial<PersistedChatState>;
-  return {
-    messages: Array.isArray(state.messages) ? state.messages : [],
-    sessionIds:
-      state.sessionIds && typeof state.sessionIds === "object" ? state.sessionIds : {},
-  };
+  const { messages } = (persisted ?? {}) as Partial<PersistedChatState>;
+  return { messages: Array.isArray(messages) ? messages : [], sessionIds: {} };
 }
 
 export const useChatStore = create<ChatState>()(

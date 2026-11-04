@@ -98,6 +98,11 @@ def _decoded(value: Any) -> Any:
         return value
 
 
+def _as_text(value: Any) -> str:
+    """The model's answer as text: a JSON answer the SDK stored unquoted decodes to an object."""
+    return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+
+
 def _trace_name_filter(summary_id: str) -> str:
     """v2 ``filter``: the observations of the trace named ``pipeline:<videoSummaryId>``."""
     return json.dumps(
@@ -129,7 +134,7 @@ def generations_from(observations: list[dict[str, Any]], summary_id: str) -> dic
     plan = by_name["plan"]
     return {
         "trace_id": trace_id,
-        "probe_output": _decoded(by_name["tier_probe"].get("output")),
+        "probe_output": _as_text(_decoded(by_name["tier_probe"].get("output"))),
         "description_request": _decoded(by_name["description_analysis"].get("input")),
         "plan_request": _decoded(plan.get("input")),
         "plan_model": plan.get("model"),

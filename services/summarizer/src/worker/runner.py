@@ -65,17 +65,16 @@ def retry_backoff_seconds(base_seconds: float, attempt: int) -> float:
 
 
 def _job_usage_ids(payload: VideoJobPayload) -> dict[str, Any]:
-    """The ledger ids a job starts with; the runner refines the run ones once it resolves the attempt."""
+    """The ledger ids a job starts with; ``usage_scope`` sets every other id to None.
+
+    The attempt's own ids (run, trace, attempt, version, bypass, chat session) are
+    bound by the runner once it resolved the attempt (``pipeline_runner._bind_run``).
+    """
     return {
         "request_id": payload.request_id,
         "video_id": payload.youtube_id,
         "video_summary_id": payload.video_summary_id,
         "user_id": payload.user_id,
-        "run_id": payload.run_id,
-        "session_id": payload.chat_session_id,
-        "attempt": payload.attempt,
-        "pipeline_version": payload.pipeline_version,
-        "bypass": payload.bypass_cache,
     }
 
 

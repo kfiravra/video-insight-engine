@@ -131,7 +131,7 @@ class TestUsageIdScope:
     """D9: a job's ledger ids are its own and do not outlive it (the worker inheritance bug)."""
 
     async def test_should_bind_the_job_ids_for_the_ledger_during_the_pipeline(self):
-        from llm_common.context import usage_ids
+        from llm_common.context import bind_usage_ids, usage_ids
 
         captured: dict[str, object] = {}
 
@@ -139,25 +139,20 @@ class TestUsageIdScope:
             captured.update(usage_ids())
 
         runner = WorkerRunner(run_pipeline=capturing_pipeline, republish=AsyncMock(), max_retries=3)
-        body = {
-            **VALID_PAYLOAD,
-            "runId": "run-w1",
-            "chatSessionId": "chat-w1",
-            "pipelineVersion": "v10",
-        }
+        tokens = bind_usage_ids(run_id="previous-job-run")
+        try:
+            await runner.process_message(_make_message(json.dumps(VALID_PAYLOAD).encode("utf-8")))
+        finally:
+            from llm_common.context import llm_run_id_var
 
-        await runner.process_message(_make_message(json.dumps(body).encode("utf-8")))
+            llm_run_id_var.reset(tokens[0])
 
         assert captured["request_id"] == "ctx-binding-test"
         assert captured["video_id"] == "dQw4w9WgXcQ"
+        assert captured["video_summary_id"] == "abc123def456789012345678"
         assert captured["user_id"] == "user-42"
-        assert captured["run_id"] == "run-w1"
-        assert captured["session_id"] == "chat-w1"
-        assert (captured["attempt"], captured["pipeline_version"], captured["bypass"]) == (
-            1,
-            "v10",
-            False,
-        )
+        # The attempt's ids are the runner's to bind; the job starts with none.
+        assert captured["run_id"] is None
 
     async def test_should_restore_the_ledger_ids_after_the_job(self):
         from llm_common.context import bind_usage_ids, usage_ids

@@ -61,7 +61,20 @@ Trace: pipeline:{youtubeId}   (id = trace_id_for_run(runId); session pipeline-{v
 └── (assembly itself makes no LLM call — pure code; the hero rewrite's wait (`phase:synthesis`), the quiz and moment fill run inside its `phase:assembly` wall)
 ```
 
-For the assistant, one chat turn = one trace named `chat:{videoId}` (`chat:library` for library chat), tagged `videoId:<id>`; the turns of one chat share the session `chat-<X-Session-Id>` when the caller sends that header. The user id follows `LANGFUSE_USER_ID_MODE` and is never a tag. Tool runs are `tool`-type observations nested under the loop span that called them (`tool:concept_explain`, `tool:quiz_generator`, …); the agentic loop's LLM calls are `library_generation` (answer) and `library_agent` (tool-selection) spans/generations — the same names for single-video RAG chat and library chat, since both run `run_agentic_loop`. Query translation logs as `query_translate`. `/action` dispatch opens its own trace (tags `action`, `action:{action}`) with an `action:{action}` span. Each named LLM call is a generation opened before the request; a provider failure ends it `ERROR`, a stream the client abandons ends it `WARNING` (`client disconnected`). The tool router owns the per-tool `llm_feature_var` (`assistant:tool:<name>`, set/reset around dispatch so siblings aren't mislabelled); endpoints set `assistant:rag_chat` / `assistant:library_chat` / `assistant:action:<action>` plus `user_id` / `video_id` / `request_id` so assistant `llm_usage` rows are attributable.
+For the assistant, one chat turn = one trace named `chat:{videoSummaryId}` (`chat:library` for library chat), tagged `videoSummaryId:<id>` and `youtubeId:<id>` (video chat), `requestId:<id>` and `turn:<n>` (the user messages in the history sent with the turn, plus one; the history is shared across surfaces, so a session that starts after the user chatted elsewhere does not start at `turn:1`). The web mints one session id per chat surface (one per video chat, one for the library chat; `sessionIds` in the `vie-chat` store, dropped with the transcript on "New chat" and logout) and sends it as `X-Session-Id` on every chat and action request; vie-api forwards it, so every turn of one surface — and every `/action` it sends — lands in the session `chat-<sessionId>`. The user id follows `LANGFUSE_USER_ID_MODE` and is never a tag. The agentic loop runs up to `MAX_TOOL_ITERS` rounds: each round is a `library_agent` span (the tool-selection generation; when the model calls no tool, its content is the answer), followed by one `tool:<name>` observation (type `tool`) per tool the model asked for, opened inside `execute_tool` as a sibling of the `library_agent` span under the turn's root (the LLM calls a tool makes, e.g. `organize_library`, nest under it; a tool that returns an error ends `WARNING` with the error as `statusMessage`). A `library_generation` span streams the answer only when tools are off (no vie-api client or no user) or the tool budget ran out — the same names for single-video RAG chat and library chat, since both run `run_agentic_loop`. Query translation logs as `query_translate`. `/action` dispatch opens its own trace (tags `action`, `action:{action}`, plus `videoSummaryId:` and `youtubeId:` for a video action and `requestId:`; no `turn:`) with an `action:{action}` span, in the chat session when the header is sent. A video the agent generates (`generate_video`) is dispatched with the chat's `X-Request-ID` and `X-Session-Id`, so its pipeline trace carries `chatSession:<sessionId>`. Each named LLM call is a generation opened before the request; a provider failure ends it `ERROR`, a stream the client abandons ends it `WARNING` (`client disconnected`). The tool router owns the per-tool `llm_feature_var` (`assistant:tool:<name>`, set/reset around dispatch so siblings aren't mislabelled); endpoints set `assistant:rag_chat` / `assistant:library_chat` / `assistant:action:<action>` plus the ledger ids below so assistant `llm_usage` rows are attributable.
+
+```
+Trace: chat:{videoSummaryId} | chat:library   (session chat-{sessionId}; tags videoSummaryId, youtubeId, requestId, turn:<n>)
+├── generation: query_translate      (non-English questions)
+├── span: library_agent              (round 1: tool selection; with no tool call its content is the answer)
+│   └── generation: library_agent
+├── tool: tool:<name>                (one per tool the round asked for; WARNING when the tool returned an error)
+│   └── generation: …                (a tool's own LLM call, e.g. organize_library)
+├── span: library_agent              (round 2 …)
+│   └── generation: library_agent
+└── span: library_generation         (only without tools, or after the tool budget ran out)
+    └── generation: library_generation
+```
 
 ### Ids: run, trace, session, request
 
@@ -69,8 +82,11 @@ For the assistant, one chat turn = one trace named `chat:{videoId}` (`chat:libra
 |---|---|---|
 | `runId` | vie-api mints one per dispatch (`dispatchPipeline`) and pushes a `dispatched` entry on `videoSummaryCache.runs[]`; the summarizer takes it over when the attempt starts (`running`). An attempt the api did not dispatch (worker retry, DLQ replay, `POST /regenerate`, a legacy message) or whose id already ran gets a fresh uuid with `retryOf` (`services/pipeline/run_registry.py`). The terminal status callback carries it and closes the entry. | tag `run:`, root metadata/input `runId`, `runs[]`, the `POST /api/videos` / `GET /api/videos/:id` responses |
 | trace id | `trace_id_for_run(runId)` (Python, llm-common) = `traceIdForRun(runId)` (TS, api) = `Langfuse.create_trace_id(seed=runId)` | the Langfuse trace id; `runs[].traceId`; responses next to `runId` |
-| session | `pipeline-{videoSummaryId}` | every attempt of one row |
+| session | `pipeline-{videoSummaryId}` (pipeline) / `chat-{sessionId}` (chat) | every attempt of one row / every turn and action of one chat surface |
+| `sessionId` | the web, one uuid per chat surface (`X-Session-Id`); vie-api validates it with the request-id pattern (a bad value is dropped) and forwards it to the assistant, and into `dispatchPipeline` → `runs[].chatSessionId` → queue/HTTP `chatSessionId` for a video the agent generates | Langfuse session `chat-<id>`, pipeline tag `chatSession:<id>`, `llm_usage.session_id`, log field `sessionId` (pino) / `session_id` (structlog), Sentry tag `sessionId` (api) |
 | `requestId` | the api request that dispatched | tag `requestId:`, `runs[].requestId`, `llm_usage.request_id` (billing settles by it, unchanged) |
+
+Every `llm_usage` row also carries the ids of its attempt or chat (D9): `run_id`, `trace_id`, `attempt`, `pipeline_version`, `bypass` (pipeline rows) and `session_id` (chat rows, and pipeline rows started from chat), next to `request_id`, `video_id` (always the YouTube id) and `video_summary_id`. They come from `llm_common.context` (`USAGE_ID_VARS`): the queue worker sets all of them per job in `usage_scope(...)` and restores them when the job ends (a worker process runs many jobs, so a job's ids must never reach the next one's rows), the runner re-binds the attempt's ids once it resolved the run, `run_trace` binds its trace id, and the assistant's middleware binds the session id. The admin and vie-api build `(run_id, timestamp)` and `(session_id, timestamp)` indexes; the 90-day scrub removes the three new ids with `user_id`, `request_id` and `prompt_preview`.
 
 ### Admin "Open in Langfuse" deep-link
 
@@ -323,7 +339,7 @@ Given a `request-id`:
 | Langfuse trace | search traces by tag `requestId:<id>` |
 | Sentry event | search events by tag `requestId:<id>` |
 
-Or run `./scripts/find-request.sh <request-id>` from the repo root — it greps docker logs across all three services in parallel.
+Log lines and Langfuse also take a run id (`runId` on pino lines, `run_id` on structlog lines from the worker and the runner; Langfuse tag `run:<id>`) and a chat session id (`sessionId` / `session_id`; Langfuse session `chat-<id>`); in Sentry only vie-api tags `sessionId` so far. Or run `./scripts/find-request.sh <request-id | run-id | session-id>` from the repo root — it greps the docker logs of vie-api, vie-summarizer, vie-summarizer-worker, vie-assistant and vie-admin.
 
 ### Sentry init
 

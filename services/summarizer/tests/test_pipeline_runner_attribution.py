@@ -167,3 +167,22 @@ class TestRunIdsOnTheLedger:
             None
         ] * 5
         assert "run_id" not in structlog.contextvars.get_contextvars()
+
+    def test_should_bind_the_run_and_chat_session_on_log_lines(self):
+        from llm_common.observability import trace_id_for_run
+
+        from src.services.pipeline.run_registry import RunIdentity
+
+        run = RunIdentity(
+            run_id="run-log-2",
+            trace_id=trace_id_for_run("run-log-2"),
+            attempt=1,
+            chat_session_id="chat-7",
+        )
+        try:
+            pipeline_runner._bind_run(run)
+            bound = structlog.contextvars.get_contextvars()
+            assert (bound.get("run_id"), bound.get("session_id")) == ("run-log-2", "chat-7")
+        finally:
+            pipeline_runner._bind_run(None)
+        assert "session_id" not in structlog.contextvars.get_contextvars()

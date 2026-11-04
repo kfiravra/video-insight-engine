@@ -460,6 +460,22 @@ describe('assistant library routes', () => {
       );
     });
 
+    it('should forward the chat session header as sessionId', async () => {
+      mockContainer.videoRepository.getUserVideos.mockResolvedValue([{ youtubeId: 'vidA' }]);
+      mockContainer.assistantClient.librarySearch.mockResolvedValue({ status: 200, body: searchEnvelope });
+
+      await app.inject({
+        method: 'POST',
+        url: '/api/assistant/library/search',
+        headers: { authorization: authHeader, 'x-session-id': 'chat-session-abcdef12' },
+        payload: { query: 'react hooks' },
+      });
+
+      expect(mockContainer.assistantClient.librarySearch).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionId: 'chat-session-abcdef12' }),
+      );
+    });
+
     it('should ignore a client-supplied id list and derive ids from req.user (cross-user isolation)', async () => {
       mockContainer.videoRepository.getUserVideos.mockResolvedValue([{ youtubeId: 'vidB' }]);
       mockContainer.assistantClient.librarySearch.mockResolvedValue({

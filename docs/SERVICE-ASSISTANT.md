@@ -235,6 +235,7 @@ Structured action endpoint — dispatches to a registered tool based on `action`
 **Headers**
 - `X-Internal-Secret: <secret>` — required
 - `X-User-Id: <user_id>` — optional; used to attribute notes and key the rate limit bucket
+- `X-Request-ID`, `X-Session-Id` — optional; see [Correlation headers](#correlation-headers)
 
 **Request:**
 ```json
@@ -276,6 +277,19 @@ The same envelope is used for 400/404 with `success: false` and `error` populate
 - `503` — assistant not initialized
 
 ---
+
+### Correlation headers
+
+Every endpoint reads the same headers from vie-api:
+
+| Header | Required | Use |
+|---|---|---|
+| `X-Internal-Secret` | yes | service-to-service auth (403 otherwise) |
+| `X-User-Id` | no | the user: rate-limit bucket, Langfuse user (by `LANGFUSE_USER_ID_MODE`), `llm_usage.user_id`, tools' ownership scope |
+| `X-Request-ID` | no | bound on log lines (`request_id`), `llm_usage.request_id`, trace tag `requestId:`; forwarded on calls back to vie-api |
+| `X-Session-Id` | no | the chat surface's session (D8): Langfuse session `chat-<id>`, `llm_usage.session_id`, log field `session_id`; forwarded on calls back to vie-api, so a generated video's pipeline run carries `chatSession:<id>` |
+
+`X-Request-ID` and `X-Session-Id` must match `^[A-Za-z0-9_-]{8,128}$`; anything else is dropped (the request id is then a fresh UUID). `video_id` in the bodies is the `videoSummaryId`; the service resolves the YouTube id from the video context and puts that on the ledger (`llm_usage.video_id`) and the trace (`youtubeId:`).
 
 ## SSE Event Types
 

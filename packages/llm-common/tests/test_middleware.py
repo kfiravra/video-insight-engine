@@ -213,20 +213,20 @@ class TestSessionId:
         seen["after"] = llm_session_id_var.get()
         return seen
 
-    def test_binds_a_valid_session_id_for_logs_and_ledger(self):
+    def test_should_bind_the_session_for_logs_and_ledger_when_the_header_is_valid(self):
         seen = self._run_capturing({"X-Session-Id": "3f2b8c1e-7a4d-4e5f-9b6a-1c2d3e4f5a6b"})
         assert seen["log"] == seen["ledger"] == "3f2b8c1e-7a4d-4e5f-9b6a-1c2d3e4f5a6b"
 
-    def test_drops_a_forged_session_id(self):
+    def test_should_drop_the_session_when_the_header_is_forged(self):
         seen = self._run_capturing({"X-Session-Id": "abc12345\nforged"})
         assert seen["log"] is None
         assert seen["ledger"] is None
 
-    def test_binds_nothing_without_the_header(self):
+    def test_should_bind_no_session_when_the_header_is_absent(self):
         seen = self._run_capturing({})
         assert seen["log"] is None
         assert seen["ledger"] is None
 
-    def test_resets_the_ledger_session_after_the_request(self):
+    def test_should_reset_the_ledger_session_when_the_request_ends(self):
         seen = self._run_capturing({"X-Session-Id": "chat-session-abcdef12"})
         assert seen["after"] is None

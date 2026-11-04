@@ -389,6 +389,12 @@ class TestEqaTraceRead:
         assert trace["plan_usage"] == {"output": 833}
         assert trace["plan_metadata"] == {"cacheReadTokens": 16290}
 
+    def test_should_keep_an_unquoted_json_answer_parseable_when_v4_stored_it_raw(self) -> None:
+        observations = self._observations()
+        observations[1]["output"] = _PROBE  # the v4 SDK passes string outputs through
+        probe = generations_from(observations, "6acd")["probe_output"]
+        assert json.loads(probe) == json.loads(_PROBE)
+
     def test_should_refuse_observations_from_more_than_one_trace(self) -> None:
         observations = [*self._observations(), _observation("plan", trace="t2")]
         with pytest.raises(ValueError, match="2 traces"):

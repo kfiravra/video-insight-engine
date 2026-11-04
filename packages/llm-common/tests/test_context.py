@@ -1,6 +1,19 @@
 """Tests for llm_common.context — ContextVar propagation."""
 
-from llm_common.context import llm_feature_var, llm_request_id_var, llm_video_id_var
+import pytest
+
+from llm_common.context import (
+    USAGE_ID_VARS,
+    bind_usage_ids,
+    llm_feature_var,
+    llm_request_id_var,
+    llm_run_id_var,
+    llm_session_id_var,
+    llm_user_id_var,
+    llm_video_id_var,
+    usage_ids,
+    usage_scope,
+)
 
 
 def test_feature_var_default():
@@ -29,17 +42,6 @@ def test_video_id_var_set():
 
 
 # ─── D9 usage ids ─────────────────────────────────────────────────────────
-import pytest  # noqa: E402
-
-from llm_common.context import (  # noqa: E402
-    USAGE_ID_VARS,
-    bind_usage_ids,
-    llm_run_id_var,
-    llm_session_id_var,
-    llm_user_id_var,
-    usage_ids,
-    usage_scope,
-)
 
 _RUN_IDS = {
     "run_id": "run-1",
@@ -51,11 +53,11 @@ _RUN_IDS = {
 }
 
 
-def test_new_usage_ids_default_to_none():
+def test_should_read_none_for_every_run_id_when_nothing_is_bound():
     assert {name: usage_ids()[name] for name in _RUN_IDS} == dict.fromkeys(_RUN_IDS)
 
 
-def test_bind_usage_ids_sets_named_ids_and_returns_reset_tokens():
+def test_should_set_the_named_ids_and_return_reset_tokens_when_binding():
     tokens = bind_usage_ids(**_RUN_IDS)
     try:
         assert {name: usage_ids()[name] for name in _RUN_IDS} == _RUN_IDS
@@ -65,12 +67,12 @@ def test_bind_usage_ids_sets_named_ids_and_returns_reset_tokens():
     assert llm_run_id_var.get() is None
 
 
-def test_bind_usage_ids_rejects_an_unknown_name():
+def test_should_refuse_an_unknown_name_when_binding():
     with pytest.raises(TypeError, match="unknown usage id"):
         bind_usage_ids(runid="typo")
 
 
-def test_usage_scope_clears_ids_it_was_not_given():
+def test_should_clear_the_ids_a_scope_was_not_given_when_it_opens():
     token = llm_user_id_var.set("previous-job-user")
     try:
         with usage_scope(run_id="run-2"):
@@ -81,7 +83,7 @@ def test_usage_scope_clears_ids_it_was_not_given():
         llm_user_id_var.reset(token)
 
 
-def test_usage_scope_restores_ids_set_inside_it():
+def test_should_restore_ids_set_inside_a_scope_when_it_closes():
     """The worker inheritance bug: a job's own sets must not survive the job."""
     with usage_scope(run_id="run-3"):
         bind_usage_ids(session_id="set-mid-job", run_id="replaced")
@@ -89,7 +91,7 @@ def test_usage_scope_restores_ids_set_inside_it():
     assert llm_run_id_var.get() is None
 
 
-def test_usage_scope_restores_on_error():
+def test_should_restore_the_ids_when_the_job_fails():
     with pytest.raises(RuntimeError), usage_scope(run_id="run-4"):
         raise RuntimeError("job failed")
     assert llm_run_id_var.get() is None

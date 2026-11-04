@@ -61,8 +61,9 @@ export class LlmUsageRepository {
    * `prompt_preview`, from every service. `request_id` goes too: it joins to
    * the ledger's `source.ref`, whose rows name the user (I6) — a settle reads
    * it at completion, never after 90 days. So do the D9 ids (`run_id`,
-   * `trace_id`, `session_id`): each joins to a `runs[]` entry or a Langfuse
-   * trace/session that names the user. Cost, model and timestamp stay. At
+   * `trace_id`, `session_id`): they join a row to its `runs[]` entry (which
+   * keeps `userId` until an erasure strips it) and to its Langfuse trace or
+   * session (user id per LANGFUSE_USER_ID_MODE). Cost, model and timestamp stay. At
    * most `limit` rows per call; a re-run matches nothing it already cleared.
    * Returns the rows changed.
    */

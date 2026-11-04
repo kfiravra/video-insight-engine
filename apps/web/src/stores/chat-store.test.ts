@@ -104,7 +104,7 @@ describe("chat-store", () => {
   });
 
   describe("persistence", () => {
-    it("should persist only messages, not status, under the vie-chat key", () => {
+    it("should persist the messages, not the status, under the vie-chat key", () => {
       useChatStore.getState().setMessages([makeMessage()]);
       useChatStore.getState().setStatus("streaming");
 
@@ -138,6 +138,25 @@ describe("chat-store", () => {
   });
 
   describe("rehydrate sanitize", () => {
+    it("should clear isStreaming on a v1 transcript and keep its session ids", async () => {
+      localStorage.setItem(
+        "vie-chat",
+        JSON.stringify({
+          state: {
+            messages: [makeMessage({ id: "interrupted-v1", isStreaming: true })],
+            sessionIds: { "vid-1": "kept-session-id" },
+          },
+          version: 1,
+        }),
+      );
+
+      await useChatStore.persist.rehydrate();
+
+      const msg = useChatStore.getState().messages.find((m) => m.id === "interrupted-v1");
+      expect(msg?.isStreaming).toBe(false);
+      expect(useChatStore.getState().sessionIds).toEqual({ "vid-1": "kept-session-id" });
+    });
+
     it("should clear isStreaming on rehydrated messages", () => {
       // Seed storage with a message stuck mid-stream (as a nav-interrupted
       // reload would leave it), then rehydrate from it.

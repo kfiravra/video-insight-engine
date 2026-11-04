@@ -9,10 +9,9 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from llm_common.context import bind_usage_ids, llm_feature_var
+from llm_common.context import bind_usage_ids, llm_feature_var, llm_session_id_var
 from llm_common.middleware import (
     REQUEST_ID_HEADER,
-    SESSION_ID_HEADER,
     add_request_context_middleware,
     valid_correlation_id,
 )
@@ -48,11 +47,12 @@ logger = get_logger(__name__)
 
 
 def _correlation_ids(req: Request) -> tuple[str | None, str | None]:
-    """The gateway's ``(request_id, session_id)``, each dropped unless it is a safe id."""
-    return (
-        valid_correlation_id(req.headers.get(REQUEST_ID_HEADER)),
-        valid_correlation_id(req.headers.get(SESSION_ID_HEADER)),
-    )
+    """The gateway's ``(request_id, session_id)``; a request id that is not a safe id is dropped.
+
+    The session id is the one ``RequestContextMiddleware`` validated and bound for
+    the ledger, so the trace and the ``llm_usage`` rows always name the same session.
+    """
+    return valid_correlation_id(req.headers.get(REQUEST_ID_HEADER)), llm_session_id_var.get()
 
 
 def create_app() -> FastAPI:
@@ -288,6 +288,7 @@ def create_app() -> FastAPI:
         trace_id = uuid4().hex[:12]
         async with chat_trace(
             video_summary_id=request.video_id,
+            youtube_id=await service.youtube_id_of(request.video_id),
             user_id=user_id,
             session_id=session_id,
             request_id=request_id,

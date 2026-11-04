@@ -125,7 +125,7 @@ export async function assistantRoutes(fastify: FastifyInstance) {
       // The assistant's own rate limit is the user's to act on: let the global
       // handler answer 429 RATE_LIMITED instead of masking it as a 502.
       if (error instanceof RateLimitedError) throw error;
-      fastify.log.error(error, 'assistant chat failed');
+      req.log.error(error, 'assistant chat failed');
       return reply.status(502).send({
         error: 'SERVICE_UNAVAILABLE',
         message: 'Assistant service is temporarily unavailable. Please try again.',
@@ -167,7 +167,7 @@ export async function assistantRoutes(fastify: FastifyInstance) {
 
       return reply.status(status).send(body);
     } catch (error) {
-      fastify.log.error(error, 'assistant action failed');
+      req.log.error(error, 'assistant action failed');
       return reply.status(502).send({
         error: 'SERVICE_UNAVAILABLE',
         message: 'Assistant service is temporarily unavailable. Please try again.',

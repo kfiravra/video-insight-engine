@@ -363,6 +363,22 @@ describe('assistant routes', () => {
       expect(mockContainer.assistantClient.action).not.toHaveBeenCalled();
     });
 
+    it('should forward the chat session header as sessionId', async () => {
+      mockContainer.videoRepository.userHasAccessToSummary.mockResolvedValue(true);
+      mockContainer.assistantClient.action.mockResolvedValue({ status: 200, body: successEnvelope });
+
+      await app.inject({
+        method: 'POST',
+        url: `/api/videos/${validVideoSummaryId}/action`,
+        headers: { authorization: authHeader, 'x-session-id': 'chat-session-abcdef12' },
+        payload: { action: 'save_note', params: { text: 'note' } },
+      });
+
+      expect(mockContainer.assistantClient.action).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionId: 'chat-session-abcdef12' }),
+      );
+    });
+
     it('should forward action to assistant with user identity', async () => {
       mockContainer.videoRepository.userHasAccessToSummary.mockResolvedValue(true);
       mockContainer.assistantClient.action.mockResolvedValue({

@@ -119,6 +119,15 @@ class AssistantService:
             user_id=user_id,
         )
 
+    async def youtube_id_of(self, video_id: str | None) -> str | None:
+        """The YouTube id of a ``videoSummaryId`` (cached context), ``None`` when unknown."""
+        if not video_id:
+            return None
+        try:
+            return (await self._load_video_context(video_id)).youtube_id
+        except NotFoundError:
+            return None
+
     async def _load_video_context(self, video_id: str) -> VideoContext:
         """Load video context from cache or MongoDB.
 

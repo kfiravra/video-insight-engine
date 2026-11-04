@@ -263,10 +263,11 @@ def _bind_run(run: RunIdentity | None, *, bypass: bool = False) -> None:
         pipeline_version=settings.PIPELINE_VERSION if run else None,
         bypass=bypass if run else None,
     )
+    structlog.contextvars.unbind_contextvars("run_id", "session_id")
     if run:
         structlog.contextvars.bind_contextvars(run_id=run.run_id)
-    else:
-        structlog.contextvars.unbind_contextvars("run_id")
+        if run.chat_session_id:
+            structlog.contextvars.bind_contextvars(session_id=run.chat_session_id)
 
 
 async def _mark_processing(

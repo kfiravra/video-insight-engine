@@ -4,6 +4,8 @@ import { ApiError, getAccessToken, refreshToken } from "@/api/client";
 import { LIBRARY_CHAT_SURFACE, useChatStore } from "@/stores/chat-store";
 import { runAssistantAction, sendAssistantMessage, sendLibraryMessage } from "../assistant";
 
+const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
 // Mock the API client + auth store so runAssistantAction stays a pure unit test.
 vi.mock("@/api/client", async () => {
   const actual = await vi.importActual<typeof import("@/api/client")>("@/api/client");
@@ -50,6 +52,7 @@ describe("runAssistantAction", () => {
     expect(init.method).toBe("POST");
     expect(init.headers.Authorization).toBe("Bearer token-abc");
     expect(init.headers["Content-Type"]).toBe("application/json");
+    expect(init.headers["X-Session-Id"]).toMatch(UUID_V4);
     expect(init.headers["X-Session-Id"]).toBe(useChatStore.getState().sessionIds["vid-123"]);
     expect(JSON.parse(init.body)).toEqual({
       action: "create_folder",
@@ -207,7 +210,7 @@ describe("X-Session-Id", () => {
     await sendAssistantMessage("vid-1", "hi", [], vi.fn()).catch(() => undefined);
     await sendAssistantMessage("vid-1", "again", [], vi.fn()).catch(() => undefined);
 
-    expect(sentSessionId(0)).toBe(useChatStore.getState().sessionIds["vid-1"]);
+    expect(sentSessionId(0)).toMatch(UUID_V4);
     expect(sentSessionId(1)).toBe(sentSessionId(0));
   });
 
@@ -218,6 +221,7 @@ describe("X-Session-Id", () => {
 
     const ids = [sentSessionId(0), sentSessionId(1), sentSessionId(2)];
     expect(new Set(ids).size).toBe(3);
+    expect(ids.every((id) => UUID_V4.test(id))).toBe(true);
     expect(ids[2]).toBe(useChatStore.getState().sessionIds[LIBRARY_CHAT_SURFACE]);
   });
 
@@ -226,7 +230,21 @@ describe("X-Session-Id", () => {
 
     await runAssistantAction("organize_library", {});
 
+    expect(sentSessionId(0)).toMatch(UUID_V4);
     expect(sentSessionId(0)).toBe(useChatStore.getState().sessionIds[LIBRARY_CHAT_SURFACE]);
+  });
+
+  it("should resend the same session id on the retry after a token refresh", async () => {
+    vi.mocked(getAccessToken).mockReturnValueOnce("token-expired").mockReturnValueOnce("token-fresh");
+    vi.mocked(refreshToken).mockResolvedValueOnce(true);
+    fetchMock
+      .mockResolvedValueOnce({ ok: false, status: 401 })
+      .mockResolvedValueOnce({ ok: false, status: 502 });
+
+    await sendLibraryMessage("hi", [], vi.fn()).catch(() => undefined);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(sentSessionId(1)).toBe(sentSessionId(0));
   });
 
   it("should start a fresh session after the transcript is cleared", async () => {

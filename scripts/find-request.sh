@@ -5,9 +5,10 @@
 # Usage:
 #   scripts/find-request.sh <request-id | run-id | session-id> [--since 1h]
 #
-# Greps the docker logs of the five services that log these ids (vie-api,
-# vie-summarizer, vie-summarizer-worker, vie-assistant, vie-admin) and prints
-# the matching lines under each service's name. Any of the three ids works:
+# Greps the docker logs of vie-api, vie-summarizer, vie-summarizer-worker,
+# vie-assistant and vie-admin (whose lines name only the request ids it mints
+# for its own calls to vie-api) and prints the matching lines under each
+# service's name. Any of the three ids works:
 #   - request id: X-Request-ID, stamped by vie-api on every response and
 #     carried through the queue payload and internal calls (`requestId`,
 #     `request_id` on log lines);
@@ -43,6 +44,10 @@ since_arg=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --since)
+      if [[ $# -lt 2 ]]; then
+        echo "--since needs a value (e.g. 30m)" >&2
+        exit 2
+      fi
       since_arg=(--since "$2")
       shift 2
       ;;
@@ -66,18 +71,19 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 
-# Use grep -F because the id is a literal string — no regex chars.
-# `|| true` keeps `set -e` happy when a service has no matches.
+# Use grep -F because the id is a literal string — no regex chars. The
+# `|| echo` keeps `set -e` happy when a service has no matches.
 for svc in "${services[@]}"; do
   if ! docker ps --format '{{.Names}}' | grep -q "^${svc}$"; then
     echo "[${svc}] (container not running — skipping)"
     continue
   fi
   echo "=== ${svc} ==="
-  docker logs "${since_arg[@]}" "${svc}" 2>&1 | grep -F "${id}" || echo "  (no matches)"
+  # ${arr[@]+"${arr[@]}"}: an empty array under `set -u` on bash < 4.4 (macOS ships 3.2).
+  docker logs ${since_arg[@]+"${since_arg[@]}"} "${svc}" 2>&1 | grep -F "${id}" || echo "  (no matches)"
 done
 
 echo
 echo "Tip: in Langfuse, a run id is the tag 'run:${id}', a request id the tag 'requestId:${id}',"
 echo "     a pipeline session 'pipeline-<videoSummaryId>' and a chat session 'chat-${id}'."
-echo "Tip: in Sentry, filter events by tag 'requestId:${id}', 'runId:${id}' or 'sessionId:${id}'."
+echo "Tip: in Sentry, filter events by tag 'requestId:${id}' (vie-api also tags 'sessionId:${id}')."
