@@ -638,6 +638,51 @@ services:
       vie-qdrant:
         condition: service_healthy
 
+  # ----------------------------------------
+  # Monitoring: Grafana Alloy → Grafana Cloud Free (profile `monitoring`)
+  # ----------------------------------------
+  # Ships every vie-* container's logs to Loki and host / per-container /
+  # RabbitMQ metrics to Prometheus (ops/alloy/config.alloy, observability D12);
+  # prod turns it on with `COMPOSE_PROFILES=monitoring` (with `backup`:
+  # `COMPOSE_PROFILES=backup,monitoring`) in the server `.env`. Privileged with read-only host mounts and the host pid + cgroup
+  # namespaces, as its embedded cAdvisor and node exporter need (plan R6). No
+  # published port; `/-/ready` answers on vie-network:12345. The image has no
+  # curl/wget, so there is no compose healthcheck.
+  vie-alloy:
+    image: grafana/alloy:v1.21.3
+    container_name: vie-alloy
+    restart: unless-stopped
+    logging: *default-logging
+    profiles: ["monitoring"]
+    privileged: true
+    pid: host
+    cgroup: host
+    mem_limit: 256m
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    environment:
+      VIE_ENVIRONMENT: production
+      GRAFANA_CLOUD_LOKI_URL: ${GRAFANA_CLOUD_LOKI_URL:-}
+      GRAFANA_CLOUD_LOKI_USER: ${GRAFANA_CLOUD_LOKI_USER:-}
+      GRAFANA_CLOUD_PROM_URL: ${GRAFANA_CLOUD_PROM_URL:-}
+      GRAFANA_CLOUD_PROM_USER: ${GRAFANA_CLOUD_PROM_USER:-}
+      GRAFANA_CLOUD_WRITE_TOKEN: ${GRAFANA_CLOUD_WRITE_TOKEN:-}
+    volumes:
+      # The directory, not the file: a single-file bind mount keeps the old
+      # inode after an edit and needs --force-recreate.
+      - ./ops/alloy:/etc/alloy:ro
+      - vie_alloy_data:/var/lib/alloy/data
+      - /:/rootfs:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - vie-network
+
 # ----------------------------------------
 # Networks
 # ----------------------------------------
@@ -660,3 +705,5 @@ volumes:
     name: vie_redis_data
   vie_rabbitmq_data:
     name: vie_rabbitmq_data
+  vie_alloy_data:
+    name: vie_alloy_data

@@ -1,0 +1,176 @@
+// Grafana Alloy for vie (observability D12, plan P-15).
+//
+// Logs:    every vie-* container's stdout → Grafana Cloud Loki, labels service + level
+//          (+ environment as an external label, so dev and prod share one free stack).
+// Metrics: host (node exporter), per-container (embedded cAdvisor) and RabbitMQ
+//          per-queue series → Grafana Cloud Prometheus, through a keep-list that holds
+//          the active series well under the free tier's 10k (target ≤ 3k).
+//
+// Every secret and endpoint comes from the environment (docker-compose `vie-alloy`):
+//   GRAFANA_CLOUD_LOKI_URL, GRAFANA_CLOUD_LOKI_USER, GRAFANA_CLOUD_PROM_URL,
+//   GRAFANA_CLOUD_PROM_USER, GRAFANA_CLOUD_WRITE_TOKEN (one access-policy token with
+//   logs:write + metrics:write), VIE_ENVIRONMENT (production | development).
+
+logging {
+  level  = "warn"
+  format = "logfmt"
+}
+
+// ─── Logs ──────────────────────────────────────────────────────────────────
+
+discovery.docker "vie" {
+  host = "unix:///var/run/docker.sock"
+
+  // Only the stack's own containers (every service is named vie-*).
+  filter {
+    name   = "name"
+    values = ["vie-"]
+  }
+}
+
+discovery.relabel "vie_logs" {
+  targets = []
+
+  // "/vie-api" → service="vie-api"
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "service"
+  }
+}
+
+loki.source.docker "vie" {
+  host          = "unix:///var/run/docker.sock"
+  targets       = discovery.docker.vie.targets
+  relabel_rules = discovery.relabel.vie_logs.rules
+  forward_to    = [loki.process.levels.receiver]
+}
+
+loki.process "levels" {
+  // Every service logs JSON in prod (pino in vie-api, structlog elsewhere; the
+  // admin since P3.2). A line that is not JSON keeps no level label.
+  stage.json {
+    expressions = { level = "level" }
+  }
+
+  // pino writes numbers (10 trace … 60 fatal); structlog writes names
+  // ("warning", "critical"). One vocabulary: trace debug info warn error fatal.
+  stage.template {
+    source   = "level"
+    template = `{{ $l := ToLower .Value }}{{ if or (eq $l "10") (eq $l "trace") }}trace{{ else if or (eq $l "20") (eq $l "debug") }}debug{{ else if or (eq $l "30") (eq $l "info") }}info{{ else if or (eq $l "40") (eq $l "warn") (eq $l "warning") }}warn{{ else if or (eq $l "50") (eq $l "error") (eq $l "exception") }}error{{ else if or (eq $l "60") (eq $l "fatal") (eq $l "critical") }}fatal{{ else }}{{ $l }}{{ end }}`
+  }
+
+  stage.labels {
+    values = { level = "" }
+  }
+
+  forward_to = [loki.write.grafana_cloud.receiver]
+}
+
+loki.write "grafana_cloud" {
+  endpoint {
+    url = sys.env("GRAFANA_CLOUD_LOKI_URL")
+
+    basic_auth {
+      username = sys.env("GRAFANA_CLOUD_LOKI_USER")
+      password = sys.env("GRAFANA_CLOUD_WRITE_TOKEN")
+    }
+  }
+
+  external_labels = { environment = coalesce(sys.env("VIE_ENVIRONMENT"), "development") }
+}
+
+// ─── Metrics ───────────────────────────────────────────────────────────────
+
+// The host: the container runs with `pid: host`, so /proc is the host's (including
+// /proc/net, which resolves through "self"); filesystems through the read-only `/:/rootfs`.
+prometheus.exporter.unix "host" {
+  rootfs_path = "/rootfs"
+  procfs_path = "/proc"
+  sysfs_path  = "/sys"
+
+  set_collectors = ["cpu", "filesystem", "loadavg", "meminfo", "netdev", "uname"]
+
+  filesystem {
+    fs_types_exclude     = "^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tmpfs|tracefs)$"
+    mount_points_exclude = "^/(dev|proc|run|sys|var/lib/docker/.+)($|/)"
+  }
+
+  netdev {
+    device_exclude = "^(veth.*|br-.*|docker0|lo)$"
+  }
+}
+
+// Per-container CPU, memory, network and start time (restarts) from the docker socket.
+prometheus.exporter.cadvisor "containers" {
+  docker_host      = "unix:///var/run/docker.sock"
+  docker_only      = true
+  storage_duration = "5m"
+}
+
+prometheus.scrape "host" {
+  targets         = prometheus.exporter.unix.host.targets
+  scrape_interval = "60s"
+  forward_to      = [prometheus.relabel.keep.receiver]
+}
+
+prometheus.scrape "containers" {
+  targets         = prometheus.exporter.cadvisor.containers.targets
+  scrape_interval = "60s"
+  forward_to      = [prometheus.relabel.keep.receiver]
+}
+
+// RabbitMQ's built-in exporter (rabbitmq_prometheus, enabled in the image). The
+// default /metrics is aggregated; /metrics/detailed with these families gives the
+// per-queue depth and consumer count the Pipeline dashboard and alerts read.
+prometheus.scrape "rabbitmq" {
+  targets         = [{ "__address__" = "vie-rabbitmq:15692", "service" = "vie-rabbitmq" }]
+  metrics_path    = "/metrics/detailed"
+  params          = { "family" = ["queue_coarse_metrics", "queue_consumer_count"] }
+  scrape_interval = "60s"
+  forward_to      = [prometheus.relabel.keep.receiver]
+}
+
+// The keep-list: only the series the dashboards and alerts read (ops/grafana/).
+prometheus.relabel "keep" {
+  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+
+  rule {
+    action        = "keep"
+    source_labels = ["__name__"]
+    regex         = "up|node_cpu_seconds_total|node_load(1|5|15)|node_memory_(MemTotal|MemAvailable)_bytes|node_filesystem_(size|avail)_bytes|node_network_(receive|transmit)_bytes_total|node_uname_info|container_cpu_usage_seconds_total|container_memory_working_set_bytes|container_spec_memory_limit_bytes|container_network_(receive|transmit)_bytes_total|container_start_time_seconds|container_last_seen|rabbitmq_detailed_queue_messages(_ready|_unacked)?|rabbitmq_detailed_queue_consumers"
+  }
+
+  // cAdvisor: keep the vie-* containers only (drops the root cgroup and system slices).
+  rule {
+    action        = "drop"
+    source_labels = ["__name__", "name"]
+    regex         = "container_.+;(|[^v].*|v[^i].*|vi[^e].*|vie[^-].*)"
+  }
+
+  // cAdvisor's per-container cgroup path and image digests: high cardinality, unused.
+  rule {
+    action = "labeldrop"
+    regex  = "id|image|container_label_.+"
+  }
+
+  // One CPU mode set is enough for "busy %": drop the rarely used modes.
+  rule {
+    action        = "drop"
+    source_labels = ["__name__", "mode"]
+    regex         = "node_cpu_seconds_total;(guest|guest_nice|nice|steal)"
+  }
+}
+
+prometheus.remote_write "grafana_cloud" {
+  endpoint {
+    url = sys.env("GRAFANA_CLOUD_PROM_URL")
+
+    basic_auth {
+      username = sys.env("GRAFANA_CLOUD_PROM_USER")
+      password = sys.env("GRAFANA_CLOUD_WRITE_TOKEN")
+    }
+  }
+
+  external_labels = { environment = coalesce(sys.env("VIE_ENVIRONMENT"), "development") }
+}

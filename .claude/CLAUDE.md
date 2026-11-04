@@ -33,6 +33,7 @@ Mongo + Redis + Qdrant + RabbitMQ via docker compose. Full context dump: [PROJEC
 - `QdrantClient` calls are sync: mock with `MagicMock`; use `query_points()` (`search()` is gone).
 - Redis response keys are `vie:response:v<N>:<ytid>`; frame-quality changes need a `SCENE_S3_PREFIX` bump.
 - `YOUTUBE_PROXY_URL` is the only proxy setting. Check the admin for live runs before restarting containers (the hook asks).
+- `vie-alloy` (Grafana Cloud logs + metrics) is behind the `monitoring` profile; prod sets `COMPOSE_PROFILES=backup,monitoring`. On Docker Desktop it has no per-container metrics.
 
 ## Git
 
