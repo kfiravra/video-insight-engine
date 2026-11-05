@@ -1,15 +1,24 @@
 """Internal pre-flight metadata endpoint — the summarizer half of the API's billing quote.
 
-yt-dlp metadata only: no captions, no LLM, no pipeline state. It goes through
-``extract_video_data``, so the proxy exit rotation is the one every other
-YouTube call uses.
+Metadata only: no captions, no LLM, no pipeline state. With YOUTUBE_API_KEY set
+the facts come from one YouTube Data API ``videos.list`` call, direct (no
+proxy), so a quote no longer depends on the proxy exits (2026-11-04: flagged
+exits answered "Video unavailable" and every quote 404ed). Without a key, or
+when the Data API cannot answer for the video (403, quota, not found, an age
+or region allow-list restriction, a timeout, a bad body), it goes through
+``extract_video_data`` — yt-dlp with the proxy exit rotation every other
+YouTube call uses — and one warning names why. The pipeline's own metadata
+step always uses yt-dlp.
 """
+
+from __future__ import annotations
 
 import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from yt_dlp.utils import ExtractorError  # type: ignore[import-untyped]
 
+from src.config import settings
 from src.exceptions import TranscriptError
 from src.logging_config import get_logger
 from src.models.schemas import ErrorCode, VideoMetadataResponse
@@ -17,6 +26,7 @@ from src.routes.deps import require_internal_secret
 from src.routes.purge import YOUTUBE_ID_PATTERN
 from src.services.media.download_utils import is_exit_blocked
 from src.services.video.youtube import extract_video_data
+from src.services.video.youtube_data_api import DataApiUnavailable, fetch_video
 
 router = APIRouter(tags=["video"])
 logger = get_logger(__name__)
@@ -60,6 +70,46 @@ def _failure(youtube_id: str, error: TranscriptError) -> HTTPException:
     return HTTPException(status_code=status, detail=detail)
 
 
+def _data_api_fallback(youtube_id: str, reason: str, api_reason: str | None = None) -> None:
+    logger.warning(
+        "video_metadata_data_api_fallback",
+        youtube_id=youtube_id,
+        reason=reason,
+        api_reason=api_reason,
+    )
+
+
+async def _from_data_api(youtube_id: str, api_key: str) -> VideoMetadataResponse | None:
+    """The quote from the Data API, or None (logged) when yt-dlp has to answer instead.
+
+    Raises the route's 422s for a live stream, a premiere that has not started
+    and a video with no duration yet. An age-restricted video and a region
+    allow-list go to yt-dlp: the pipeline judges them with yt-dlp anyway, so
+    the quote should predict that answer. A blocked-country list is served.
+    """
+    try:
+        video = await fetch_video(youtube_id, api_key=api_key)
+    except DataApiUnavailable as e:
+        _data_api_fallback(youtube_id, e.reason, e.api_reason)
+        return None
+    if video.live_broadcast == "live":
+        raise HTTPException(status_code=422, detail="Live streams are not supported")
+    if video.live_broadcast == "upcoming":
+        raise HTTPException(status_code=422, detail="Premiere has not started yet")
+    if video.restriction is not None:
+        _data_api_fallback(youtube_id, f"{video.restriction}_restricted")
+        return None
+    if video.duration <= 0:
+        raise HTTPException(status_code=422, detail="Video has no duration yet")
+    return VideoMetadataResponse(
+        youtubeId=youtube_id,
+        title=video.title,
+        channel=video.channel,
+        duration=video.duration,
+        thumbnailUrl=video.thumbnail_url,
+    )
+
+
 @router.get(
     "/video/metadata",
     response_model=VideoMetadataResponse,
@@ -70,14 +120,22 @@ async def video_metadata(
 ) -> VideoMetadataResponse:
     """Title, channel, duration (seconds) and thumbnail of one video.
 
-    400 for a malformed id, 404 when the video is unknown or unavailable, 422 for
-    a live stream or a video with no duration yet, 503 when YouTube could not be
-    asked (rate limit, transport). There is no route-level timeout, like
-    ``/playlist/extract``: yt-dlp's socket timeout and the exit-rotation budget
-    bound the call, and the API client gives up after its own 15 s.
+    400 for a malformed id, 404 when the video is unknown or unavailable (yt-dlp's
+    verdict), 422 for a live stream, a premiere that has not started or a video
+    with no duration yet, 503 when YouTube could not be asked (rate limit,
+    transport). There is no route-level timeout, like ``/playlist/extract``: the
+    Data API call has its own 5 s, yt-dlp's socket timeout and the exit-rotation
+    budget bound the fallback, and the API client gives up after 25 s.
     """
     if not _YOUTUBE_ID_RE.fullmatch(youtube_id):
         raise HTTPException(status_code=400, detail="Invalid YouTube video ID")
+
+    # Named api_key: Sentry's default scrubber blanks locals by that name.
+    api_key = (settings.YOUTUBE_API_KEY or "").strip()
+    if api_key:
+        served = await _from_data_api(youtube_id, api_key)
+        if served is not None:
+            return served
 
     try:
         video = await extract_video_data(youtube_id)

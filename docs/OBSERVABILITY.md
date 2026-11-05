@@ -415,6 +415,7 @@ LLM cost per day, calls by feature and p95 latency stay in the admin UsagePage (
 | Signal | Where it runs | What it does |
 |--------|---------------|--------------|
 | `high_cost_call`, `daily_spend_spike`, `daily_global_cost`, `high_failure_rate`, `backup_stale` | llm-common callback (inline) / admin `alert_evaluator` (5 min) | Mongo `llm_alerts` + POST to `ALERT_WEBHOOK_URL`. `daily_global_cost` = Σ `cost_usd` since UTC midnight ≥ `ALERT_DAILY_COST_THRESHOLD_USD` (default $20, once per UTC day, alarm only — blocks nothing). Thresholds: [ERROR-HANDLING.md](./ERROR-HANDLING.md#alert-thresholds) |
+| `proxy_exits_benched` | summarizer exit bench (`src/services/media/download_utils.py` → `proxy_exit_alert.py`, both processes, inline) | The block that puts more than half of the proxy exits on the 15-min bench → ERROR line + Mongo `llm_alerts` + POST to `ALERT_WEBHOOK_URL`, on a daemon thread; at most one per 15 min per process. Labels only (`session -N`), never a proxy URL |
 | `pipeline_stalled` | summarizer stall sweeper (`src/services/stall_sweeper.py`, HTTP process, 5 min) | `processing` row idle > 30 min **and** producer lock gone → `failed` + status callback + alert. The flip is a compare-and-set (`mark_stalled_failed`: still `processing` and still stale), so a run revived between find and write is skipped with no side effects. Lock check fails open on Redis errors |
 | worker retry backoff | `worker/runner.py` | 5 → 10 → 20 s (×2 per attempt, cap 120 s) before republish; message stays unacked during the wait |
 

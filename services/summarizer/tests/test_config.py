@@ -39,6 +39,7 @@ _PASSED_THROUGH = (
     "LLM_MEMORY_MODEL",
     "LLM_JUDGE_MODEL",
     "TRANSCRIPT_CLEANING_ENABLED",
+    "YOUTUBE_API_KEY",
 )
 # Deleted settings must not linger in config.py or either compose anchor.
 _DELETED = (

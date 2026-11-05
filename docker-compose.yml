@@ -57,6 +57,8 @@ x-summarizer-env: &summarizer-env
   # Transcript / proxy
   YOUTUBE_PROXY_URL: ${YOUTUBE_PROXY_URL:-}
   YOUTUBE_PROXY_EXIT_COUNT: ${YOUTUBE_PROXY_EXIT_COUNT:-1}
+  # Data API key for the pre-flight GET /video/metadata; blank = yt-dlp through the proxy
+  YOUTUBE_API_KEY: ${YOUTUBE_API_KEY:-}
   TRANSCRIPT_CLEANING_ENABLED: ${TRANSCRIPT_CLEANING_ENABLED:-false}
   TRANSCRIPT_CLEANING_TIMEOUT: ${TRANSCRIPT_CLEANING_TIMEOUT:-30.0}
   # Optional HF Hub token — blank = unauthenticated (rate-limited) model pulls

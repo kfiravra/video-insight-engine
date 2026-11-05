@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from src.config import settings as _settings
 from src.models.schemas import ProcessingStatus, ErrorCode
 from src.services.media import download_utils as _download_utils
+from src.services.media import proxy_exit_alert as _proxy_exit_alert
 
 # Names of every per-stage override on the Settings object. Tests never want
 # these to fire — they would wrap a MagicMock with a real ``LLMService`` and
@@ -44,12 +45,32 @@ def _disable_stage_model_overrides(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_data_api_key(monkeypatch):
+    """No test reaches the real YouTube Data API through a developer's ``.env`` key.
+
+    ``Settings`` reads ``.env``; with YOUTUBE_API_KEY set there, every
+    ``/video/metadata`` route test would call googleapis.com. Tests that want
+    the Data API path set the key themselves and stub ``fetch_video``.
+    """
+    monkeypatch.setattr(_settings, "YOUTUBE_API_KEY", None)
+
+
+@pytest.fixture(autouse=True)
 def _fresh_exit_memory(monkeypatch):
     """Each test starts with no round-robin assignments and no blocked proxy exits.
 
     The exit bookkeeping (download_utils._ExitMemory) is per-process state.
     """
     monkeypatch.setattr(_download_utils, "_EXIT_MEMORY", _download_utils._ExitMemory())
+
+
+@pytest.fixture(autouse=True)
+def _no_bench_alert_delivery(monkeypatch):
+    """Benching most of a test pool (routine in the rotation tests) never posts or writes an alert.
+
+    ``tests/test_proxy_bench_alert.py`` records the alerts instead.
+    """
+    monkeypatch.setattr(_proxy_exit_alert, "_deliver", lambda alert: None)
 
 
 # Every LiteLLM callback list a call copies ``litellm.callbacks`` into

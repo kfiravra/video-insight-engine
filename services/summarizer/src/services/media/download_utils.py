@@ -12,7 +12,7 @@ import re
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -21,6 +21,7 @@ import yt_dlp
 from src.config import settings
 from src.exceptions import TranscriptError
 from src.models.schemas import ErrorCode
+from src.services.media import proxy_exit_alert
 
 __all__ = [
     "classify_download_error",
@@ -77,6 +78,10 @@ _EXIT_BLOCK_RES = (_BOT_CHECK_RE, _HTTP_429_RE, _SESSION_BLOCK_RE)
 _BLOCKED_EXIT_TTL_SECONDS = 15 * 60
 # Round-robin starts remembered per job key — bounded for a long-lived worker.
 _MAX_TRACKED_JOBS = 512
+# A pool past half benched alerts once (proxy_exit_alert), then not again for
+# this long, so an exit that flaps between working and blocked cannot page on
+# every flip.
+_BENCH_ALERT_COOLDOWN_S = _BLOCKED_EXIT_TTL_SECONDS
 
 
 def is_exit_blocked(error: BaseException | str) -> bool:
@@ -97,91 +102,6 @@ def proxy_exit_label(proxy_url: str) -> str:
     username = proxy_url.partition("://")[2].rpartition("@")[0].partition(":")[0]
     match = _STICKY_SUFFIX_RE.match(username)
     return f"session -{match.group('n')}" if match else "unnamed session"
-
-
-class _ExitMemory:
-    """Per-process proxy-exit bookkeeping, shared by every thread (pipeline-1min 1a.6).
-
-    * Round-robin start: each job key (a youtube id, a playlist id) gets the
-      next exit of the pool the first time it is seen and keeps it for every
-      later call, so concurrent jobs spread over the exits instead of all
-      starting on the configured one.
-    * Blocked exits: an exit that got a bot check, 429 or session block is
-      moved behind the others by every rotation for _BLOCKED_EXIT_TTL_SECONDS,
-      so it costs one failed attempt per window per process instead of one per
-      YouTube call (~2.5 s each on 2026-10-08, when two of three exits were
-      bot-checked). An exit that works again is unmarked at once.
-
-    This replaces "the exit that last worked starts every rotation" (e925e2b):
-    that funnelled every job onto one exit until it, too, got blocked.
-    Holds credential-bearing URLs in memory only — they are never logged.
-    """
-
-    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
-        self._lock = threading.Lock()
-        self._clock = clock
-        self._next_offset = 0
-        self._job_offsets: OrderedDict[str, int] = OrderedDict()
-        self._blocked_at: dict[str, float] = {}
-
-    def job_offset(self, job_key: str | None) -> int:
-        """The job's round-robin offset into the exit pool; 0 (the configured exit) without a key."""
-        if job_key is None:
-            return 0
-        with self._lock:
-            offset = self._job_offsets.get(job_key)
-            if offset is None:
-                offset = self._next_offset
-                self._next_offset += 1
-                self._job_offsets[job_key] = offset
-                if len(self._job_offsets) > _MAX_TRACKED_JOBS:
-                    self._job_offsets.popitem(last=False)
-            else:
-                self._job_offsets.move_to_end(job_key)
-            return offset
-
-    def order(self, exit_urls: list[str]) -> list[str]:
-        """``exit_urls`` with the exits blocked within the TTL moved behind the others."""
-        now = self._clock()
-        with self._lock:
-            blocked = {
-                url for url, at in self._blocked_at.items() if now - at < _BLOCKED_EXIT_TTL_SECONDS
-            }
-        fresh = [url for url in exit_urls if url not in blocked]
-        return fresh + [url for url in exit_urls if url in blocked]
-
-    def mark_blocked(self, proxy_url: str) -> None:
-        with self._lock:
-            self._blocked_at[proxy_url] = self._clock()
-
-    def mark_working(self, proxy_url: str) -> None:
-        with self._lock:
-            self._blocked_at.pop(proxy_url, None)
-
-
-_EXIT_MEMORY = _ExitMemory()
-
-
-def record_blocked_exit(proxy_url: str) -> None:
-    """Keep ``proxy_url`` behind the other exits for _BLOCKED_EXIT_TTL_SECONDS."""
-    _EXIT_MEMORY.mark_blocked(proxy_url)
-
-
-def record_working_exit(proxy_url: str, label: str, position: int, tried_of: int) -> None:
-    """Clear any blocked mark on ``proxy_url``; log it when earlier exits were blocked.
-
-    ``position`` is the exit's 1-based place among the ``tried_of`` exits of
-    this rotation. ``label`` is logged — never put a proxy URL in it.
-    """
-    _EXIT_MEMORY.mark_working(proxy_url)
-    if position > 1:
-        logger.info(
-            "%s succeeded on proxy exit %d/%d (%s)",
-            label,
-            position,
-            tried_of,
-            proxy_exit_label(proxy_url),
-        )
 
 
 def ytdlp_proxy_url() -> str | None:
@@ -212,6 +132,139 @@ def _exit_pool(primary: str, count: int) -> list[str]:
     return urls
 
 
+def _configured_exit_pool() -> list[str]:
+    """Every exit of YOUTUBE_PROXY_URL × YOUTUBE_PROXY_EXIT_COUNT, the configured one first; [] without a proxy."""
+    primary = ytdlp_proxy_url()
+    return _exit_pool(primary, settings.YOUTUBE_PROXY_EXIT_COUNT) if primary else []
+
+
+class _ExitMemory:
+    """Per-process proxy-exit bookkeeping, shared by every thread (pipeline-1min 1a.6).
+
+    * Round-robin start: each job key (a youtube id, a playlist id) gets the
+      next exit of the pool the first time it is seen and keeps it for every
+      later call, so concurrent jobs spread over the exits instead of all
+      starting on the configured one.
+    * Blocked exits: an exit that got a bot check, 429 or session block is
+      moved behind the others by every rotation for _BLOCKED_EXIT_TTL_SECONDS,
+      so it costs one failed attempt per window per process instead of one per
+      YouTube call (~2.5 s each on 2026-10-08, when two of three exits were
+      bot-checked). An exit that works again is unmarked at once.
+    * Bench alert: the block that puts more than half of the configured pool
+      on the bench (before <= half < after) is reported to the caller, at most
+      once per _BENCH_ALERT_COOLDOWN_S. Blocks are the only events that raise
+      the count, so expiring marks and recovered exits re-arm it on their own.
+
+    This replaces "the exit that last worked starts every rotation" (e925e2b):
+    that funnelled every job onto one exit until it, too, got blocked.
+    Holds credential-bearing URLs in memory only — they are never logged.
+    """
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        self._lock = threading.Lock()
+        self._clock = clock
+        self._next_offset = 0
+        self._job_offsets: OrderedDict[str, int] = OrderedDict()
+        self._blocked_at: dict[str, float] = {}
+        self._bench_alerted_at: float | None = None
+
+    def job_offset(self, job_key: str | None) -> int:
+        """The job's round-robin offset into the exit pool; 0 (the configured exit) without a key."""
+        if job_key is None:
+            return 0
+        with self._lock:
+            offset = self._job_offsets.get(job_key)
+            if offset is None:
+                offset = self._next_offset
+                self._next_offset += 1
+                self._job_offsets[job_key] = offset
+                if len(self._job_offsets) > _MAX_TRACKED_JOBS:
+                    self._job_offsets.popitem(last=False)
+            else:
+                self._job_offsets.move_to_end(job_key)
+            return offset
+
+    def order(self, exit_urls: list[str]) -> list[str]:
+        """``exit_urls`` with the exits blocked within the TTL moved behind the others."""
+        now = self._clock()
+        with self._lock:
+            blocked = {
+                url for url, at in self._blocked_at.items() if now - at < _BLOCKED_EXIT_TTL_SECONDS
+            }
+        fresh = [url for url in exit_urls if url not in blocked]
+        return fresh + [url for url in exit_urls if url in blocked]
+
+    def _benched_locked(self, pool: Sequence[str], now: float) -> list[str]:
+        """The members of ``pool`` blocked within the TTL, in pool order; the lock is held."""
+        return [
+            url
+            for url in pool
+            if (at := self._blocked_at.get(url)) is not None
+            and now - at < _BLOCKED_EXIT_TTL_SECONDS
+        ]
+
+    def mark_blocked(self, proxy_url: str, pool: Sequence[str] = ()) -> list[str] | None:
+        """Bench ``proxy_url``; the benched members of ``pool`` when this block tipped it past half.
+
+        None when it did not (also for an empty pool, or a URL outside it) or
+        when a bench alert already went out within _BENCH_ALERT_COOLDOWN_S.
+        """
+        with self._lock:
+            now = self._clock()
+            before = len(self._benched_locked(pool, now))
+            self._blocked_at[proxy_url] = now
+            benched = self._benched_locked(pool, now)
+            if not before * 2 <= len(pool) < len(benched) * 2:
+                return None
+            alerted_at = self._bench_alerted_at
+            if alerted_at is not None and now - alerted_at < _BENCH_ALERT_COOLDOWN_S:
+                return None
+            self._bench_alerted_at = now
+            return benched
+
+    def mark_working(self, proxy_url: str) -> None:
+        with self._lock:
+            self._blocked_at.pop(proxy_url, None)
+
+
+_EXIT_MEMORY = _ExitMemory()
+
+
+def record_blocked_exit(proxy_url: str) -> None:
+    """Keep ``proxy_url`` behind the other exits for _BLOCKED_EXIT_TTL_SECONDS.
+
+    When this block puts more than half of the configured exit pool on the
+    bench, the process sends one ``proxy_exits_benched`` alert (webhook +
+    ``llm_alerts`` row, on a daemon thread: this also runs on the event loop),
+    at most once per _BENCH_ALERT_COOLDOWN_S.
+    """
+    pool = _configured_exit_pool()
+    benched = _EXIT_MEMORY.mark_blocked(proxy_url, pool)
+    if benched is not None:
+        proxy_exit_alert.alert_benched_exits(
+            [proxy_exit_label(url) for url in benched],
+            len(pool),
+            window_minutes=_BLOCKED_EXIT_TTL_SECONDS // 60,
+        )
+
+
+def record_working_exit(proxy_url: str, label: str, position: int, tried_of: int) -> None:
+    """Clear any blocked mark on ``proxy_url``; log it when earlier exits were blocked.
+
+    ``position`` is the exit's 1-based place among the ``tried_of`` exits of
+    this rotation. ``label`` is logged — never put a proxy URL in it.
+    """
+    _EXIT_MEMORY.mark_working(proxy_url)
+    if position > 1:
+        logger.info(
+            "%s succeeded on proxy exit %d/%d (%s)",
+            label,
+            position,
+            tried_of,
+            proxy_exit_label(proxy_url),
+        )
+
+
 def ytdlp_proxy_exit_urls(
     job_key: str | None = None, *, limit: int | None = _MAX_ROTATED_EXITS
 ) -> list[str]:
@@ -229,11 +282,8 @@ def ytdlp_proxy_exit_urls(
     caption rotations, bounded by time instead). Never log the returned URLs —
     they carry credentials.
     """
-    primary = ytdlp_proxy_url()
-    if not primary:
-        return []
-    pool = _exit_pool(primary, settings.YOUTUBE_PROXY_EXIT_COUNT)
-    if len(pool) == 1:
+    pool = _configured_exit_pool()
+    if len(pool) <= 1:
         return pool
     start = _EXIT_MEMORY.job_offset(job_key) % len(pool)
     return _EXIT_MEMORY.order(pool[start:] + pool[:start])[:limit]
