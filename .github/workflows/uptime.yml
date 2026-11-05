@@ -1,0 +1,166 @@
+name: Uptime
+
+# Off-box probe of the public site from a GitHub runner. Everything else
+# monitors from inside the box (docs/OBSERVABILITY.md, "Alerts & self-healing"),
+# so a dead instance or a dead Caddy is invisible to them.
+#
+# Alerts on the up→down transition, every 30 min while down, once on recovery.
+# Last state lives in the Actions cache (newest `uptime-state-*` entry);
+# no cache = up, so a fresh repo never alerts until a real outage.
+#
+# Repository secrets: ALERT_WEBHOOK_URL (same value as the box's .env row:
+# a Telegram sendMessage URL or any JSON receiver).
+#
+# GitHub may delay scheduled runs by several minutes at busy times and
+# disables the schedule after 60 days without repo activity.
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: uptime
+  cancel-in-progress: false
+
+env:
+  # /health is the only health route the Caddyfile lets through (liveness only;
+  # /ready with the dependency checks is blocked at the edge).
+  UPTIME_URL: https://vie.ad/health
+  RETRY_DELAY_SECONDS: 30
+  REALERT_SECONDS: 1800
+
+jobs:
+  check:
+    name: Probe vie.ad
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Restore last state
+        uses: actions/cache/restore@v4
+        with:
+          path: uptime-state/state.json
+          # The exact key never exists, so the prefix below always wins and
+          # returns the most recently saved state.
+          key: uptime-state-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: uptime-state-
+
+      - name: Probe and alert
+        id: probe
+        env:
+          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+        # No `set -x` anywhere: ALERT_WEBHOOK_URL carries the bot token.
+        run: |
+          set -euo pipefail
+
+          state_dir=uptime-state
+          state_file="$state_dir/state.json"
+          mkdir -p "$state_dir"
+
+          # Prints the HTTP code, or "timeout" / "unreachable" when no response came back.
+          probe() {
+            local code rc=0
+            code="$(curl -sS --proto '=http,https' --max-time 20 -o /dev/null -w '%{http_code}' "$UPTIME_URL" 2>/dev/null)" || rc=$?
+            case "$rc" in
+              0)  if [[ "$code" == 000 ]]; then echo unreachable; else echo "$code"; fi ;;
+              28) echo timeout ;;
+              *)  echo unreachable ;;
+            esac
+          }
+
+          # Same document deliver_alert sends (packages/llm-common/src/llm_common/alerts.py):
+          # Telegram gets {chat_id, text} with format_alert_text's layout, anything else the raw alert.
+          webhook_failed=false
+          send_alert() {  # $1 type, $2 severity
+            local alert body host chat_id code
+            alert="$(jq -nc --arg type "$1" --arg severity "$2" --arg url "$UPTIME_URL" \
+                           --arg status "$status" --arg time "$now_iso" \
+                           '{type: $type, severity: $severity, url: $url, status: $status, time: $time}')"
+            if [[ -z "${ALERT_WEBHOOK_URL:-}" ]]; then
+              echo "::warning::ALERT_WEBHOOK_URL is not set; alert not delivered: $alert"
+              return 0
+            fi
+            host="$(printf '%s' "$ALERT_WEBHOOK_URL" | sed -E 's#^[A-Za-z]+://([^/?:]+).*#\1#')"
+            if [[ "${host,,}" == api.telegram.org ]]; then
+              chat_id="$(printf '%s' "$ALERT_WEBHOOK_URL" | sed -nE 's#.*[?&]chat_id=([^&]*).*#\1#p')"
+              if [[ -n "$chat_id" ]]; then
+                echo "::add-mask::$chat_id"
+              fi
+              body="$(jq -c --arg chat_id "$chat_id" '
+                (["VIE \(.severity): \(.type)"]
+                  + [to_entries[] | select(.key != "type" and .key != "severity") | "\(.key): \(.value)"])
+                | join("\n") | .[:3500] | {chat_id: $chat_id, text: .}' <<<"$alert")"
+            else
+              body="$alert"
+            fi
+            code="$(curl -sS --proto '=http,https' --max-time 20 -o /dev/null -w '%{http_code}' \
+                      -H 'Content-Type: application/json' --data "$body" "$ALERT_WEBHOOK_URL" 2>/dev/null)" || code=000
+            if [[ "$code" =~ ^2 ]]; then
+              echo "alert $1 delivered (HTTP $code)"
+            else
+              echo "::error::alert $1 not delivered (HTTP $code)"
+              webhook_failed=true
+            fi
+          }
+
+          write_state() {  # $1 status, $2 since_epoch, $3 last_alert_epoch
+            jq -nc --arg status "$1" --argjson since "$2" --argjson last_alert "$3" --arg checked "$now_iso" \
+              '{status: $status, since_epoch: $since, last_alert_epoch: $last_alert, checked_at: $checked}' > "$state_file"
+          }
+
+          status="$(probe)"
+          if [[ "$status" != 200 ]]; then
+            echo "first probe: $status; retrying in ${RETRY_DELAY_SECONDS} s"
+            sleep "$RETRY_DELAY_SECONDS"
+            status="$(probe)"
+          fi
+          if [[ "$status" == 200 ]]; then current=up; else current=down; fi
+          now_epoch="$(date -u +%s)"
+          now_iso="$(date -u -d "@$now_epoch" +%Y-%m-%dT%H:%M:%SZ)"
+          echo "$UPTIME_URL -> $status ($current) at $now_iso"
+
+          # Last known state; no cache = up, so the first run only alerts on a real outage.
+          prev=up; since=0; last_alert=0
+          if [[ -f "$state_file" ]]; then
+            prev="$(jq -r '.status // "up"' "$state_file")"
+            since="$(jq -r '.since_epoch // 0' "$state_file")"
+            last_alert="$(jq -r '.last_alert_epoch // 0' "$state_file")"
+          fi
+
+          save=false
+          case "$prev/$current" in
+            up/down)
+              send_alert uptime_down critical
+              write_state down "$now_epoch" "$now_epoch"; save=true ;;
+            down/down)
+              if (( now_epoch - last_alert >= REALERT_SECONDS )); then
+                send_alert uptime_down critical
+                write_state down "$since" "$now_epoch"; save=true
+              else
+                echo "::warning::still down ($status); last alert $(( (now_epoch - last_alert) / 60 )) min ago"
+              fi ;;
+            down/up)
+              send_alert uptime_recovered info
+              write_state up "$now_epoch" "$now_epoch"; save=true ;;
+            *)
+              echo "up, no state change" ;;
+          esac
+
+          echo "save=$save" >> "$GITHUB_OUTPUT"
+          echo "**$current** · \`$UPTIME_URL\` → $status · $now_iso" >> "$GITHUB_STEP_SUMMARY"
+          # The job is red only when alerting itself is broken; a down site is reported
+          # through the webhook (a red run every 5 min for a whole outage would mail per run).
+          # A failed step also skips "Save state", so the next run retries the delivery.
+          if [[ "$webhook_failed" == true ]]; then
+            exit 1
+          fi
+
+      - name: Save state
+        if: steps.probe.outputs.save == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: uptime-state/state.json
+          key: uptime-state-${{ github.run_id }}-${{ github.run_attempt }}
