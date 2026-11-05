@@ -8,6 +8,11 @@ still never derived from a row's ``winner`` (0b.9), and with no score the review
 not anchor (D13). When both tabs ship, the dedupe sheds the shared strings from the
 rows tab (``COMPARISON_LIST_KEYS``). Validation counts a comparison's rows, pros and
 cons alike, so the Pros & cons tab ships without rows instead of demoting to a grid.
+
+Tab-dedupe hotfix (Kfir 2026-11-05): a review ships ONE comparison tab. The first one
+planned keeps the component and carries the rows, the pros, the cons and the verdict
+whichever review path it was planned on. A later comparison tab drops as
+``duplicate_component``.
 """
 
 from __future__ import annotations
@@ -15,6 +20,7 @@ from __future__ import annotations
 from typing import Any
 
 from src.services.pipeline.assembly import assemble_comparison, assemble_response
+from src.services.pipeline.assembly.component_dedupe import DUPLICATE_COMPONENT
 from src.services.pipeline.assembly.core import (
     DUPLICATE_ITEMS,
     _dedupe_tabs,
@@ -83,10 +89,10 @@ class TestProsConsFromTheReviewBlock:
 
         assert (out["pros"], out["cons"]) == (_PROS, _CONS)
 
-    def test_should_ship_no_rows_when_planned_on_review_pros(self):
+    def test_should_ship_the_review_rows_when_planned_on_review_pros(self):
         out = _assemble("review.pros", _review())
 
-        assert out["comparisons"] == []
+        assert [row["feature"] for row in out["comparisons"]] == [r["feature"] for r in _ROWS]
 
     def test_should_ship_pros_and_cons_when_planned_on_review_cons(self):
         out = _assemble("review.cons", _review())
@@ -134,11 +140,15 @@ class TestNoDerivedScore:
 
 
 class TestTwoComparisonTabsShipEachLineOnce:
+    """The twin rule on two comparison props (a cached response's pair): the pros-only
+    tab first, the rows tab after it."""
+
     def _settled(self) -> tuple[list[dict], list[dict]]:
         extraction = _review()
+        pros_only = {"pros": list(_PROS), "cons": list(_CONS), "comparisons": []}
         tabs = [
-            {**_tab(source), "props": _assemble(source, extraction)}
-            for source in ("review.pros", "review.comparisons")
+            {**_tab("review.pros"), "props": pros_only},
+            {**_tab("review.comparisons"), "props": _assemble("review.comparisons", extraction)},
         ]
         dropped: list[dict] = []
         _dedupe_tabs(tabs, dropped)
@@ -194,14 +204,20 @@ def _planned(*sources: str) -> dict[str, dict]:
 
 
 class TestTheReviewPlanEndToEnd:
-    """The review playbook's plan (Pros & cons on ``review.pros``, then the rivals on
-    ``review.comparisons``) through ``assemble_response``."""
+    """A cached review plan (Pros & cons on ``review.pros``, then the rivals on
+    ``review.comparisons``) through ``assemble_response``: one comparison tab ships."""
 
-    def _tabs(self) -> dict[str, dict]:
-        return _planned("review.pros", "review.comparisons")
+    def _result(self) -> dict:
+        triage = {"primaryTag": "review", "contentTags": ["review"], "tabs": [
+            {"id": "pros_cons", "component": "comparison", "dataSource": "review.pros",
+             "label": "Pros & cons"},
+            {"id": "vs", "component": "comparison", "dataSource": "review.comparisons",
+             "label": "Vs"},
+        ]}  # fmt: skip
+        return assemble_response(triage, _review(), None, None)
 
     def test_should_ship_the_pros_and_cons_tab_as_a_comparison(self):
-        tab = self._tabs()["pros_cons"]
+        tab = _planned("review.pros", "review.comparisons")["pros_cons"]
 
         assert (tab["component"], tab["props"]["pros"], tab["props"]["cons"]) == (
             "comparison",
@@ -209,34 +225,33 @@ class TestTheReviewPlanEndToEnd:
             _CONS,
         )
 
-    def test_should_ship_the_rivals_tab_with_its_rows_only(self):
-        props = self._tabs()["vs"]["props"]
+    def test_should_carry_the_rivals_rows_on_the_one_comparison_tab(self):
+        props = _planned("review.pros", "review.comparisons")["pros_cons"]["props"]
 
-        assert (len(props["comparisons"]), props["pros"], props["cons"]) == (len(_ROWS), [], [])
+        assert len(props["comparisons"]) == len(_ROWS)
+
+    def test_should_drop_the_rivals_tab_as_a_duplicate_component(self):
+        dropped = self._result()["dropped"]
+
+        assert [(d["id"], d["reason"]) for d in dropped] == [("vs", DUPLICATE_COMPONENT)]
 
 
-class TestEachHalfShipsOnceWhateverTheOrder:
-    """Regression (llm_response_fixtures[review]): the rows tab planned first and a
-    Pros & cons tab on the review block last — both shipped rows + pros + cons, so the
-    dedupe dropped the planned Pros & cons tab as the rows tab's twin."""
+class TestOneComparisonTabWhateverTheOrder:
+    """The rows tab planned first and a Pros & cons tab on the review block last: the
+    rows tab keeps the component and ships rows, pros and cons; the other drops."""
 
-    def test_should_keep_a_planned_pros_and_cons_tab_after_the_rows_tab(self):
-        assert set(_planned("review.comparisons", "review")) >= {"vs", "pros_cons"}
-
-    def test_should_ship_pros_and_cons_only_on_the_pros_and_cons_tab(self):
+    def test_should_ship_only_the_first_planned_comparison_tab(self):
         tabs = _planned("review.comparisons", "review")
 
-        assert (tabs["vs"]["props"]["pros"], tabs["pros_cons"]["props"]["pros"]) == ([], _PROS)
+        assert [t for t in tabs if tabs[t]["component"] == "comparison"] == ["vs"]
 
-    def test_should_ship_the_rows_only_on_the_rows_tab(self):
-        tabs = _planned("review.comparisons", "review")
+    def test_should_ship_rows_pros_and_cons_on_the_first_tab(self):
+        props = _planned("review.comparisons", "review")["vs"]["props"]
 
-        assert (
-            len(tabs["vs"]["props"]["comparisons"]),
-            tabs["pros_cons"]["props"]["comparisons"],
-        ) == (
+        assert (len(props["comparisons"]), props["pros"], props["cons"]) == (
             len(_ROWS),
-            [],
+            _PROS,
+            _CONS,
         )
 
     def test_should_ship_rows_pros_and_cons_on_a_lone_rows_tab(self):

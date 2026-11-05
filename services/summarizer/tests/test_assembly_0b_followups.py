@@ -282,21 +282,23 @@ class TestTwinsKeepTheirOwnItems:
 
     def test_should_keep_the_cool_down_whole(self) -> None:
         """W-A2 / output-quality 1.8: the cool-down repeats two warm-up moves, but a
-        workout is a procedure (``SEQUENTIAL_COMPONENTS``) and ships whole, in order."""
+        workout is a procedure (``SEQUENTIAL_COMPONENTS``) and ships whole, in order —
+        the twin rule on a cached pair of workout tabs (a plan ships one workout_room
+        since the tab-dedupe hotfix, so the pair is built here, not planned)."""
 
         def moves(*names: str) -> list[dict]:
             return [{"name": n, "formCues": ["slow and controlled"], "reps": 8} for n in names]
 
-        triage = {"contentTags": ["fitness"], "primaryTag": "fitness", "tabs": [
-            _tab("warmup", "workout_room", "fitness.warmup"),
-            _tab("cooldown", "workout_room", "fitness.cooldown"),
-        ]}  # fmt: skip
-        fitness = {"warmup": moves("Arm circles", "Hip openers", "Cat-cow"),
-                   "cooldown": moves("Cat-cow", "Hip openers", "Child's pose")}  # fmt: skip
+        tabs = [
+            _assembled("warmup", "workout_room",
+                       moves("Arm circles", "Hip openers", "Cat-cow"), "exercises"),
+            _assembled("cooldown", "workout_room",
+                       moves("Cat-cow", "Hip openers", "Child's pose"), "exercises"),
+        ]  # fmt: skip
 
-        result = assemble_response(triage, {"fitness": fitness}, None, None)
+        _dedupe_tabs(tabs, [])
 
-        cooldown = next(t for t in result["tabs"] if t["id"] == "cooldown")
+        cooldown = next(t for t in tabs if t["id"] == "cooldown")
         assert [e["name"] for e in cooldown["props"]["exercises"]] == [
             "Cat-cow",
             "Hip openers",

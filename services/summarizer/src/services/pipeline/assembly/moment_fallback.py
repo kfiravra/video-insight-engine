@@ -16,6 +16,9 @@ A Moments tab always exists (Kfir 2026-10-12, pipeline-1min 2.1): a response
 whose plan designed none gets the always-Moments tab from the same chain
 (``always_moments_tab``), and the plan-done provisional copy
 (``provisional_moments_tab``) carries the id of whichever tab will replace it.
+A plan that designed one gets no replacement when that tab dies in assembly
+(tab-dedupe hotfix, Kfir 2026-11-04): the always-Moments tab is for a plan
+without a moment_track, never a second copy of moments another tab shows.
 No source with an entry → no Moments tab: one is never invented. When the
 steps are the timeline (D6: a food, fitness or project response with a step
 player, flow canvas or workout room, unless its domain requires moment_track),
@@ -195,12 +198,20 @@ def always_moments_tab(
     description_analysis: Mapping[str, Any] | None,
     forbidden: Collection[str],
 ) -> dict | None:
-    """The fallback-chain Moments tab for a response without a moment_track tab.
+    """The fallback-chain Moments tab for a response whose plan designed no moment_track.
 
-    None when ``tabs`` already holds one, when the domain policy forbids the
-    component, or when no fallback source has an entry.
+    None when the plan (``plan_tabs``) designed one — a planned Moments tab that died
+    in assembly is not replaced, so its moments never ship twice beside the tab that
+    outlived it (tab-dedupe hotfix, Kfir 2026-11-04) — when ``tabs`` already holds
+    one, when the domain policy forbids the component, or when no fallback source
+    has an entry.
     """
-    if _MOMENT_COMPONENT in forbidden or any(t.get("component") == _MOMENT_COMPONENT for t in tabs):
+    planned = any(tab_component(t) == _MOMENT_COMPONENT for t in plan_tabs if isinstance(t, dict))
+    if (
+        planned
+        or _MOMENT_COMPONENT in forbidden
+        or any(t.get("component") == _MOMENT_COMPONENT for t in tabs)
+    ):
         return None
     props = fallback_moment_props(video_meta, description_analysis)
     if props is None:

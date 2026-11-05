@@ -60,27 +60,30 @@ def _verdict_tabs(tabs: list[dict[str, Any]], extraction: dict[str, Any] | None 
 
 
 class TestTheVerdictRidesOneTab:
+    """One comparison tab ships per page (tab-dedupe hotfix), so the verdict rides on
+    the first planned comparison tab, whichever review path it reads."""
+
     def test_should_carry_the_verdict_on_the_pros_and_cons_tab_only_when_a_review_plans_both(
         self,
     ) -> None:
         assert _verdict_tabs([_PROS_CONS, _VS]) == ["pros_cons"]
 
-    def test_should_carry_the_verdict_on_the_pros_and_cons_tab_when_the_rows_tab_comes_first(
+    def test_should_carry_the_verdict_on_the_rows_tab_when_the_rows_tab_comes_first(
         self,
     ) -> None:
-        assert _verdict_tabs([_VS, _comparison_tab("pros_cons", "review")]) == ["pros_cons"]
+        assert _verdict_tabs([_VS, _comparison_tab("pros_cons", "review")]) == ["vs"]
 
-    def test_should_carry_the_verdict_on_the_pros_and_cons_tab_when_the_rivals_ship_as_a_radar(
+    def test_should_carry_the_verdict_on_the_pros_and_cons_tab_when_a_radar_is_planned_after_it(
         self,
     ) -> None:
         radar = _comparison_tab("vs", "review.comparisons", "comparison_radar")
 
         assert _verdict_tabs([_PROS_CONS, radar]) == ["pros_cons"]
 
-    def test_should_carry_the_verdict_on_the_rows_tab_when_the_review_states_no_pros_or_cons(
+    def test_should_carry_the_verdict_on_the_first_tab_when_the_review_states_no_pros_or_cons(
         self,
     ) -> None:
-        assert _verdict_tabs([_PROS_CONS, _VS], _review(pros=[], cons=[])) == ["vs"]
+        assert _verdict_tabs([_PROS_CONS, _VS], _review(pros=[], cons=[])) == ["pros_cons"]
 
     def test_should_carry_the_verdict_on_the_first_tab_when_no_pros_and_cons_tab_is_planned(
         self,

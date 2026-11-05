@@ -52,7 +52,9 @@ EXPLORATION — user browses and discovers:
 
   info_grid — THE LOOKUP TABLE — keep cells SHORT
     PICK WHEN: 3+ short reference rows users LOOK UP, not READ — specs,
-      odds, a glossary, setup facts.
+      odds, a glossary, setup facts — and an interview's Q&A
+      (podcast.qa: the host's question as the key, who answered and the
+      answer in a line as the value, a seek chip at the question).
     SHIPS: Searchable card grid (or table). Optional `evidence` field
       renders below the value in italic for sources/examples.
     NEVER USE FOR:
@@ -208,8 +210,9 @@ MEDIA — user navigates the source video:
     USE endSeconds ONLY for replayable spans (15s–3min). OMIT for
       navigation points.
     DATASOURCE: learning.timestamps, narrative.keyMoments,
-      podcast.segments (speaker + what was concluded), podcast.qa (the
-      question + who answered + the answer), music.structure.
+      podcast.segments (speaker + what was concluded), music.structure.
+      One moment_track per page: an interview's Q&A is info_grid on
+      podcast.qa, never a second timeline.
     NEVER USE FOR: a recipe, a workout or a step tutorial — the steps are
       the timeline.
 

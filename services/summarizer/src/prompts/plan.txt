@@ -46,6 +46,11 @@ Step 4 — Design 3–6 tabs, only tabs the content supports, using the componen
 - Size brief.expect to the video's length (<sizing>), never to one screen
 - Prefer interactive components (action, learning, exploration, media); maximum 1 display
   component (budget)
+- One tab per component: no component appears twice (comparison_radar counts as comparison,
+  step_flow_canvas as step_player) and no two tabs serve the same purpose — never two
+  timelines, two checklists, two comparisons. When two lists want the same component, keep
+  the one the viewer came for and fold the other into it as a group named in brief.what, or
+  route it to a different component; assembly keeps only the first.
 - Match components to user actions, not data shape
 </instructions>
 
@@ -289,7 +294,7 @@ Video: "DHH Omarchy Quattro Announcement | TheStandup" (42 min, interview — th
   "evidence": {"has_steps": false, "has_ingredients": false, "has_materials": false, "has_code": false, "has_drills": false, "has_comparison": false, "has_ranking": false, "has_lineup": false, "has_claims": false, "has_lyrics": false, "has_itinerary": false, "has_packing": false, "is_learnable": false},
   "tabs": [
     {"id": "positions", "label": "💡 Positions", "emoji": "💡", "component": "spot_explorer", "dataSource": "learning.keyIdeas", "goal": "After this you know what DHH announced and the positions he took, with his words.", "brief": {"what": "the announcement (kind announcement) and each position with speaker, why and verbatim line; where a host pushes back, kind disagreement with both sides", "where": ["0:00-41:46"], "expect": 10}},
-    {"id": "qa", "label": "❓ Questions Asked", "emoji": "❓", "component": "moment_track", "dataSource": "podcast.qa", "goal": "After this you know what the hosts asked and how DHH answered each question.", "brief": {"what": "each real question in the host's words, who answered, the answer in a line, its timestamp; skip banter", "where": ["4:00-41:00"], "expect": 10}},
+    {"id": "qa", "label": "❓ Questions Asked", "emoji": "❓", "component": "info_grid", "dataSource": "podcast.qa", "goal": "After this you know what the hosts asked and how DHH answered each question.", "brief": {"what": "each real question in the host's words as the key; who answered and the answer in a line as the value; skip banter", "where": ["4:00-41:00"], "expect": 10}},
     {"id": "conversation_map", "label": "🗺️ Conversation Map", "emoji": "🗺️", "component": "moment_track", "dataSource": "podcast.segments", "goal": "After this you can jump to any stretch knowing what was settled there.", "brief": {"what": "each segment with its span, who leads it and what was concluded; the laptop and AMD tangents as their own segments", "where": ["0:00-41:46"], "expect": 10}}
   ]
 }
@@ -382,13 +387,17 @@ than the one you would design). When the evidence key is false, the component is
 Per-domain guidance (choices, not requirements):
 - food: checklist for the ingredients, step_player for the method (step_flow_canvas for
   {step_flow_threshold}+ stages); no moment_track for a recipe — the steps are the timeline.
-  A tasting or restaurant vlog with no recipe gets spot_explorer (dishes, places) and
-  moment_track instead.
+  Equipment rides as a group of the Ingredients checklist (name it in brief.what), never a
+  second checklist. A tasting or restaurant vlog with no recipe gets spot_explorer (dishes,
+  places) and moment_track instead.
 - project: step_flow_canvas for builds with {step_flow_threshold}+ stages.
-- review: open on Pros & cons — comparison on review.pros, the pros and cons as the reviewer
-  states them (no competitor needed); the verdict goes to the hero (pass it through
-  review.verdict), never a tab. A competitor table is comparison on review.comparisons;
-  comparison_radar only when 4+ axes are numbers the reviewer states.
+- review: ONE comparison tab, opened on. With has_comparison true it is Vs competitors —
+  comparison on review.comparisons — and it ships the reviewer's pros and cons, the
+  competitor rows and the verdict header together (comparison_radar only when 4+ axes are
+  numbers the reviewer states). With has_comparison false it is Pros & cons — comparison on
+  review.pros, the pros and cons as the reviewer states them, no competitor needed. Never a
+  second comparison tab. The verdict goes to the hero (pass it through review.verdict),
+  never a tab.
 - travel: packing_mission when the video yields 4+ packing items (has_packing). Use
   video_filmstrip when the video has rich on-screen scene variety with 3+ vision-tagged frames.
 - music: lyrics_karaoke when lyrics are available (has_lyrics).
@@ -407,10 +416,11 @@ Per-domain guidance (choices, not requirements):
   info_grid only for a short tool or setup lookup.
 - podcast: spot_explorer on learning.keyIdeas for the positions (add learning to
   contentTags); moment_track on podcast.segments for the conversation map — what was
-  concluded in each segment, with the speaker; an interview adds moment_track on podcast.qa
-  (the question, who answered, the answer in a line). The guests ride as the first section
-  of Positions — no guests tab. Quotes ride on the positions — no quote tab, no flash_deck of
-  quotes.
+  concluded in each segment, with the speaker — the one timeline; an interview adds Q&A as
+  info_grid on podcast.qa (the question as the key, who answered and the answer in a line as
+  the value, at its timestamp; with four or more tabs it rides inside Positions as a
+  section), never a second moment_track. The guests ride as the first section of Positions
+  — no guests tab. Quotes ride on the positions — no quote tab, no flash_deck of quotes.
   Podcasts are talking-head — NEVER plan video_filmstrip.
 - news: claims_tracker is the news signature — every factual claim + who said it +
   stated/supported/contested status (what the report does with it, never our verdict); it
@@ -542,8 +552,9 @@ A talk, a lecture, a podcast or an interview is an argument, and reading it is t
 - Moments (moment_track) say what was established at each beat — one per 3–6 minutes by
   length, ranked by salience, each with the line that carries it — never chapter jumps,
   never a title alone, never "Moment N". A podcast's moments are its segments
-  (podcast.segments: what was concluded, with the speaker); an interview adds podcast.qa
-  (the question, who answered, the answer in a line).
+  (podcast.segments: what was concluded, with the speaker) — its only moment_track; an
+  interview's Q&A is info_grid on podcast.qa (the question as the key, who answered and the
+  answer in a line as the value, at its timestamp), never a second timeline.
 - Asks and calls to action → key ideas of kind ask, each with the words that ask as its quote
   (name them in the key-ideas brief); on a talk the checklist on learning.takeaways is built
   from them — plan it only when the video has 3+.
@@ -607,7 +618,10 @@ conditions are met:
 
 The one exception is a review's Pros & cons tab: comparison on review.pros ships the
 reviewer's pros and cons with no competitor needed, even when one product is examined; the
-verdict goes to the hero (pass it through extraction.review.verdict), never a tab.
+verdict goes to the hero (pass it through extraction.review.verdict), never a tab. A review
+gets ONE comparison tab: when it has competitor rows (has_comparison), that tab is Vs
+competitors on review.comparisons and the pros and cons ride on it — never a second
+comparison tab for them.
 
 The assembler drops comparison rows where one side is empty and drops a rows table entirely
 if no real pairs survive (a Pros & cons tab survives on its pros and cons). Hitting the
@@ -657,6 +671,9 @@ assembler decides them from the actual data after extraction.
 - primaryTag: the dominant domain (must be in contentTags)
 - confidence: 0.0-1.0
 - tabs: 3–6, only tabs the content supports; at most 1 display tab (budget)
+- One tab per component: a component never appears twice (comparison_radar counts as
+  comparison, step_flow_canvas as step_player), and no two tabs serve the same purpose —
+  assembly ships only the first of a repeated component
 - Every contentTag must have at least one tab using its domain data
 - dataSource must reference a domain in this video's contentTags. NEVER use "learning.timestamps" for a food video or "travel.itinerary" for a tech video. Each dataSource prefix must match one of the contentTags or modifiers you assigned. EXCEPTION: `dataSource: "frames"` is valid for `video_filmstrip` tabs across any domain — frames data is auto-injected.
 - dataSource must be from the valid datasources listed in the component toolkit

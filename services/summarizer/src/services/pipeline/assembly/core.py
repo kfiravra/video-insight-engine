@@ -28,8 +28,16 @@ from src.utils.data_helpers import is_empty_data
 
 from .assemblers_learning import assemble_display_section
 from .assemblers_overhaul import _normalize_filmstrip_frame
-from .assemblers_primary import PLANNED_COMPARISONS_KEY, planned_comparison_sources
 from .attachments import attach_response_secondaries
+from .component_dedupe import (
+    DUPLICATE_COMPONENT,
+    dedupe_components,
+    duplicate_record,
+    family,
+    log_duplicate,
+    planned_components,
+    reroute_duplicates,
+)
 from .component_lists import COMPONENT_LIST_KEYS, SEQUENTIAL_COMPONENTS, item_list_keys
 from .cross_tab import resolve_cross_tab_links
 from .dedupe import _ITEM_TEXT_KEYS as _ITEM_TEXT_KEYS
@@ -1359,6 +1367,39 @@ def _release_claim(claims: Counter[str], source: str) -> None:
         claims.pop(source, None)
 
 
+def _component_gate(
+    raw_tab: dict,
+    component: str,
+    assembled_tabs: list[dict],
+    planned_as: Mapping[str, str],
+    dropped_tabs: list[dict],
+    claims: Counter[str],
+) -> tuple[bool, str | None]:
+    """One tab per component, the first tab in plan order wins: ``(skip, displaced_by)``.
+
+    The first tab of a family that SHIPS keeps it, so one that dies (an emptied Q&A)
+    hands the slot to the next. A later tab planned in the same family is skipped —
+    logged, listed as ``duplicate_component``, its source's claim released. A later
+    tab whose family an earlier tab only reached by promotion or demotion (S09: the
+    tier list demoted to spot cards) is not skipped: ``displaced_by`` names the tab
+    that took its component, and it walks its own demote ladder. The overview never
+    takes part.
+    """
+    if component == "overview":
+        return False, None
+    shipped = next((t for t in assembled_tabs if family(t["component"]) == family(component)), None)
+    if shipped is None:
+        return False, None
+    kept = str(shipped["id"])
+    if planned_as.get(kept) != family(component):
+        return False, kept
+    data_source = str(raw_tab.get("dataSource") or "")
+    log_duplicate("assembly", {**raw_tab, "component": component}, kept)
+    dropped_tabs.append(duplicate_record({**raw_tab, "component": component}, kept, data_source))
+    _release_claim(claims, data_source)
+    return True, None
+
+
 # ─────────────────────────────────────────────────────
 # Overview Ordering Guarantee
 # ─────────────────────────────────────────────────────
@@ -1587,7 +1628,22 @@ def assemble_response(
         meta["descriptionAnalysis"] = description_analysis
 
     primary_tag = meta["primaryTag"]
-    raw_tabs = triage.get("tabs", [])
+    # One tab per component (component_dedupe): a repeated tab with a second view of
+    # its own changes to it first — a cached interview plan's Q&A moment_track ships
+    # as an info_grid beside the Conversation map. The loop skips the rest.
+    raw_tabs = reroute_duplicates(
+        [dict(t) if isinstance(t, dict) else t for t in triage.get("tabs", [])]
+    )
+    # Tab id → the component family it was planned in: an earlier tab planned in a
+    # family keeps it from a later one; one that only reached it (demotion,
+    # promotion) displaces the later one down its own ladder instead.
+    planned_as = {
+        str(t.get("id", "")): family(
+            str(t.get("component") or infer_component(str(t.get("id", ""))))
+        )
+        for t in raw_tabs
+        if isinstance(t, dict)
+    }
     # The plan's Appendix-C booleans (D15): a required component they rule out
     # is neither backfilled nor reached by demotion.
     evidence = triage.get("evidence") if isinstance(triage.get("evidence"), dict) else None
@@ -1609,8 +1665,6 @@ def assemble_response(
     # Tab id → the item count a host ships once its folded grids joined it (R6):
     # the post-process cap keeps it, so folded rows never cut the host's own.
     fold_caps: dict[str, int] = {}
-    # A review's rows and its pros / cons each ship on one planned tab (4.3).
-    comparisons = planned_comparison_sources(raw_tabs)
 
     for raw_tab in raw_tabs:
         if not isinstance(raw_tab, dict):
@@ -1625,6 +1679,14 @@ def assemble_response(
         # the interactive renderer on the frontend.
         if tab_id == "overview":
             component = "overview"
+
+        # One tab per component, the first tab in plan order wins (``_component_gate``):
+        # a displaced tab keeps its data and walks its own demote ladder below.
+        skip, displaced_by = _component_gate(
+            raw_tab, component, assembled_tabs, planned_as, dropped_tabs, claims
+        )
+        if skip:
+            continue
 
         data = resolve_data_source(data_source, extraction, enrichment)
         # A Q&A tab with no checked question drops here, before any fallback (4.0 c).
@@ -1705,13 +1767,19 @@ def assemble_response(
             "_primary_tag": primary_tag,
             "_synthesis": synthesis,
             "_video_meta": video_meta,
-            PLANNED_COMPARISONS_KEY: comparisons,
         }
 
         drop_reason: str | None = None
         drop_detail: str | None = None
         try:
-            props = assembler(tab_with_hints, data, extraction, enrichment)
+            # A displaced tab never builds its own component: the demote ladder runs.
+            props = (
+                None
+                if displaced_by is not None
+                else assembler(tab_with_hints, data, extraction, enrichment)
+            )
+            if displaced_by is not None:
+                drop_reason, drop_detail = DUPLICATE_COMPONENT, f"kept {displaced_by}"
         except Exception as e:
             logger.warning(
                 "TAB DROPPED: id=%r, component=%r, dataSource=%r — assembler raised %s: %s",
@@ -1728,8 +1796,14 @@ def assemble_response(
         # Post-extraction promotion (the planner couldn't see the item counts /
         # connection graph that gate the richer components) then density caps.
         # Both run before validation so a promoted/trimmed tab is re-checked.
+        # Neither may land on a component an EARLIER tab ships as (one tab per
+        # component, the first tab wins) — the promotion is skipped, the rung too;
+        # later planned tabs do not count (Kfir 2026-11-05).
+        taken = planned_components(assembled_tabs)
         if props is not None:
-            component, props = promote_component(component, props, data, extraction, primary_tag)
+            component, props = promote_component(
+                component, props, data, extraction, primary_tag, taken=taken
+            )
             props = enforce_density(component, props)
         # A Moments track that fails the gate yields to a described fallback (R7).
         if props is not None and component == "moment_track":
@@ -1746,7 +1820,7 @@ def assemble_response(
             props = None
             drop_reason = "validation_empty_list"
 
-        if props is None and component == "moment_track":
+        if props is None and component == "moment_track" and displaced_by is None:
             props = fallback_moment_props(video_meta, description_analysis)
             if props is not None:
                 drop_reason = drop_detail = None
@@ -1760,7 +1834,12 @@ def assemble_response(
         degraded_from: str | None = None
         if props is None and not is_empty_data(data):
             demoted = demote_component(
-                component, tab_with_hints, data, extraction, enrichment, blocked=blocked_rungs
+                component,
+                tab_with_hints,
+                data,
+                extraction,
+                enrichment,
+                blocked=blocked_rungs | taken,
             )
             if demoted is not None:
                 degraded_from = component
@@ -1914,6 +1993,9 @@ def assemble_response(
     )
     # R5: no info_grid row ships a key without a value.
     require_grid_values(assembled_tabs, dropped_tabs)
+    # One tab per component, on what actually assembled (the backstop behind the
+    # plan-level pass: an unfolded grid or a backfill can still repeat a component).
+    dedupe_components(assembled_tabs, dropped_tabs, stage="assembly", sources=sources)
 
     # A Moments tab always exists (Kfir 2026-10-12): with no moment_track tab
     # left, the fallback chain's tab joins after the planned and required ones —

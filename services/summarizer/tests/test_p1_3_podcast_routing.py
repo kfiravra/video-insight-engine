@@ -56,10 +56,15 @@ def _source(outcome_tabs: list[dict], tab_id: str) -> str:
 
 
 class TestRegistry:
-    def test_should_register_podcast_qa_as_a_moment_source(self) -> None:
+    def test_should_register_podcast_qa_as_a_grid_and_a_moment_source(self) -> None:
+        """Tab-dedupe hotfix: an interview's Q&A is an info_grid beside the Conversation
+        map; moment_track stays registered for cached plans."""
         spec = data_source("podcast.qa")
 
-        assert spec is not None and (spec["components"], spec["cap"]) == (["moment_track"], 15)
+        assert spec is not None and (spec["components"], spec["cap"]) == (
+            ["info_grid", "moment_track"],
+            15,
+        )
 
     @pytest.mark.parametrize("path", ["podcast.quotes", "narrative.quotes"])
     def test_should_let_quotes_render_as_spot_cards(self, path: str) -> None:

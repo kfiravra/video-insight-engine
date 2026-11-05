@@ -26,6 +26,7 @@ import pytest
 from src.models.domain_types import DOMAIN_MODELS, validate_domain_output
 from src.models.pipeline_types import EnrichmentData, PlanResult, SynthesisResult
 from src.services.pipeline.assembly import assemble_response
+from src.services.pipeline.assembly.component_dedupe import DUPLICATE_COMPONENT, family
 from src.services.pipeline.assembly.component_lists import item_list_keys
 from src.services.pipeline.plan import _validate_tabs
 from src.services.pipeline.reconcile_pass import is_quiz_tab
@@ -209,5 +210,15 @@ class TestAssemblyOverFixtures:
         assembled = _assemble(fixture)
         assembled_ids = {t["id"] for t in assembled["tabs"]}
         planned_ids = {t["id"] for t in fixture["plan_response"]["tabs"]}
-        missing = planned_ids - assembled_ids
+        # A tab repeating an earlier tab's component drops on purpose (tab-dedupe hotfix:
+        # one tab per component) — only when the tab it names ships that component.
+        by_id = {t["id"]: t for t in assembled["tabs"]}
+        repeated = {
+            d["id"]
+            for d in assembled["dropped"]
+            if d["reason"] == DUPLICATE_COMPONENT
+            and family(by_id.get(d["detail"].removeprefix("kept "), {}).get("component", ""))
+            == family(d["component"])
+        }
+        missing = planned_ids - assembled_ids - repeated
         assert not missing, f"{domain}: planned tabs dropped by assembly: {sorted(missing)}"

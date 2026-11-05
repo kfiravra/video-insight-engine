@@ -176,12 +176,12 @@
     "podcast:interview": {
       "preferred": ["spot_explorer", "moment_track"],
       "forbidden": ["video_filmstrip", "flash_deck"],
-      "planGuidance": "Interview (content-model §4; tags podcast + learning): open on Positions — spot_explorer on learning.keyIdeas, the guest's positions with speaker, disagreements as kind disagreement; the guests ride as its first section, never a tab of their own. Then Q&A — moment_track on podcast.qa, every substantive question, in the host's own words, with its answer; then the Conversation map — moment_track on podcast.segments; claims_tracker on podcast.claims only with has_claims, after the Q&A."
+      "planGuidance": "Interview (content-model §4; tags podcast + learning): open on Positions — spot_explorer on learning.keyIdeas, the guest's positions with speaker, disagreements as kind disagreement; the guests ride as its first section, never a tab of their own. Then Q&A — info_grid on podcast.qa, every substantive question in the host's own words as the key, who answered and the answer in a line as the value, at its timestamp (with four or more tabs it rides inside Positions as a section); then the Conversation map — moment_track on podcast.segments, the one timeline (never a second moment_track); claims_tracker on podcast.claims only with has_claims, after the Q&A."
     },
     "review:review": {
       "preferred": ["comparison", "spot_explorer", "moment_track"],
       "forbidden": ["quiz_arena", "flash_deck"],
-      "planGuidance": "Product review (content-model §7): open on Pros & cons — comparison on review.pros, the pros and cons as the reviewer states them; the verdict rides in the hero, never in a tab. Then Features — spot_explorer on review.specs, the specs as its cells, never a standalone info_grid; vs competitors — comparison on review.comparisons (comparison_radar only when 4+ axes are numbers); Moments — the test scenes on learning.timestamps when learning is tagged."
+      "planGuidance": "Product review (content-model §7): open on ONE comparison tab — with has_comparison true, Vs competitors on review.comparisons, which ships the reviewer's pros and cons, the competitor rows and the verdict header together (comparison_radar only when 4+ axes are numbers); with has_comparison false, Pros & cons on review.pros, the pros and cons as the reviewer states them. Never a second comparison tab; the verdict rides in the hero, never in a tab. Then Features — spot_explorer on review.specs, the specs as its cells, never a standalone info_grid; Moments — the test scenes on learning.timestamps when learning is tagged."
     },
     "news:explainer": {
       "preferred": ["claims_tracker", "moment_track", "spot_explorer"],
@@ -475,7 +475,7 @@
     "science.keyFacts": { "domain": "science", "field": "keyFacts", "kind": "list", "components": ["info_grid", "spot_explorer"], "siblings": [], "requiresEvidence": null, "waitsForVisual": false, "cap": 20, "outputWeight": 148 },
     "science.experiments": { "domain": "science", "field": "experiments", "kind": "list", "components": ["step_player"], "siblings": [], "requiresEvidence": null, "waitsForVisual": false, "cap": 5, "outputWeight": 199 },
     "podcast.segments": { "domain": "podcast", "field": "segments", "kind": "list", "components": ["moment_track"], "siblings": [], "requiresEvidence": null, "waitsForVisual": false, "cap": 20, "outputWeight": 262 },
-    "podcast.qa": { "domain": "podcast", "field": "qa", "kind": "list", "components": ["moment_track"], "siblings": [], "requiresEvidence": null, "waitsForVisual": false, "cap": 15, "outputWeight": 223 },
+    "podcast.qa": { "domain": "podcast", "field": "qa", "kind": "list", "components": ["info_grid", "moment_track"], "siblings": [], "requiresEvidence": null, "waitsForVisual": false, "cap": 15, "outputWeight": 223 },
     "podcast.guests": { "domain": "podcast", "field": "guests", "kind": "list", "components": ["spot_explorer"], "siblings": [], "requiresEvidence": null, "waitsForVisual": false, "cap": 4, "outputWeight": 133 },
     "podcast.quotes": { "domain": "podcast", "field": "quotes", "kind": "list", "components": ["flash_deck", "spot_explorer"], "siblings": ["narrative.quotes"], "requiresEvidence": null, "waitsForVisual": false, "cap": 15, "outputWeight": 75 },
     "podcast.topics": { "domain": "podcast", "field": "topics", "kind": "list", "components": ["info_grid"], "siblings": [], "requiresEvidence": null, "waitsForVisual": false, "cap": 20, "outputWeight": 63 },

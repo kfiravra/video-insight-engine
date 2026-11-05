@@ -46,6 +46,7 @@ from ...shared_config.domain_config import (
     quiz_policy,
     requirement_evidence,
 )
+from .assembly.component_dedupe import family, planned_components
 from .assembly.info_grid_fold import FOLDS_KEY, INFO_GRID, fold_entry, fold_host
 from .assembly.promotion import COMPONENT_PROMOTIONS
 from .enrichment import QUIZ_COMPONENT, QUIZ_DATA_SOURCE
@@ -200,6 +201,9 @@ def _usable_default(run: ReconcilePass, cand: Mapping[str, Any], fresh_source: b
     if any(t["id"] == cand.get("id") for t in run.tabs):
         return False
     if any((t.get("dataSource"), t["component"]) == (path, component) for t in run.tabs):
+        return False
+    # One tab per component: a filler or backfill never repeats a planned family.
+    if family(component) in planned_components(run.tabs):
         return False
     if fresh_source and any(t.get("dataSource") == path for t in run.tabs):
         return False

@@ -153,10 +153,20 @@ class TestFitnessExample:
         )
 
 
+# The one standalone grid an example may plan: an interview's Q&A beside its one timeline
+# (tab-dedupe hotfix, Kfir 2026-11-05 — never a second moment_track).
+_QA_GRID = "podcast.qa"
+
+
 class TestNoStandaloneInfoGrid:
     @pytest.mark.parametrize("header", list(_EXAMPLES))
     def test_should_plan_no_info_grid_tab_in_any_example(self, header: str) -> None:
-        assert [t["id"] for t in _EXAMPLES[header]["tabs"] if t["component"] == "info_grid"] == []
+        grids = [
+            t["id"]
+            for t in _EXAMPLES[header]["tabs"]
+            if t["component"] == "info_grid" and t["dataSource"] != _QA_GRID
+        ]
+        assert grids == []
 
     def test_should_send_the_gaming_set_facts_to_spot_explorer(self) -> None:
         gaming = next(ex for ex in _EXAMPLES.values() if ex["primaryTag"] == "gaming")

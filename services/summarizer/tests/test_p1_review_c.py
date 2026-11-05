@@ -90,7 +90,12 @@ class TestBorrowedSibling:
 
         assert record["dataSource"] == "narrative.keyMoments"
 
-    def test_should_let_no_second_tab_borrow_a_claimed_sibling(self) -> None:
+    def test_should_ship_the_claimed_sibling_once_when_two_moment_tabs_are_planned(
+        self,
+    ) -> None:
+        """Since the tab-dedupe hotfix a page ships one moment_track, so the second
+        planned tab drops before it can borrow the sibling the first one claimed; the
+        sibling's moments ship once, on the first tab."""
         extraction = {"learning": {"timestamps": _LABELS}, "narrative": {"keyMoments": _DESCRIBED}}
         tabs = [
             _tab("timeline", "moment_track", "learning.timestamps"),
@@ -103,8 +108,10 @@ class TestBorrowedSibling:
             for t in result["tabs"]
             if [i["seconds"] for i in t["props"].get("items", [])] == _DESCRIBED_SECONDS
         ]
+        dropped = [(d["id"], d["reason"]) for d in result["dropped"]]
 
-        assert (shipped, "beats" in _ids(result)) == (["timeline"], True)
+        assert (shipped, "beats" in _ids(result)) == (["timeline"], False)
+        assert ("beats", "duplicate_component") in dropped
 
 
 # ─── R7: interview questions ───

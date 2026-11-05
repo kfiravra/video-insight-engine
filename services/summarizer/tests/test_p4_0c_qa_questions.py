@@ -163,10 +163,13 @@ def _ids(result: dict[str, Any]) -> list[str]:
 
 class TestQaTab:
     def test_should_seek_each_shipped_row_to_its_question(self) -> None:
+        """Beside the Conversation map the Q&A ships as an info_grid (tab-dedupe
+        hotfix): each cell's seek chip is its question's second."""
         result = _assemble(_extraction(*_THREE_SAID))
         qa = next(tab for tab in result["tabs"] if tab["id"] == "qa")
 
-        assert [item["seconds"] for item in qa["props"]["items"]] == [10, 60, 120]
+        assert qa["component"] == "info_grid"
+        assert [item["timestamp"] for item in qa["props"]["items"]] == [10, 60, 120]
 
     def test_should_drop_an_emptied_qa_tab_instead_of_filling_it_from_the_outline(self) -> None:
         exchanges = (*_THREE_SAID[:2], _exchange(_REWORDED, 200))

@@ -17,8 +17,11 @@ _GUIDANCE = get_config()["playbooks"]["review:review"]["planGuidance"]
 
 
 class TestReviewGuidance:
-    def test_should_open_on_pros_and_cons_planned_on_review_pros(self) -> None:
-        assert "open on Pros & cons — comparison on review.pros" in _GUIDANCE
+    def test_should_open_on_one_comparison_tab_when_the_review_is_planned(self) -> None:
+        """Tab-dedupe hotfix: Vs competitors with competitor rows, else Pros & cons."""
+        assert "open on ONE comparison tab" in _GUIDANCE
+        assert "Pros & cons on review.pros" in _GUIDANCE
+        assert "Never a second comparison tab" in _GUIDANCE
 
     def test_should_keep_the_verdict_in_the_hero_when_the_review_is_planned(self) -> None:
         assert "the verdict rides in the hero, never in a tab" in _GUIDANCE
