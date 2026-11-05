@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Collection
 from typing import Any
 
 from src.services.pipeline.quote_verify import mark_translated_quote
@@ -23,6 +24,7 @@ from src.shared_config.assembly_policy import assembly_policy
 
 from .assemblers_overhaul import assemble_concept_canvas
 from .assemblers_primary import assemble_spot_explorer
+from .component_dedupe import family
 from .derived_guard import has_quote, is_numeric_axis
 from .moment_normalizers import quote_en
 
@@ -225,12 +227,15 @@ def promote_component(
     data: Any,
     extraction: dict | None,
     domain: str,
+    taken: Collection[str] = (),
 ) -> tuple[str, dict]:
     """Promote a component to a richer sibling when the data supports it.
 
     Returns ``(component, props)`` unchanged when no rule fires. A fired rule
     always returns re-shaped, render-valid props for the new component, which
-    is ``COMPONENT_PROMOTIONS[component]``.
+    is ``COMPONENT_PROMOTIONS[component]``. A target whose family an earlier tab
+    already ships as (``taken``, ``component_dedupe.planned_components``) is not
+    taken: one tab per component, the first tab wins.
     """
     if component == "step_flow_canvas" and domain in STEP_LIST_DOMAINS:
         # The planner may pick the canvas outright; the step list is the same
@@ -251,6 +256,14 @@ def promote_component(
     if new_props is None:
         return component, props
     new_component = COMPONENT_PROMOTIONS[component]
+    if family(new_component) in taken:
+        logger.info(
+            "[assembly] %s -> %s skipped: a %s tab is already on the page",
+            component,
+            new_component,
+            new_component,
+        )
+        return component, props
     logger.info("[assembly] promoted %s -> %s", component, new_component)
     return new_component, new_props
 
@@ -316,7 +329,9 @@ def demote_component(
     for target in _DEMOTE_LADDER.get(component, _DEMOTE_DEFAULT):
         if target in blocked:
             logger.info(
-                "[assembly] demote %s -> %s skipped: ruled out by evidence", component, target
+                "[assembly] demote %s -> %s skipped: ruled out by evidence or already on the page",
+                component,
+                target,
             )
             continue
         assembler = ASSEMBLER_REGISTRY.get(target)

@@ -39,7 +39,7 @@ THINKING GUIDE:
       "quote": "The answer's key line, verbatim, at most 25 words — or null"
     }
   ],
-> UI: Q&A → MomentTrack rows (question as the row title, answer below, speaker chip). Only for an interview: a host questioning a guest. timestamp = the second the question is asked.
+> UI: Q&A → info_grid cells (the question as the key, the answer as the value, the speaker named in the answer when it matters, a seek chip at timestamp); cached plans may still render it as MomentTrack rows. Only for an interview: a host questioning a guest. timestamp = the second the question is asked.
 > Q&A COMPLETENESS: every question a host puts to the guest that gets a substantive answer, across the WHOLE conversation — the last 10 minutes included — one item per question, never two merged, never banter or a "how are you". An interview of 40+ minutes has about 8-15 such exchanges.
 > DISAGREEMENTS: where host and guest differ or one pushes back, that learning.keyIdeas item is kind "disagreement" — speaker = who pushes back, why = both sides, quote = the pushback.
   "guests": [

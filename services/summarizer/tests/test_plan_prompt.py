@@ -418,3 +418,27 @@ class TestDataSourceRule:
 
     def test_should_mark_evidence_gated_datasources_in_the_toolkit_when_rendering(self) -> None:
         assert "tech.snippets [has_code]" in render_plan_prompt(_video())
+
+
+# ─── Tab-dedupe hotfix: one tab per component ─────────────────────────
+
+
+_FAMILY = {"comparison_radar": "comparison", "step_flow_canvas": "step_player"}
+
+
+class TestOneTabPerComponent:
+    def test_should_ask_for_one_tab_per_component_when_rendering(self) -> None:
+        rules = " ".join(_block(render_plan_prompt(_video()), "rules").split())
+
+        assert "One tab per component: a component never appears twice" in rules
+
+    def test_should_state_the_variety_rule_in_the_design_step_when_rendering(self) -> None:
+        steps = " ".join(_block(render_plan_prompt(_video()), "instructions").split())
+
+        assert "no two tabs serve the same purpose" in steps
+
+    @pytest.mark.parametrize("example", _EXAMPLES, ids=_IDS)
+    def test_should_repeat_no_component_when_showing_a_plan(self, example: dict) -> None:
+        families = [_FAMILY.get(t["component"], t["component"]) for t in example["tabs"]]
+
+        assert len(families) == len(set(families))

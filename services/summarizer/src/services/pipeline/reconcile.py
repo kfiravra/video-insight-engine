@@ -29,7 +29,7 @@ that need no evidence (unregistered path, inactive domain).
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from typing import Any
 
 from ...models.memory_types import MemoryResult
@@ -42,6 +42,7 @@ from ...shared_config.domain_config import (
     demote_to,
     valid_content_tags,
 )
+from .assembly.component_dedupe import DUPLICATE_COMPONENT, family, planned_components
 from .plan_reconcile import NEVER_DROPPED, replacement
 from .reconcile_pass import (
     Action,
@@ -158,11 +159,15 @@ def _can_take(run: ReconcilePass, candidate: str, rung: str, read: set[str]) -> 
 
 
 def _demotion(
-    run: ReconcilePass, path: str, component: str, read: set[str]
+    run: ReconcilePass, path: str, component: str, read: set[str], held: frozenset[str]
 ) -> tuple[str, str] | None:
-    """``(rung, source)``: the first ``demoteTo`` rung an eligible source renders."""
+    """``(rung, source)``: the first ``demoteTo`` rung an eligible source renders — never
+    a component an EARLIER tab holds (``held``: one tab per component, the first tab
+    wins; a later tab on the rung moves off it, ``_settle_demoted_components``)."""
     candidates = _demotion_sources(path)
     for rung in demote_to().get(component, []):
+        if family(rung) in held:
+            continue
         source = next((c for c in candidates if _can_take(run, c, rung, read)), None)
         if source is not None:
             return rung, source
@@ -196,8 +201,11 @@ def _demoted(tab: dict, rung: str, source: str) -> dict:
     return demoted
 
 
-def _fall_back(run: ReconcilePass, tab: dict, key: str, others: Sequence[dict]) -> dict | None:
-    """Re-point → keep a moment_track → demote → drop, for one doubly-false tab."""
+def _fall_back(
+    run: ReconcilePass, tab: dict, key: str, others: Sequence[dict], earlier: Sequence[dict]
+) -> dict | None:
+    """Re-point → keep a moment_track → demote → drop, for one doubly-false tab; the
+    demotion never lands on a component an ``earlier`` tab holds."""
     path, component = tab.get("dataSource") or "", tab["component"]
     taken = {(t["dataSource"], t["component"]) for t in [*others, tab] if t.get("dataSource")}
     target = replacement(path, component, run.active, run.evidence, taken)
@@ -207,7 +215,13 @@ def _fall_back(run: ReconcilePass, tab: dict, key: str, others: Sequence[dict]) 
     if component in NEVER_DROPPED:
         record(run, tab, Action("kept_for_moment_fallback", "evidence_false", key=key))
         return tab
-    demoted = _demotion(run, path, component, {t.get("dataSource") or "" for t in others})
+    demoted = _demotion(
+        run,
+        path,
+        component,
+        {t.get("dataSource") or "" for t in others},
+        planned_components(earlier),
+    )
     if demoted is None:
         drop(run, tab, "evidence_false", key)
         return None
@@ -218,6 +232,54 @@ def _fall_back(run: ReconcilePass, tab: dict, key: str, others: Sequence[dict]) 
 
 def _others(slots: Sequence[dict | None], index: int) -> list[dict]:
     return [tab for i, tab in enumerate(slots) if tab is not None and i != index]
+
+
+def _earlier(slots: Sequence[dict | None], index: int) -> list[dict]:
+    return [tab for tab in slots[:index] if tab is not None]
+
+
+def _demoted_ids(run: ReconcilePass) -> frozenset[str]:
+    """The tabs this pass demoted for their evidence (``pipeline.reconcile`` rows)."""
+    return frozenset(
+        str(row["tabId"])
+        for row in run.records
+        if row.get("action") == "demoted" and row.get("reason") == "evidence_false"
+    )
+
+
+def _free_rung(tab: Mapping[str, Any], held: frozenset[str]) -> str | None:
+    """The first ``demoteTo`` rung of the tab's component that no earlier tab holds and
+    its own dataSource renders (the registry's ``components``)."""
+    spec = data_source(str(tab.get("dataSource") or ""))
+    if spec is None:
+        return None
+    rungs = demote_to().get(str(tab.get("component") or ""), [])
+    return next((r for r in rungs if family(r) not in held and r in spec["components"]), None)
+
+
+def _settle_demoted_components(run: ReconcilePass, demoted: Collection[str]) -> None:
+    """One tab per component, the first tab wins: a later tab whose family an earlier
+    tab took by an evidence demotion (``demoted`` ids) moves down its own ``demoteTo``
+    ladder on its own dataSource, else drops (``duplicate_component``). Any other
+    repeat is left to ``dedupe_step`` and assembly, as before."""
+    kept: list[dict] = []
+    # A tab moved down its ladder here took its rung the same way: it counts too, so a
+    # chain of moves (workout_room → checklist, checklist → info_grid) never repeats one.
+    moved = set(demoted)
+    for tab in run.tabs:
+        taken_by_demotion = planned_components(t for t in kept if t["id"] in moved)
+        if family(str(tab.get("component") or "")) not in taken_by_demotion:
+            kept.append(tab)
+            continue
+        rung = _free_rung(tab, planned_components(kept))
+        if rung is None:
+            drop(run, tab, DUPLICATE_COMPONENT)
+            continue
+        action = Action("demoted", DUPLICATE_COMPONENT, to=tab.get("dataSource"), to_component=rung)
+        record(run, tab, action)
+        kept.append({**tab, "component": rung})
+        moved.add(str(tab["id"]))
+    run.tabs = kept
 
 
 def _evidence_step(run: ReconcilePass) -> None:
@@ -231,8 +293,9 @@ def _evidence_step(run: ReconcilePass) -> None:
             run.deferred.append(tab["id"])
             record(run, tab, Action("deferred_to_frames", "evidence_false", key=key))
             continue
-        slots[index] = _fall_back(run, tab, key, _others(slots, index))
+        slots[index] = _fall_back(run, tab, key, _others(slots, index), _earlier(slots, index))
     run.tabs = [tab for tab in slots if tab is not None]
+    _settle_demoted_components(run, _demoted_ids(run))
 
 
 _PLAN_DONE_STEPS = (
@@ -310,8 +373,11 @@ def resolve_screen_code(
         if shows:
             record(run, tab, Action("kept_screen_code", "screen_code", key=SCREEN_KEY))
             continue
-        slots[index] = _fall_back(run, tab, SCREEN_KEY, _others(slots, index))
+        slots[index] = _fall_back(
+            run, tab, SCREEN_KEY, _others(slots, index), _earlier(slots, index)
+        )
     run.tabs = [tab for tab in slots if tab is not None]
+    _settle_demoted_components(run, _demoted_ids(run))
     if plan.awaits_screen:
         for step in _FRAMES_DONE_STEPS:
             step(run)

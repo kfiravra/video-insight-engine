@@ -206,40 +206,6 @@ _MIN_COMPARISON_ROWS = 2
 # of its paths (``review.comparisons``, ``review.pros`` …) — a side read
 # (``field_requests._REVIEW_COMPARISON``).
 _REVIEW_DOMAIN = "review"
-# A review plan with a rows tab and a Pros & cons tab ships each half once (4.3): the
-# rows on the rows tab, the pros and cons on the other — whatever the tab order, so the
-# dedupe never drops one as the other's twin. Assembly hands every planned tab the
-# plan's comparison tabs, ``(id, dataSource)`` in plan order, under this key
-# (``planned_comparison_sources``).
-PLANNED_COMPARISONS_KEY = "_plannedComparisons"
-_ROWS_SOURCE = "review.comparisons"
-_PROS_CONS_SOURCES = frozenset({_REVIEW_DOMAIN, "review.pros", "review.cons"})
-_COMPARISON_COMPONENTS = frozenset({"comparison", "comparison_radar"})
-
-# One planned comparison tab: (tab id, dataSource).
-_Planned = tuple[tuple[str, str], ...]
-
-
-def planned_comparison_sources(tabs: Any) -> _Planned:
-    """The plan's comparison tabs as ``(id, dataSource)``, in plan order."""
-    planned = tabs if isinstance(tabs, list) else []
-    return tuple(
-        (str(t.get("id") or ""), str(t.get("dataSource") or ""))
-        for t in planned
-        if isinstance(t, dict) and t.get("component") in _COMPARISON_COMPONENTS
-    )
-
-
-def _planned(tab: dict) -> _Planned:
-    return tab.get(PLANNED_COMPARISONS_KEY) or ()
-
-
-def _halves_elsewhere(tab: dict) -> tuple[bool, bool]:
-    """(the rows ride another planned tab, the pros / cons ride another planned tab)."""
-    sources = {source for _, source in _planned(tab)}
-    source = str(tab.get("dataSource") or "")
-    rows_elsewhere = source in _PROS_CONS_SOURCES and _ROWS_SOURCE in sources
-    return rows_elsewhere, source == _ROWS_SOURCE and bool(sources & _PROS_CONS_SOURCES)
 
 
 def _competitor_names(rows: list[dict]) -> list[str]:
@@ -284,37 +250,28 @@ def _pros_cons(tab: dict, data: Any, review_data: Any) -> tuple[list[str], list[
     """The reviewer's own pros and cons — never derived from a row's `winner` (0b.9).
 
     A tab planned on the review block itself reads its lists; a tab planned on any
-    other review path (``review.comparisons``, ``review.pros``) reads the review
-    block's (4.3: S07 planned ``review.comparisons`` and shipped none of its 14 pros
-    and 7 cons; a tab on ``review.pros`` shipped nothing at all).
+    other review path (``review.comparisons``, ``review.pros``, a dict path such as
+    ``review.verdict``) whose own data states none reads the review block's (4.3: S07
+    planned ``review.comparisons`` and shipped none of its 14 pros and 7 cons; a tab on
+    ``review.pros`` shipped nothing at all). A review ships one comparison tab
+    (tab-dedupe hotfix), so the reviewer's pros and cons ride on it whatever its path.
     """
-    source = data if isinstance(data, dict) else None
-    if source is None and str(tab.get("dataSource") or "").split(".")[0] == _REVIEW_DOMAIN:
-        source = review_data if isinstance(review_data, dict) else None
-    if source is None:
-        return [], []
-    return _stated_lines(source.get("pros")), _stated_lines(source.get("cons"))
+    own = data if isinstance(data, dict) else {}
+    pros, cons = _stated_lines(own.get("pros")), _stated_lines(own.get("cons"))
+    review_path = str(tab.get("dataSource") or "").split(".")[0] == _REVIEW_DOMAIN
+    if pros or cons or not review_path or not isinstance(review_data, dict):
+        return pros, cons
+    return _stated_lines(review_data.get("pros")), _stated_lines(review_data.get("cons"))
 
 
-def _verdict_tab(planned: _Planned, states_pros_or_cons: bool) -> str:
-    """The id of the one planned tab that carries a review's verdict: the Pros & cons tab
-    when one is planned and the review states pros or cons (it ships them), else the
-    first comparison tab — a rows tab before a Pros & cons tab that ships nothing."""
-    pros_cons = [tab_id for tab_id, source in planned if source in _PROS_CONS_SOURCES]
-    if pros_cons and states_pros_or_cons:
-        return pros_cons[0]
-    rows = [tab_id for tab_id, source in planned if source not in _PROS_CONS_SOURCES]
-    return (rows or [tab_id for tab_id, _ in planned])[0]
-
-
-def _carries_verdict(tab: dict, review_data: dict) -> bool:
-    """Whether this tab carries the review's verdict (C-C1): one tab only, so the hero
-    that lifts it is its only place. A tab assembled outside a plan keeps it."""
-    planned = _planned(tab)
-    if not planned:
-        return True
-    states = bool(_stated_lines(review_data.get("pros")) or _stated_lines(review_data.get("cons")))
-    return str(tab.get("id") or "") == _verdict_tab(planned, states)
+def _review_rows(tab: dict, data: Any, review_data: Any) -> list[dict]:
+    """The tab's own rows; for a tab on another review path (``review.pros``) with none,
+    the review block's — a review ships one comparison tab (tab-dedupe hotfix), so its
+    competitor rows ride on it whichever review path it was planned on."""
+    rows = _comparison_rows(data)
+    if rows or str(tab.get("dataSource") or "").split(".")[0] != _REVIEW_DOMAIN:
+        return rows
+    return _comparison_rows(review_data) if isinstance(review_data, dict) else []
 
 
 def assemble_comparison(
@@ -333,9 +290,10 @@ def assemble_comparison(
     The leftLabel is only set from the review's product — never from the video
     title. Each row keeps its `competitorName`, which heads that competitor's own
     table (4.3, Q5); `rightLabel` names the competitor only when the rows name one.
-    Pros/cons come only from the review's own `pros` / `cons` (``_pros_cons``); a plan
-    with both a rows tab and a Pros & cons tab ships each half once (``_halves_elsewhere``)
-    and the review's verdict once (``_carries_verdict``).
+    Pros/cons come only from the review's own `pros` / `cons` (``_pros_cons``). A page
+    ships one comparison tab (tab-dedupe hotfix), so that tab carries the rows
+    (``_review_rows``), the pros and cons and the review's verdict alone (C-C1: the
+    hero that lifts the verdict is its only place).
     """
     review_data = extraction.get(_REVIEW_DOMAIN) if isinstance(extraction, dict) else None
     product_name: str | None = None
@@ -344,9 +302,8 @@ def assemble_comparison(
         if isinstance(candidate, str) and candidate.strip():
             product_name = candidate.strip()
 
-    rows_elsewhere, pros_cons_elsewhere = _halves_elsewhere(tab)
-    rows = [] if rows_elsewhere else _comparison_rows(data)
-    pros, cons = ([], []) if pros_cons_elsewhere else _pros_cons(tab, data, review_data)
+    rows = _review_rows(tab, data, review_data)
+    pros, cons = _pros_cons(tab, data, review_data)
     # Enforce the documented contract: a comparison tab needs either ≥2 real
     # pairs OR a populated pros/cons set. A lone row with no pros/cons is the
     # "info_grid in disguise" failure mode the refactor was supposed to close.
@@ -363,10 +320,10 @@ def assemble_comparison(
     }
 
     # Verdict header data is folded into ComparisonInteractive — when the
-    # review extraction includes a verdict block, attach it to one planned tab (the
+    # review extraction includes a verdict block, attach it to the comparison tab (the
     # web lifts it into the hero on a review, 4.3). Standalone VerdictInteractive was
     # retired in the video-to-action overhaul; the comparison renderer absorbs its role.
-    if isinstance(review_data, dict) and _carries_verdict(tab, review_data):
+    if isinstance(review_data, dict):
         verdict = review_data.get("verdict")
         if isinstance(verdict, dict) and verdict.get("bottomLine"):
             props["verdict"] = _normalize_verdict(verdict, review_data.get("rating"))

@@ -14,7 +14,7 @@ code renders it here:
     learning.keyIdeas — "Positions" (spot_explorer) [rank]
     K1 [2:28] (part 1) We are probably the only life … — Fridman opens by asking …
 
-    podcast.qa — "Questions Asked" (moment_track)
+    podcast.qa — "Questions Asked" (info_grid)
     Q1 [2:28] (part 1) Do you think there's intelligent life … — Tegmark's guess is no …
     </lists>
 

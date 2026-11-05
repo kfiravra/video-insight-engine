@@ -34,7 +34,7 @@ from src.services.pipeline.phases.triage import plan_done_events, run_phase_plan
 from src.services.pipeline.pipeline_helpers import PipelineTimer
 from src.services.pipeline.triage import TriageResult
 from src.services.video.youtube import Chapter
-from src.shared_config.domain_config import build_fallback_tabs, valid_content_tags
+from src.shared_config.domain_config import valid_content_tags
 from tests.test_group_failures import SCRAMBLED, Model, patched
 from tests.test_phase_assembly_order import _run, _saved
 
@@ -358,7 +358,9 @@ class TestPlanFailure:
     ) -> None:
         _, fired = await _after_failed_plan(tag)
 
-        defaults = {t["dataSource"] for t in build_fallback_tabs(tag) if reads_extraction(t)}
+        # One tab per component (tab-dedupe hotfix): a domain listing a component twice in
+        # its defaultTabs (tech, fitness, review) plans the first, so only it is requested.
+        defaults = {t["dataSource"] for t in plan._fallback_tabs(tag) if reads_extraction(t)}
         assert {f.path for f in fired if f.reason == "planned"} == defaults
 
     async def test_should_take_no_reconcile_action_on_the_fallback_plan(self, tag: str) -> None:

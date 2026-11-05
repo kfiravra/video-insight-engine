@@ -172,18 +172,19 @@ class TestSpokenWordExamples:
             any(word in what for word in ("established", "concluded", "answer")) for what in briefs
         )
 
-    def test_should_route_segments_and_qa_to_moment_track_when_showing_podcast_plans(
+    def test_should_route_segments_to_the_one_moment_track_when_showing_podcast_plans(
         self,
     ) -> None:
+        """One tab per component (tab-dedupe hotfix): the conversation map is the only
+        timeline; an interview's Q&A is an info_grid on podcast.qa."""
         sources = {
-            kind: {t["dataSource"] for t in _tabs(_SPOKEN[kind][1], "moment_track")}
+            kind: [t["dataSource"] for t in _tabs(_SPOKEN[kind][1], "moment_track")]
             for kind in ("podcast", "interview")
         }
+        qa = [t["dataSource"] for t in _tabs(_SPOKEN["interview"][1], "info_grid")]
 
-        assert "podcast.segments" in sources["podcast"] and sources["interview"] >= {
-            "podcast.segments",
-            "podcast.qa",
-        }
+        assert sources == {"podcast": ["podcast.segments"], "interview": ["podcast.segments"]}
+        assert qa == ["podcast.qa"]
 
     def test_should_size_the_quiz_to_length_when_the_spoken_word_plan_is_a_lecture(self) -> None:
         _, lecture = _SPOKEN["lecture"]

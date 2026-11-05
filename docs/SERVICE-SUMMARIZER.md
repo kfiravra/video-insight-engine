@@ -779,8 +779,23 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v11): description analysis, 
     │   a relaxed second pass (±15s window) backfills still-thumbless moment items
     └─▶ Timestamp hygiene: moment_track items beyond video duration (+10s) are dropped;
     │   a tab emptied by that drop is removed (dropped reason `all_timestamps_impossible`)
-    └─▶ A Moments tab always exists (Kfir 2026-10-12, 2.1): with no moment_track tab left after
-    │   the domain requirements (a podcast's backfilled segments win), the always-Moments tab
+    └─▶ One tab per component (tab-dedupe hotfix, 2026-11-05; assembly/component_dedupe.py): a
+    │   repeated tab with a second view of its own changes to it (a podcast.qa moment_track
+    │   beside another timeline ships as an info_grid). The first tab in plan order wins:
+    │   the loop skips a tab whose family (comparison_radar = comparison, step_flow_canvas =
+    │   step_player) an earlier tab PLANNED in it already shipped — droppedTabs reason
+    │   `duplicate_component` — while a tab whose family an earlier tab only reached by
+    │   promotion or demotion walks its own demote ladder (S09: the tier list demoted to spot
+    │   cards, the later spot tab ships as an info_grid). Promotion and demotion refuse only a
+    │   family an EARLIER tab ships as; the assembled tabs are deduped once more as the
+    │   backstop (a folded grid a dead host gives back, a backfill). Plan parse
+    │   (plan._normalize_plan_data) only re-routes — whether the first tab ships is known
+    │   here alone — and keeps one tab per component of a fallback plan's defaultTabs; the
+    │   plan-done / frames-done evidence demotion (a later tab on the rung moves down its own
+    │   ladder, else drops) and the fill follow the same order
+    └─▶ A Moments tab always exists (Kfir 2026-10-12, 2.1): when the PLAN designed no
+    │   moment_track (a planned one that dies gets no stand-in, tab-dedupe hotfix) and none is
+    │   left after the domain requirements (a podcast's backfilled segments win), the always-Moments tab
     │   (`key_moments`, "Key Moments"; `key_moments_2`… if a plan tab holds the id) joins after
     │   the planned/required tabs, built by the moment fallback chain (memory outline →
     │   YouTube chapters → description timestamps; assembly/moment_fallback.py) and framed

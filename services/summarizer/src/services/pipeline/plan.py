@@ -28,6 +28,7 @@ from ...utils.llm_retry import call_llm_with_retry
 from ..llm_messages import CacheTTL, UserContent, text_block
 from ..llm_model_rules import Effort
 from .assembly import infer_component
+from .assembly.component_dedupe import dedupe_components, reroute_duplicates
 from .plan_prompt import PROMPT_PATH, PlanPrompt, PlanVideo, goal_rule_violation, render_plan_parts
 from .plan_reconcile import activate_argument_domains, reconcile_plan_tabs
 
@@ -75,6 +76,13 @@ PLAN_EFFORT: Effort = "medium"
 _SELF_SUFFICIENT_COMPONENTS = frozenset({"overview"})
 
 
+def _fallback_tabs(primary: str) -> list[dict]:
+    """The domain's defaultTabs, one per component: some domains list a component twice
+    (tech code + patterns, fitness exercises + timer), and the planner designed none of
+    them, so the repeat goes here rather than as an assembly drop the run would count."""
+    return dedupe_components(build_fallback_tabs(primary), [], stage="fallback_plan")
+
+
 def _build_fallback_plan(category_hint: str | None = None) -> PlanResult:
     """Build a fallback PlanResult when LLM fails or confidence is low."""
     primary = map_category_to_tag(category_hint) if category_hint else "learning"
@@ -86,7 +94,7 @@ def _build_fallback_plan(category_hint: str | None = None) -> PlanResult:
             "modifiers": [],
             "primaryTag": primary,
             "userGoal": "General summary of the video content",
-            "tabs": build_fallback_tabs(primary),
+            "tabs": _fallback_tabs(primary),
             "confidence": 0.0,
         }
     )
@@ -284,11 +292,15 @@ def _normalize_plan_data(data: dict, content_format: str | None) -> None:
         validated_tabs, content_tags, _plan_modifiers(data)
     )
     data["droppedTabs"] = [*dropped_tabs, *reconcile_drops]
-    data["tabs"] = _enforce_domain_policy(reconciled_tabs, primary_tag, content_format)
+    policed = _enforce_domain_policy(reconciled_tabs, primary_tag, content_format)
+    # One tab per component (component_dedupe): an interview's second timeline on
+    # podcast.qa becomes its Q&A grid here. A repeat is never dropped before assembly,
+    # where the first tab that ships keeps the component (the first may still die).
+    data["tabs"] = reroute_duplicates(policed)
     # Fallback tabs if none valid — flagged so assembly does not count the
     # plan's drops on top of a tab set the planner never designed.
     if not data["tabs"]:
-        data["tabs"] = build_fallback_tabs(primary_tag)
+        data["tabs"] = _fallback_tabs(primary_tag)
         data["planFallback"] = True
 
 

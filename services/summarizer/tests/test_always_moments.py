@@ -2,7 +2,8 @@
 
 No planned moment_track → assembly adds the fallback-chain tab (memory outline
 → YouTube chapters → description timestamps) after the planned tabs, the quiz
-still last; no source → no tab (one is never invented). The plan-done
+still last; no source → no tab (one is never invented). A planned moment_track
+that dies gets no stand-in (tab-dedupe hotfix, 2026-11-04). The plan-done
 provisional copy carries the id and label of the tab that replaces it.
 """
 
@@ -128,6 +129,13 @@ class TestAlwaysMomentsInAssembly:
         result = assemble_response(triage, extraction, None, None, video_meta=_META)
 
         assert [t["id"] for t in _moment_tabs(result)] == ["segments"]
+
+    def test_should_not_stand_in_for_a_planned_moments_tab_that_died(self) -> None:
+        """Tab-dedupe hotfix (Kfir 2026-11-04): Key Moments only when the plan has no
+        moment_track. A planned Moments tab that ships nothing gets no outline copy."""
+        plan = [_CODE_TAB, _MOMENTS_TAB, _QUIZ_TAB]
+
+        assert always_moments_tab([], plan, _META, None, frozenset()) is None
 
 
 # ─── It adds a tab, never takes one: the v8 filmstrip + minimum-3 fallbacks stay (R4-1, R4-3) ───
