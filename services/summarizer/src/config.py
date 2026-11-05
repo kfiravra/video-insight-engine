@@ -164,7 +164,7 @@ class Settings(BaseSettings):
     # is not bot-checked — so a billing quote no longer depends on the proxy
     # exits; 1 unit of the project's 10,000/day quota per uncached quote. Blank =
     # yt-dlp through the proxy, which is also the fallback on a 403/quota error,
-    # an unknown or private video, an age or region allow-list restriction, a
+    # an unknown or private video, an age restriction or a region allow-list, a
     # timeout or a bad body (one warning names the reason). The pipeline's own
     # metadata step stays on yt-dlp. Restrict the key by API (YouTube Data API v3)
     # only, no IP restriction: the same key serves the dev machine and the box.

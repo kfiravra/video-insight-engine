@@ -784,7 +784,7 @@ to `ALERT_WEBHOOK_URL` when set. Unset webhook = nobody is told.
 | `high_failure_rate` | admin `alert_evaluator` (5 min) | failures / calls over the last hour > `failure_rate_threshold`, sample ≥ 10 | 1 h |
 | `backup_stale` | admin `alert_evaluator` (5 min) | newest `backups/*/manifest.json` older than `BACKUP_MAX_AGE_HOURS` (26) | 6 h |
 | `daily_global_cost` | admin `alert_evaluator` (5 min) | Σ `llm_usage.cost_usd` since UTC midnight ≥ `ALERT_DAILY_COST_THRESHOLD_USD` (default 20; ≤ 0 disables). Alarm only, no request is blocked | once per UTC day |
-| `proxy_exits_benched` | summarizer proxy-exit bench (inline, per process: `vie-summarizer`, `vie-summarizer-worker`) | a bot check, 429, session block or unavailable answer puts more than half of the `YOUTUBE_PROXY_EXIT_COUNT` exits on the 15-min bench | one per crossing, at most one per 15 min |
+| `proxy_exits_benched` | summarizer proxy-exit bench (inline, per process: `vie-summarizer`, `vie-summarizer-worker`) | a bot check, 429, session block, unavailable answer or (downloads) video-data 403 puts more than half of the `YOUTUBE_PROXY_EXIT_COUNT` exits on the 15-min bench | one per crossing, at most one per 15 min |
 | `pipeline_stalled` | summarizer stall sweeper (5 min) | `processing` row idle > `STALL_THRESHOLD_MINUTES` with no producer lock | none (row is flipped to `failed`) |
 
 `daily_spike_multiplier` / `failure_rate_threshold` are edited via admin

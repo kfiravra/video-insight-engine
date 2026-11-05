@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 from typing import Any
 
 import httpx
 import pytest
 
+from src.services.video import youtube_data_api
 from src.services.video.youtube_data_api import (
     DATA_API_URL,
     DataApiUnavailable,
@@ -218,6 +220,16 @@ class TestFetchVideo:
 
         assert (error.reason, error.api_reason) == ("not_found", None)
 
+    async def test_should_raise_not_found_when_the_fields_filter_drops_the_empty_list(self) -> None:
+        error = await _failure(_Google(httpx.Response(200, json={})))
+
+        assert (error.reason, error.api_reason) == ("not_found", None)
+
+    async def test_should_raise_bad_payload_when_items_is_not_a_list(self) -> None:
+        error = await _failure(_Google(httpx.Response(200, json={"items": {"id": YT}})))
+
+        assert (error.reason, error.api_reason) == ("bad_payload", "items")
+
     async def test_should_raise_quota_exceeded_on_a_403_quota_error(self) -> None:
         response = _google_error(403, reason="quotaExceeded", rpc_status="RESOURCE_EXHAUSTED")
 
@@ -275,6 +287,23 @@ class TestFetchVideo:
         error = await _failure(_Google(error=httpx.ReadTimeout("timed out")))
 
         assert (error.reason, error.api_reason) == ("timeout", "ReadTimeout")
+
+    async def test_should_raise_timeout_when_the_whole_call_outlasts_the_deadline(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """httpx's timeout is per phase; the call as a whole gets DATA_API_TIMEOUT_S."""
+
+        async def slow_google(request: httpx.Request) -> httpx.Response:
+            await asyncio.sleep(5)
+            return _ok(ITEM)
+
+        monkeypatch.setattr(youtube_data_api, "DATA_API_TIMEOUT_S", 0.05)
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(slow_google)) as client:
+            with pytest.raises(DataApiUnavailable) as info:
+                await fetch_video(YT, api_key=KEY, client=client)
+
+        assert (info.value.reason, info.value.api_reason) == ("timeout", "deadline")
 
     async def test_should_raise_network_when_the_connection_fails(self) -> None:
         error = await _failure(_Google(error=httpx.ConnectError("connection refused")))

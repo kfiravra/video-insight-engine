@@ -104,6 +104,40 @@ def proxy_exit_label(proxy_url: str) -> str:
     return f"session -{match.group('n')}" if match else "unnamed session"
 
 
+def ytdlp_proxy_url() -> str | None:
+    """YOUTUBE_PROXY_URL with whitespace stripped, or None for a direct connection."""
+    url = (settings.YOUTUBE_PROXY_URL or "").strip()
+    return url or None
+
+
+def _exit_pool(primary: str, count: int) -> list[str]:
+    """Every sticky exit, the configured one first, then the next ones wrapping within 1..count.
+
+    Only the username is rewritten, in the raw netloc, so the password is
+    never re-encoded. Just ``[primary]`` without a sticky ``-N`` username.
+    """
+    scheme_sep, _, rest = primary.partition("://")
+    if not rest or count <= 1 or "@" not in rest:
+        return [primary]
+    userinfo, _, host = rest.rpartition("@")
+    username, colon, password = userinfo.partition(":")
+    match = _STICKY_SUFFIX_RE.match(username)
+    if match is None:
+        return [primary]
+    base, current = match.group("base"), int(match.group("n"))
+    urls = [primary]
+    for step in range(1, count):
+        exit_no = (current - 1 + step) % count + 1
+        urls.append(f"{scheme_sep}://{base}-{exit_no}{colon}{password}@{host}")
+    return urls
+
+
+def _configured_exit_pool() -> list[str]:
+    """Every exit of YOUTUBE_PROXY_URL × YOUTUBE_PROXY_EXIT_COUNT, the configured one first; [] without a proxy."""
+    primary = ytdlp_proxy_url()
+    return _exit_pool(primary, settings.YOUTUBE_PROXY_EXIT_COUNT) if primary else []
+
+
 class _ExitMemory:
     """Per-process proxy-exit bookkeeping, shared by every thread (pipeline-1min 1a.6).
 
@@ -229,40 +263,6 @@ def record_working_exit(proxy_url: str, label: str, position: int, tried_of: int
             tried_of,
             proxy_exit_label(proxy_url),
         )
-
-
-def ytdlp_proxy_url() -> str | None:
-    """YOUTUBE_PROXY_URL with whitespace stripped, or None for a direct connection."""
-    url = (settings.YOUTUBE_PROXY_URL or "").strip()
-    return url or None
-
-
-def _exit_pool(primary: str, count: int) -> list[str]:
-    """Every sticky exit, the configured one first, then the next ones wrapping within 1..count.
-
-    Only the username is rewritten, in the raw netloc, so the password is
-    never re-encoded. Just ``[primary]`` without a sticky ``-N`` username.
-    """
-    scheme_sep, _, rest = primary.partition("://")
-    if not rest or count <= 1 or "@" not in rest:
-        return [primary]
-    userinfo, _, host = rest.rpartition("@")
-    username, colon, password = userinfo.partition(":")
-    match = _STICKY_SUFFIX_RE.match(username)
-    if match is None:
-        return [primary]
-    base, current = match.group("base"), int(match.group("n"))
-    urls = [primary]
-    for step in range(1, count):
-        exit_no = (current - 1 + step) % count + 1
-        urls.append(f"{scheme_sep}://{base}-{exit_no}{colon}{password}@{host}")
-    return urls
-
-
-def _configured_exit_pool() -> list[str]:
-    """Every exit of YOUTUBE_PROXY_URL × YOUTUBE_PROXY_EXIT_COUNT, the configured one first; [] without a proxy."""
-    primary = ytdlp_proxy_url()
-    return _exit_pool(primary, settings.YOUTUBE_PROXY_EXIT_COUNT) if primary else []
 
 
 def ytdlp_proxy_exit_urls(

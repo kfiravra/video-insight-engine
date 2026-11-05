@@ -15,6 +15,7 @@ token (``API_KEY_INVALID``, ``quotaExceeded``, ``SERVICE_DISABLED``…).
 
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -199,11 +200,14 @@ async def _fetch(client: httpx.AsyncClient, video_id: str, api_key: str) -> Data
         payload = response.json()
     except ValueError:
         raise DataApiUnavailable("bad_payload", "not_json") from None
-    items = payload.get("items") if isinstance(payload, dict) else None
+    if not isinstance(payload, dict):
+        raise DataApiUnavailable("bad_payload", "items")
+    # videos.list never 404s: an unknown, private or deleted id is an empty list,
+    # and a ``fields`` filter may drop the empty list altogether (``{}``).
+    items = payload.get("items", [])
     if not isinstance(items, list):
         raise DataApiUnavailable("bad_payload", "items")
     if not items:
-        # videos.list never 404s: an unknown, private or deleted id is an empty list.
         raise DataApiUnavailable("not_found")
     first = items[0]
     if not isinstance(first, dict):
@@ -214,19 +218,23 @@ async def _fetch(client: httpx.AsyncClient, video_id: str, api_key: str) -> Data
 async def fetch_video(
     video_id: str, *, api_key: str, client: httpx.AsyncClient | None = None
 ) -> DataApiVideo:
-    """One ``videos.list`` call for ``video_id``.
+    """One ``videos.list`` call for ``video_id``, DATA_API_TIMEOUT_S in total.
 
-    ``client`` lets tests inject an ``httpx.MockTransport``; without one the
-    call gets its own client with DATA_API_TIMEOUT_S and no retries (the
-    gateway allows 25 s for the whole pre-flight, and the yt-dlp fallback
-    may need 15 of them). Raises DataApiUnavailable for every failure.
+    ``client`` lets tests inject an ``httpx.MockTransport``. httpx's timeout
+    is per phase (connect, write, read, pool), so the whole call also runs
+    under one deadline: the gateway allows 25 s for the pre-flight, and the
+    yt-dlp fallback may need 15 of them. No retries. Raises
+    DataApiUnavailable for every failure.
     """
     try:
-        if client is None:
-            async with httpx.AsyncClient(timeout=DATA_API_TIMEOUT_S) as own:
-                return await _fetch(own, video_id, api_key)
-        return await _fetch(client, video_id, api_key)
+        async with asyncio.timeout(DATA_API_TIMEOUT_S):
+            if client is None:
+                async with httpx.AsyncClient(timeout=DATA_API_TIMEOUT_S) as own:
+                    return await _fetch(own, video_id, api_key)
+            return await _fetch(client, video_id, api_key)
     except DataApiUnavailable:
         raise
+    except TimeoutError:
+        raise DataApiUnavailable("timeout", "deadline") from None
     except Exception as e:  # noqa: BLE001 — the key is in these frames' locals; nothing may escape with it
         raise DataApiUnavailable("internal", type(e).__name__) from None

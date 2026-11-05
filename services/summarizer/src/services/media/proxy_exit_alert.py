@@ -1,8 +1,9 @@
 """One alert when more than half of the proxy exits are benched.
 
 ``download_utils._ExitMemory`` benches an exit for 15 min after a bot check, a
-429, a session block or an unavailable answer, and reports the block that
-tips its pool past half (at most once per cooldown, per process). This module
+429, a session block, an unavailable answer or (downloads) a 403 on the video
+data, and reports the block that tips its pool past half (at most once per
+cooldown, per process). This module
 turns that into the stall sweeper's alert shape: an ERROR line (one Sentry
 event), a POST to ALERT_WEBHOOK_URL (``llm_common.alerts.deliver_alert``) and
 an ``llm_alerts`` row for the admin Alerts page.
@@ -43,9 +44,9 @@ def build_benched_alert(
         "exits": ", ".join(labels),
         "window_minutes": window_minutes,
         "message": (
-            "More than half of the proxy exits got a bot check, 429, session block or an "
-            f"unavailable answer in the last {window_minutes} min; YouTube calls from this "
-            "process are failing or slow"
+            "More than half of the proxy exits got a bot check, 429, session block, "
+            f"unavailable answer or video-data 403 in the last {window_minutes} min; YouTube "
+            "calls from this process are failing or slow"
         ),
         "timestamp": now,
     }
