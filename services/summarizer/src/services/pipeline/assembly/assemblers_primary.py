@@ -35,6 +35,7 @@ from .normalizers import (
     _normalize_step,
     _normalize_verdict,
     normalize_moment_items,
+    step_text,
 )
 from .quote_spots import is_quote_list, quote_spots
 from .tip_spots import spot_card
@@ -421,13 +422,10 @@ def assemble_step_player(
     if not isinstance(data, list) or len(data) < 1:
         return None
     # Bare-string steps are legitimate (e.g. tech.setup.commands is list[str])
-    # — coerce instead of silently filtering them into an empty tab.
-    steps = []
-    for i, item in enumerate(data):
-        if isinstance(item, dict):
-            steps.append(_normalize_step(item, i))
-        elif isinstance(item, str) and item.strip():
-            steps.append(_normalize_step({"instruction": item.strip()}, i))
-    if not steps:
-        return None
-    return {"steps": steps}
+    # — coerce instead of silently filtering them into an empty tab. A step with
+    # no text under any ``STEP_TEXT_KEYS`` is not a step and is skipped; a list of
+    # nothing else yields None, which core drops as ``empty_steps``.
+    candidates = ({"instruction": item.strip()} if isinstance(item, str) else item for item in data)
+    kept = [item for item in candidates if isinstance(item, dict) and step_text(item)]
+    steps = [_normalize_step(item, index) for index, item in enumerate(kept)]
+    return {"steps": steps} if steps else None

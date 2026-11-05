@@ -758,11 +758,14 @@ A plan-first pipeline (since v9; `PIPELINE_VERSION` v11): description analysis, 
     │   validation demotes down _DEMOTE_LADDER (e.g. step_player → checklist → display_section,
     │   tier_list → spot_explorer → info_grid → display_section) instead of dropping; demoted tabs are stamped
     │   `degradedFrom` and re-pass enforce_density. Non-demotable by design: quiz_arena,
-    │   video_filmstrip, lyrics_karaoke, frame_strip.
+    │   video_filmstrip, lyrics_karaoke, frame_strip. A step list with no step text is never
+    │   demoted either: it drops as `empty_steps` (below).
     └─▶ Per-tab drop accounting: assemble_response returns {"meta", "tabs", "dropped"} — drop
     │   reasons: assembler_raised, validation_empty_list, assembler_returned_none,
     │   domain_forbidden, domain_max_cap, all_timestamps_impossible, steps_are_the_timeline
-    │   (D6, below), duplicate_tab (the post-promotion dedupe), and on the split path
+    │   (D6, below), duplicate_tab (the post-promotion dedupe), empty_steps (a step_player or
+    │   step_flow_canvas whose items hold no text under any `normalizers.STEP_TEXT_KEYS`;
+    │   WARNING log, detail "<n> steps without text", `assembly/step_guard.py`), and on the split path
     │   extraction_group_failed (one of the first three for a tab that waited for a failed
     │   group's field — assembly's own reason kept in `detail`); an info_grid tab R5 leaves
     │   without a valued row is `validation_empty_list` too (feeds tabsDropped/droppedTabs

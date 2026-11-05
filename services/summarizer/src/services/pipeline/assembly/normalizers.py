@@ -8,6 +8,7 @@ re-exported here.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from src.models.domain_types import VERDICT_BADGES
@@ -219,18 +220,34 @@ def _normalize_verdict(verdict: dict, rating: Any) -> dict[str, Any]:
     return props
 
 
+# The keys a step's text may sit under, first match wins. ``explanation`` is the prose of
+# a ``tech.snippets`` item, a path the registry lets step_player render (a setup tab the
+# plan put on ``project.steps``, re-pointed to the snippets on a tech video): without it
+# every such step shipped with an empty instruction (step-player-empty hotfix, 2026-11-05).
+STEP_TEXT_KEYS: tuple[str, ...] = (
+    "instruction",
+    "title",
+    "label",
+    "name",
+    "text",
+    "description",
+    "detail",
+    "explanation",
+)
+
+
+def step_text(item: Mapping[str, Any]) -> str:
+    """The step's text: the first non-blank string under :data:`STEP_TEXT_KEYS`, else ``""``."""
+    for key in STEP_TEXT_KEYS:
+        value = item.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return ""
+
+
 def _normalize_step(item: dict, index: int) -> dict:
     """Normalize a step item, converting timestamp-shaped data if needed."""
-    instruction = (
-        item.get("instruction")
-        or item.get("title")
-        or item.get("label")
-        or item.get("name")
-        or item.get("text")
-        or item.get("description")
-        or item.get("detail")
-        or ""
-    )
+    instruction = step_text(item)
     tips = item.get("tips")
     if not tips and item.get("detail") and item.get("detail") != instruction:
         tips = item.get("detail")
