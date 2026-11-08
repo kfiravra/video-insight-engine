@@ -80,6 +80,7 @@ from .sampling import (
     sample_moments,
     tier_head,
 )
+from .step_guard import EMPTY_STEPS, empty_steps_drop
 from .steps_timeline import STEPS_ARE_THE_TIMELINE as STEPS_ARE_THE_TIMELINE
 from .steps_timeline import dedupe_under_steps_timeline
 from .tab_references import (
@@ -1792,6 +1793,12 @@ def assemble_response(
             props = None
             drop_reason = "assembler_raised"
             drop_detail = f"{type(e).__name__}: {e}"
+        # A step list with no step text under any key drops as such and is never
+        # demoted: the ladder's display_section would ship the raw items (step_guard).
+        if props is None and drop_reason is None:
+            empty_steps = empty_steps_drop(tab_id, component, data_source, data)
+            if empty_steps is not None:
+                drop_reason, drop_detail = empty_steps
 
         # Post-extraction promotion (the planner couldn't see the item counts /
         # connection graph that gate the richer components) then density caps.
@@ -1832,7 +1839,7 @@ def assemble_response(
         # Policy drops (domain_forbidden/max_cap) are handled later and are
         # never demoted.
         degraded_from: str | None = None
-        if props is None and not is_empty_data(data):
+        if props is None and drop_reason != EMPTY_STEPS and not is_empty_data(data):
             demoted = demote_component(
                 component,
                 tab_with_hints,
