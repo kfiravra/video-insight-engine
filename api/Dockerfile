@@ -5,6 +5,11 @@ FROM node:20-alpine AS builder
 
 RUN corepack enable && corepack prepare pnpm@8.15.0 --activate
 
+# bcrypt@5 falls back to a node-gyp source build when node-pre-gyp cannot fetch its
+# prebuilt binary; the fallback needs a C++ toolchain. pnpm 8's bundled node-gyp 9
+# imports distutils, gone from Python 3.12: py3-setuptools supplies it. Builder stage only.
+RUN apk add --no-cache python3 py3-setuptools make g++
+
 WORKDIR /app
 
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
